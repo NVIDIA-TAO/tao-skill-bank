@@ -103,6 +103,7 @@ from deft_stages import (  # noqa: E402
     write_state_atomic,
 )
 from audit_deft_run import EXTRA_ARTIFACT_FIELDS  # noqa: E402
+from render_report import render as render_loop_report  # noqa: E402
 
 AUDIT_SCRIPT = Path(__file__).resolve().parent / "audit_deft_run.py"
 
@@ -995,6 +996,21 @@ def main() -> int:
                 _fsync_path(state_path(results_dir))
 
             _clear_journal(results_dir)
+
+            # Rendering is a post-commit hook. It runs only once the commit is
+            # complete and durable -- after the journal is cleared -- and its own
+            # handler keeps a presentation failure from reaching the rollback below: it
+            # must be visible, but it must not undo a GPU stage that ran for an hour.
+            #
+            # It stays under the run lock. Released, a following commit could rewrite
+            # state and log while this render reads them alongside this commit's audit
+            # verdict, producing a report that is neither commit's.
+            try:
+                render_loop_report(results_dir, report)
+            except Exception as render_exc:  # noqa: BLE001 - presentation is not transactional
+                print(f"WARNING: the commit succeeded but the loop report was not "
+                      f"re-rendered ({type(render_exc).__name__}: {render_exc}); re-run "
+                      f"render_report.py to refresh it", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001
         if dirty and snapshot is not None and not rolled_back:
             try:

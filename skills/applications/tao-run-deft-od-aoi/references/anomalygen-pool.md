@@ -14,14 +14,20 @@ POOL/
     mask/DEFECT/*
 ```
 
+An enabled synthesis policy must start with at least one supported image under
+some `TEXTURE/clean_image` directory; initialization rejects a globally empty
+reference pool. Individual texture pools may still be absent or empty because
+their routed FNs are handled independently during iteration preparation.
+
 The frozen `defect_spec.jsonl` must define every selected
 `TEXTURE+DEFECT`. Text-routed definitions require
 `roi_prompt_defect_location`. Every KPI FN provides `dataset_id` so the
 application can decide whether it is routed for synthesis. FNs whose dataset
 ID is not in `synthesis.routes` remain in the normal real-data path and are
-counted in the synthesis request report. Routed FNs must also provide explicit
-`texture_id`, `defect_class`, and `fn_mask_source`. A box is not a mask, and
-this application never invents masks or prompts.
+counted in the synthesis request report. A missing or empty `dataset_id` is
+malformed metadata, not an opt-out mechanism. Routed FNs must also provide
+explicit `texture_id`, `defect_class`, and `fn_mask_source`. A box is not a
+mask, and this application never invents masks or prompts.
 
 ## Existing task weights
 
@@ -69,7 +75,25 @@ AnomalyGenNext training inside an iteration.
 `prepare_deft_od_aoi_synthesis.py` converts exact strict FN/annotation matches
 to a filtering YAML for `tao-prepare-anomalygennext-inputs`. The resulting
 generation plan is passed to `tao-generate-od-defects`. Only its validated
-binary COCO enters admission, under the cumulative synthetic fraction cap.
+logical `binary_coco` output enters admission, under the cumulative synthetic
+fraction cap. Its exact relative path comes from the authoritative action
+contract; the native fine-grained COCO remains separately available as
+`native_coco`.
 Admission removes undersized, extreme-aspect, and full-frame boxes, then
 allocates available capacity proportionally across source `dataset_id` values
 with deterministic selection.
+
+If there are no routed FNs, `synthesis_request.json` is a typed `SKIPPED`
+contract whose evidence lists the observed dataset IDs, configured route keys,
+total skipped count, per-dataset skipped counts, and a human-readable summary.
+If every routed FN fails mask eligibility, the preparation leaf emits a typed
+`SKIPPED` `input_contract.json` with per-FN reasons. Either contract completes
+the optional synthesis stage without AMP, generation, or synthetic re-admission.
+
+Clean reference images are a synthesis-only input, distinct from the DEFT clean
+retrieval role. A missing or empty reference directory marks only its routed FNs
+with `no_clean_reference_images`; other eligible types and real-data mining
+continue. When all routed FNs have that reason, the input contract is typed
+`SKIPPED` with preparation-level reason `no_eligible_false_negatives`, carries
+the specific per-FN reason and warning evidence, and emits no embedding or AMP
+work.

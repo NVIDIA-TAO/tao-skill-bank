@@ -13,8 +13,9 @@ Complete this gate before creating a job record or submitting any action.
 - Confirm GPU shape, storage mappings, runtime estimate, and durable
   `results_dir`.
 - Confirm synthesis is disabled or has exact pixel masks, a defect
-  specification, reference pool, Cosmos3-Nano assets, and either existing task
-  weights or complete one-time fine-tuning routes.
+  specification, a reference pool with at least one supported image under
+  `TEXTURE/clean_image`, Cosmos3-Nano assets, and either existing task weights
+  or complete one-time fine-tuning routes.
 
 Do not create output directories that actions require to be absent. Existing
 DEFT results are resumed only through their committed

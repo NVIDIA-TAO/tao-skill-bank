@@ -1,13 +1,13 @@
 ---
-name: tao-finetune-nv-tesseract-forecasting
+name: tao-finetune-kumo-forecast
 description: >-
-  NV-Tesseract Forecasting — transformer-based multivariate time series forecasting
+  Kumo-Forecast — transformer-based multivariate time series forecasting
   with DARR (context-enhanced kNN retrieval), interpretability, and fine-tuning.
-  Use when the user asks to "forecast with NV-Tesseract", "run forecasting inference",
+  Use when the user asks to "forecast with Kumo-Forecast", "run forecasting inference",
   "use perform_forecasting", "DARR mode", "context-enhanced forecasting",
   "lag horizon attribution", "interpretability", "fine-tune forecasting",
   "fine-tune forecasting with automl", "hyper-parameter optimization with forecasting", or
-  or mentions "nv-tesseract-forecasting", "moment_head_512_6hr", or "run8_best_model_cr".
+  mentions "kumo-forecast", "moment_head_512_6hr", or "run8_best_model_cr".
 license: Apache-2.0
 compatibility: Requires Python 3.10+ and uv. CUDA GPU recommended; Apple Silicon (MPS) and CPU supported.
 metadata:
@@ -22,10 +22,10 @@ tags:
   - automl
   - finetune
   - inference
-  - nv-tesseract
+  - kumo-forecast
 ---
 
-# NV-Tesseract Forecasting
+# Kumo-Forecast
 
 Transformer-based multivariate time series forecasting using self-supervised pretraining on diverse temporal data.
 Three inference modes: **standard** (direct forecast), **DARR** (context-enhanced kNN retrieval blending),
@@ -33,8 +33,8 @@ and **interpretability** (latent trajectory extraction, semantic flow, lag×hori
 trajectory stability, and diagnostic ratios — full explanation bundle with PDF report).
 Fine-tuning adapts the forecasting head — and optionally the cross-channel layer — to your domain.
 
-**Source code:** https://github.com/NVIDIA/NV-Tesseract
-**Pretrained weights:** https://huggingface.co/nvidia/nv-tesseract-forecasting
+**Source code:** https://github.com/NVIDIA/Kumo-TS
+**Pretrained weights:** https://huggingface.co/nvidia/Kumo-Forecast
 
 ## External dependencies
 
@@ -47,14 +47,14 @@ Fine-tuning adapts the forecasting head — and optionally the cross-channel lay
 
 ## Credentials
 
-`nvidia/nv-tesseract-forecasting` is a public repo — no token required for downloading weights.
+`nvidia/Kumo-Forecast` is a public repo — no token required for downloading weights.
 If you hit a `401`/`403` (gated access or license not accepted) or a `504` on first download, see the Known pitfalls section.
 
 ## Quick start
 
 ```bash
-git clone --branch main --single-branch https://github.com/NVIDIA/NV-Tesseract
-cd NV-Tesseract/forecasting
+git clone --branch main --single-branch https://github.com/NVIDIA/Kumo-TS Kumo-TS
+cd Kumo-TS/Kumo-Forecast
 uv sync --group dev
 uv pip install -e .          # editable install — required for clean sdk.* imports
 
@@ -70,13 +70,12 @@ with `{target_column}_forecast` rows for the requested horizon.
 
 ```python
 import sys, pandas as pd
-sys.path.append("/path/to/NV-Tesseract/forecasting")  # clone NV-Tesseract with --branch main
-from sdk.forecasting import perform_forecasting
+sys.path.append("/path/to/Kumo-TS/Kumo-Forecast")  # clone Kumo-TS with --branch main
+from sdk.forecasting import ForecastingConfig, perform_forecasting
 
 df = pd.read_csv("your_data.csv")   # must have timestamp + numeric target column
 
-results = perform_forecasting(
-    df=df,
+config = ForecastingConfig(
     timestamp_column="timestamp",    # parseable datetime column
     target_column="target",          # primary target to forecast
     seq_len=512,                     # input context length (rows consumed)
@@ -85,9 +84,33 @@ results = perform_forecasting(
     standardizer_pkl="standardizer.pkl",   # auto-downloaded from HF if missing
     ckpt="run8_best_model_cr.pt",          # auto-downloaded; see Checkpoints table
 )
+results = perform_forecasting(df=df, config=config)
 # Returns DataFrame: timestamp | {target_column}_forecast  (forecast_horizon rows)
 print(results.head())
 ```
+
+For regular inference, put forecasting arguments in YAML and pass the file as
+`config`. Start from the fully commented
+template in `sdk/forecasting_inference_config.yaml`.
+
+```yaml
+inference:
+  # Number of historical rows consumed for the input context window.
+  seq_len: 512
+  # Number of future rows to predict.
+  forecast_horizon: 72
+  # Native horizon used when training the checkpoint.
+  model_horizon: 72
+  # Enable cross-channel attention for multivariate forecasting.
+  use_cross_channel: true
+```
+
+```python
+results = perform_forecasting(df=df, config="sdk/forecasting_inference_config.yaml")
+```
+
+The YAML can be flat or use a top-level `inference:` section inside a larger
+TAO/AutoML spec. Unknown keys raise `ValueError`.
 
 ### Checkpoints
 
@@ -97,10 +120,10 @@ print(results.head())
 | `moment_head_512_6hr.pt` | Standard (no cross-channel) | `use_cross_channel=False` |
 | `standardizer.pkl` | Both | Always |
 
-Pass `use_cross_channel=False` to use the standard checkpoint:
+Set `use_cross_channel=False` in `ForecastingConfig` or YAML to use the standard checkpoint:
 
 ```python
-results = perform_forecasting(df=df, use_cross_channel=False, ...)
+results = perform_forecasting(df=df, config=ForecastingConfig(use_cross_channel=False))
 ```
 
 ## DARR mode (context-enhanced forecasting)
@@ -111,14 +134,13 @@ blends direct predictions with retrieved neighbors (`alpha * direct + (1 - alpha
 ```python
 context_df = pd.read_csv("historical_data.csv")   # needs ≥ seq_len + model_horizon rows
 
-results = perform_forecasting(
-    df=df,
-    context_df=context_df,      # enables DARR
+config = ForecastingConfig(
     forecast_horizon=72,
     alpha=0.2,                  # 0.2 = 20% direct, 80% kNN (default: 0.01)
     k=64,                       # number of nearest neighbors
     temperature=0.05,           # kNN softmax temperature
 )
+results = perform_forecasting(df=df, config=config, context_df=context_df)
 ```
 
 Context and input datasets do not need identical columns — the SDK aligns to common features
@@ -129,16 +151,16 @@ and warns when columns differ. Both must share `timestamp_column` and `target_co
 Set `interpretability=True` to activate the Model-Agnostic Interpretability Framework. It produces localized, horizon-specific, time-aware explanations — including lag×horizon attribution, semantic flow, trajectory stability, diagnostic ratios, and (for multivariate inputs) channel-axis attribution and coupling analysis.
 
 > For the full parameter reference, output bundle, and component descriptions, see
-> **[`forecasting/README.md`](https://github.com/NVIDIA/NV-Tesseract/blob/main/forecasting/README.md)**.
+> **[`Kumo-Forecast/README.md`](https://github.com/NVIDIA/Kumo-TS/blob/main/Kumo-Forecast/README.md)**.
 
 ## Fine-tuning
 
 Fine-tune the forecasting head (encoder/embedder frozen by default) on your own time series.
-`--ckpt-init auto` warm-starts from the published NV-Tesseract checkpoint; `--ckpt-init none`
+`--ckpt-init auto` warm-starts from the published Kumo-Forecast checkpoint; `--ckpt-init none`
 trains a fresh head from the base backbone.
 
 ```bash
-cd /path/to/NV-Tesseract/forecasting
+cd /path/to/Kumo-TS/Kumo-Forecast
 # Without cross-channel (uses moment_head_512_6hr.pt)
 uv run python examples/finetune_example.py \
   --csv /path/to/timeseries.csv \
@@ -169,9 +191,9 @@ uv run python examples/finetune_example.py \
 | `--timestamp-col` | `timestamp` | Datetime column to exclude from features |
 | `--target-cols` | all numeric | Comma-separated columns to forecast |
 | `--model-name` | `AutonLab/MOMENT-1-large` | Backbone model identifier |
-| `--ckpt-init` | `auto` | `auto` = published NV-Tesseract weights; `none` = fresh head; or path to `.pt` |
+| `--ckpt-init` | `auto` | `auto` = published Kumo-Forecast weights; `none` = fresh head; or path to `.pt` |
 | `--standardizer-init` | `standardizer.pkl` | Standardizer pickle used when `--ckpt-init auto` |
-| `--repo-id` | `nvidia/nv-tesseract-forecasting` | HuggingFace repo for auto-download |
+| `--repo-id` | `nvidia/Kumo-Forecast` | HuggingFace repo for auto-download |
 | `--seq-len` | `512` | Input context length |
 | `--forecast-horizon` | `72` | Steps ahead to predict |
 | `--stride` | `forecast_horizon` | Sliding window stride (`None` → horizon) |
@@ -200,8 +222,7 @@ uv run python examples/finetune_example.py \
 ### Inference with fine-tuned checkpoint
 
 ```python
-results = perform_forecasting(
-    df=df,
+config = ForecastingConfig(
     timestamp_column="timestamp",
     target_column="target",
     seq_len=512,
@@ -211,6 +232,7 @@ results = perform_forecasting(
     ckpt="artifacts/finetune_my_data/best_model.pt",
     use_cross_channel=False,   # set True if trained with --use-cross-channel
 )
+results = perform_forecasting(df=df, config=config)
 ```
 
 ## Data requirements
@@ -261,7 +283,7 @@ Read `references/automl.md` when the user asks for AutoML/HPO setup, tunable par
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `ModuleNotFoundError: backbone` | Editable install missing | Run `uv pip install -e .` from `forecasting/` |
+| `ModuleNotFoundError: backbone` | Editable install missing | Run `uv pip install -e .` from `Kumo-Forecast/` |
 | `HfHubHTTPError: 401` / `403` | Model license not accepted or gated fork | Accept license on HF repo page; or `huggingface-cli login` |
 | `504` / timeout on first weight download | HF CDN throttles unauthenticated requests — public repos are still subject to this on first download | Set `export HUGGINGFACE_HUB_TOKEN="$HF_TOKEN"` before running; authenticated requests use a more reliable CDN path |
 | `ValueError: DataFrame has X rows but seq_len requires Y` | Input too short | Provide ≥ `seq_len` (512) rows or reduce `--seq-len` |
