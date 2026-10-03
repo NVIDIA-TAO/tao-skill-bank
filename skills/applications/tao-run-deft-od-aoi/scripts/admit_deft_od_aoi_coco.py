@@ -20,9 +20,30 @@ import pandas as pd
 import yaml
 
 
+GENERATION_SKILL_INFO = (
+    Path(__file__).resolve().parents[3]
+    / "data/tao-generate-od-defects/references/skill_info.yaml"
+)
+
+
 def _json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def _generation_output(root: Path, logical_name: str) -> Path:
+    info = yaml.safe_load(GENERATION_SKILL_INFO.read_text())
+    output = info["actions"]["generate"]["outputs"].get(logical_name)
+    relative = output.get("relative_path") if isinstance(output, dict) else None
+    path = Path(str(relative or ""))
+    if not relative or path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"generation output {logical_name} lacks a safe relative_path")
+    resolved = root.resolve() / path
+    if not resolved.is_file():
+        raise FileNotFoundError(
+            f"declared generation output {logical_name} is missing: {resolved}"
+        )
+    return resolved
 
 
 def _vectors(values: pd.Series) -> np.ndarray:
@@ -313,15 +334,21 @@ def main() -> int:
     parser.add_argument("--retrieval-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--previous-coco", type=Path)
-    parser.add_argument("--synthetic-coco", type=Path)
+    generated = parser.add_mutually_exclusive_group()
+    generated.add_argument("--synthetic-coco", type=Path)
+    generated.add_argument("--generation-root", type=Path)
     parser.add_argument("--synthetic-images", type=Path)
     parser.add_argument("--link-mode", choices=("copy", "hardlink"), default="copy")
     args = parser.parse_args()
+    synthetic_coco = (args.synthetic_coco.resolve() if args.synthetic_coco else
+                      _generation_output(args.generation_root, "binary_coco")
+                      if args.generation_root else None)
     result = admit(args.policy.resolve(), args.candidate_root.resolve(),
                    args.retrieval_root.resolve(), args.output_dir.resolve(),
                    args.previous_coco.resolve() if args.previous_coco else None, args.link_mode,
-                   args.synthetic_coco.resolve() if args.synthetic_coco else None,
-                   args.synthetic_images.resolve() if args.synthetic_images else None)
+                   synthetic_coco,
+                   args.synthetic_images.resolve() if args.synthetic_images else
+                   args.generation_root.resolve() if args.generation_root else None)
     print(json.dumps(result, sort_keys=True))
     return 0
 
