@@ -32,6 +32,10 @@ All dataset and validation images and masks must use `.jpg`, `.jpeg`, or
 `.bmp`, `.tif`, `.tiff`, and `.webp` instead of allowing preparation to pass
 and failing later in `ValidationKPI`.
 
+Masks must contain exactly the binary pixel values `0` and `255`.
+Empty/all-zero masks, full/all-255 masks, values such as `1`, and soft
+grayscale edges are invalid.
+
 ## Type and recipe identity
 
 The recipe's `anomaly_types` order defines model class IDs. Resolve the order

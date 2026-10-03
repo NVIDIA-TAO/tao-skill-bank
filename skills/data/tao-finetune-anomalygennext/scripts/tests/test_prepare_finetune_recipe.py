@@ -8,18 +8,37 @@ from pathlib import Path
 
 import pytest
 import yaml
+from PIL import Image
 
 
 SCRIPT = Path(__file__).parents[1] / "prepare_finetune_recipe.py"
 
 
+def _image(path: Path, mode: str = "RGB", value: int | tuple[int, ...] = 0) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new(mode, (8, 8), value).save(path)
+
+
 def _fixture(root: Path) -> list[str]:
     dataset = root / "dataset"
-    for path in (dataset / "texture" / "anomaly_image" / "defect" / "a.png",
-                 dataset / "texture" / "mask" / "defect" / "a_mask.png",
-                 dataset / "texture" / "clean_image" / "clean.png"):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"image")
+    anomaly = dataset / "texture" / "anomaly_image" / "defect" / "a.png"
+    mask = dataset / "texture" / "mask" / "defect" / "a_mask.png"
+    clean = dataset / "texture" / "clean_image" / "clean.png"
+    validation_mask = root / "validation_mask.png"
+    anomaly.parent.mkdir(parents=True, exist_ok=True)
+    clean.parent.mkdir(parents=True, exist_ok=True)
+    anomaly.write_bytes(b"image")
+    clean.write_bytes(b"image")
+    _image(mask, "L")
+    _image(validation_mask, "L")
+    with Image.open(mask) as image:
+        pixels = image.copy()
+    pixels.putpixel((0, 0), 255)
+    pixels.save(mask)
+    with Image.open(validation_mask) as image:
+        validation_pixels = image.copy()
+    validation_pixels.putpixel((0, 0), 255)
+    validation_pixels.save(validation_mask)
     (dataset / "defect_spec.jsonl").write_text(
         json.dumps({"defect_type": "texture+defect", "spatial_dependency": "text",
                     "roi_prompt_defect_location": "on the surface"}) + "\n"
@@ -27,7 +46,7 @@ def _fixture(root: Path) -> list[str]:
     validation = root / "validation.jsonl"
     validation.write_text("".join(json.dumps({
         "image_filename": str(dataset / "texture" / "clean_image" / "clean.png"),
-        "mask_filename": str(dataset / "texture" / "mask" / "defect" / "a_mask.png"),
+        "mask_filename": str(validation_mask),
         "anomaly_type": "texture+defect"}) + "\n" for _ in range(3)))
     base = root / "Cosmos3-Nano"
     checkpoints = root / "checkpoints"
@@ -119,3 +138,40 @@ def test_prepare_rejects_runtime_unsupported_validation_extensions(
     assert result.returncode != 0
     label = key.removesuffix("_filename")
     assert f"unsupported AnomalyGenNext {label} extension" in result.stderr
+
+
+def test_prepare_rejects_nonbinary_training_masks(tmp_path: Path) -> None:
+    args = _fixture(tmp_path)
+    mask = tmp_path / "dataset/texture/mask/defect/a_mask.png"
+    _image(mask, "L", 1)
+
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "mask must contain exactly binary pixel values 0 and 255" in result.stderr
+
+
+def test_prepare_rejects_nonbinary_validation_masks(tmp_path: Path) -> None:
+    args = _fixture(tmp_path)
+    _image(tmp_path / "validation_mask.png", "L", 1)
+
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "mask must contain exactly binary pixel values 0 and 255" in result.stderr
+
+
+@pytest.mark.parametrize("relative,value", [
+    ("dataset/texture/mask/defect/a_mask.png", 0),
+    ("validation_mask.png", 0),
+    ("dataset/texture/mask/defect/a_mask.png", 255),
+    ("validation_mask.png", 255),
+])
+def test_prepare_rejects_uniform_masks(tmp_path: Path, relative: str, value: int) -> None:
+    args = _fixture(tmp_path)
+    _image(tmp_path / relative, "L", value)
+
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "mask must contain exactly binary pixel values 0 and 255" in result.stderr

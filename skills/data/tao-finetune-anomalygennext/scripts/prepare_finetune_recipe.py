@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from PIL import Image
 
 
 IMAGES = {".jpeg", ".jpg", ".png"}
@@ -50,6 +51,19 @@ def _validate_extension(path: Path, label: str) -> None:
         )
 
 
+def _validate_mask(mask: Path) -> None:
+    try:
+        with Image.open(mask) as image:
+            values = {value for value, count in enumerate(image.convert("L").histogram()) if count}
+    except OSError as error:
+        raise ValueError(f"cannot read AnomalyGenNext mask: {mask}") from error
+    if values != {0, 255}:
+        raise ValueError(
+            f"mask must contain exactly binary pixel values 0 and 255: {mask}; "
+            f"found {sorted(values)}"
+        )
+
+
 def _pairs(root: Path) -> list[list[str]]:
     result = []
     for texture in sorted(item for item in root.iterdir() if item.is_dir()):
@@ -68,8 +82,10 @@ def _pairs(root: Path) -> list[list[str]]:
             for image in anomalies:
                 choices = (mask_root / f"{image.stem}_mask{image.suffix}",
                            mask_root / f"{image.stem}_mask.png", mask_root / image.name)
-                if not any(path.is_file() for path in choices):
+                mask = next((path for path in choices if path.is_file()), None)
+                if mask is None:
                     raise ValueError(f"anomaly lacks matching mask: {image}")
+                _validate_mask(mask)
             result.append([texture.name, defect.name])
     if not result:
         raise ValueError(f"no TEXTURE/anomaly_image/DEFECT inputs under {root}")
@@ -118,6 +134,7 @@ def _validation(path: Path, dataset: Path, name: str) -> tuple[list[dict[str, An
             resolved = _validation_path(str(row[key]), path, dataset, name)
             _validate_extension(resolved, "mask" if key == "mask_filename" else "image")
             row[key] = str(resolved)
+        _validate_mask(Path(row["mask_filename"]))
         rows.append(row)
         counts[anomaly] += 1
     if not rows:

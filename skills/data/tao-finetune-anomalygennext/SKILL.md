@@ -5,7 +5,7 @@ description: >-
   and prepare a canonical texture fine-tuning recipe. Use when AnomalyGenNext
   task weights do not yet exist. Do not use for ordinary defect generation.
 license: Apache-2.0
-compatibility: Requires the AnomalyGenNext 1.1 container and its model checkpoints.
+compatibility: Requires the AnomalyGenNext 1.1 container, Pillow, and its model checkpoints.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -43,6 +43,9 @@ accepted with `--defect-spec`.
 
 Dataset and validation images and masks must use `.jpg`, `.jpeg`, or `.png`,
 matching the extensions supported by the AnomalyGenNext 1.1 runtime loader.
+Every mask pixel must be binary `0` or `255`; palette or grayscale masks with
+intermediate values are rejected before training. Each mask must contain both
+values, so empty/all-zero and full/all-255 masks are also rejected.
 
 An optional user `recipe.yaml` is a template. Custom training settings remain,
 while dataset, checkpoint, validation, type order, and iteration-zero validation
@@ -66,10 +69,10 @@ scripts/prepare_finetune_recipe.py \
 ```
 
 The action freezes absolute validation paths, rejects image extensions the
-runtime cannot decode, validates anomaly/mask pairing, checks type agreement
-with `defect_spec.jsonl`, refuses output reuse, and emits a recipe plus
-metadata. `validation_iter` must be a multiple of `save_iter`; `max_iter` must
-reach a post-baseline validation.
+runtime cannot decode, validates anomaly/mask pairing and binary masks, checks
+type agreement with `defect_spec.jsonl`, refuses output reuse, and emits a
+recipe plus metadata. `validation_iter` must be a multiple of `save_iter`;
+`max_iter` must reach a post-baseline validation.
 
 ## Train and accept
 
