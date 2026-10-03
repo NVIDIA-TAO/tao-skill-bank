@@ -20,6 +20,7 @@ DEFAULTS = Path(__file__).resolve().parents[1] / "assets" / "default_policy.yaml
 # defective-real mining pool, and ``clean`` is the verified-clean mining pool.
 ROLES = ("kpi", "test", "real", "clean")
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+ROUTED_SYNTHESIS_FIELDS = ("texture_id", "defect_class", "fn_mask_source")
 
 
 def _json(path: Path, value: Any) -> None:
@@ -69,7 +70,21 @@ def _has_synthesis_clean_reference(pool: Path) -> bool:
     )
 
 
-def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
+def _synthesis_metadata(image: dict[str, Any], annotation: dict[str, Any]) -> dict[str, Any]:
+    """Resolve synthesis metadata with the same image-to-annotation precedence as routing."""
+    metadata = {}
+    for owner, label in ((image, "image"), (annotation, "annotation")):
+        nested = owner.get("deft_od_aoi", {})
+        if not isinstance(nested, dict):
+            raise ValueError(f"KPI {label} deft_od_aoi metadata must be an object")
+        for source in (owner, nested):
+            metadata.update({key: source[key] for key in
+                             ("dataset_id", *ROUTED_SYNTHESIS_FIELDS) if key in source})
+    return metadata
+
+
+def _role(name: str, value: dict[str, Any], require_dataset_id: bool = False) -> tuple[
+        dict[str, Any], dict[str, Any]]:
     images = Path(str(value.get("images") or "")).expanduser().resolve()
     coco_path = Path(str(value.get("coco") or "")).expanduser().resolve()
     if not images.is_dir() or not coco_path.is_file():
@@ -87,12 +102,31 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
     if len(image_ids) != len(image_rows):
         raise ValueError(f"{name} has duplicate image ids")
     counts = {image_id: 0 for image_id in image_ids}
+    missing_dataset_ids = []
     for annotation in coco.get("annotations", []):
         image_id, category = int(annotation["image_id"]), int(annotation["category_id"])
         if image_id not in counts or category not in category_ids:
             raise ValueError(f"{name} annotation references unknown image/category")
         _validate_bbox(annotation["bbox"], images_by_id[image_id], name)
         counts[image_id] += 1
+        if require_dataset_id:
+            metadata = _synthesis_metadata(images_by_id[image_id], annotation)
+            if not str(metadata.get("dataset_id") or "").strip():
+                image = images_by_id[image_id]
+                missing_dataset_ids.append(
+                    f"annotation_id={annotation.get('id')} image_id={image_id} "
+                    f"file_name={image.get('file_name')!r}"
+                )
+    if missing_dataset_ids:
+        details = ", ".join(missing_dataset_ids[:5])
+        remainder = len(missing_dataset_ids) - 5
+        if remainder > 0:
+            details += f", and {remainder} more"
+        raise ValueError(
+            "enabled synthesis requires every KPI annotation to resolve a nonempty "
+            f"dataset_id; missing for {details}. synthesis.routes is an allowlist: "
+            "a nonempty unconfigured dataset_id is valid and skips synthesis"
+        )
     paths = [_image_path(images, row) for row in image_rows]
     missing = [path for path in paths if not path.is_file()]
     if missing:
@@ -101,13 +135,14 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("clean role must have zero annotations")
     if name == "real" and any(count == 0 for count in counts.values()):
         raise ValueError("defective-real role contains a boxless image")
-    return {"images": str(images), "coco": str(coco_path), "coco_sha256": _sha(coco_path),
-            "image_count": len(paths), "annotation_count": sum(counts.values()),
-            "identities": {str(path) for path in paths}}
+    report = {"images": str(images), "coco": str(coco_path),
+              "coco_sha256": _sha(coco_path), "image_count": len(paths),
+              "annotation_count": sum(counts.values()),
+              "identities": {str(path) for path in paths}}
+    return report, coco
 
 
-def _validate_kpi_retrieval_metadata(coco_path: Path) -> None:
-    document = json.loads(coco_path.read_text())
+def _validate_kpi_retrieval_metadata(document: dict[str, Any]) -> None:
     boxed_image_ids = {
         int(annotation["image_id"]) for annotation in document.get("annotations", [])
     }
@@ -124,6 +159,36 @@ def _validate_kpi_retrieval_metadata(coco_path: Path) -> None:
             raise ValueError(
                 f"KPI image {row['id']} lacks canonical retrieval metadata: {missing}"
             )
+
+
+def _validate_routed_kpi_metadata(
+        policy: dict[str, Any], coco: dict[str, Any]) -> None:
+    images = {int(row["id"]): row for row in coco["images"]}
+    routes = policy["synthesis"]["routes"]
+    issues = []
+    for annotation in coco.get("annotations", []):
+        image_id = int(annotation["image_id"])
+        image = images[image_id]
+        metadata = _synthesis_metadata(image, annotation)
+        dataset = str(metadata.get("dataset_id") or "").strip()
+        if not dataset or dataset not in routes:
+            continue
+        identity = (f"annotation_id={annotation.get('id')} image_id={image_id} "
+                    f"file_name={image.get('file_name')!r}")
+        missing = [key for key in ROUTED_SYNTHESIS_FIELDS
+                   if not str(metadata.get(key) or "").strip()]
+        if missing:
+            issues.append(f"{identity} missing={missing}")
+            continue
+        mask = Path(str(metadata["fn_mask_source"])).expanduser().resolve()
+        if not mask.is_file():
+            issues.append(f"{identity} fn_mask_source is not an existing file: {mask}")
+    if issues:
+        details = "; ".join(issues[:5])
+        remainder = len(issues) - 5
+        if remainder > 0:
+            details += f"; and {remainder} more"
+        raise ValueError(f"routed KPI synthesis metadata is incomplete: {details}")
 
 
 def initialize(config_path: Path, output: Path) -> dict[str, Any]:
@@ -143,8 +208,17 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     baseline_mode = str(policy.get("baseline_mode") or "")
     if baseline_mode not in {"cold_start", "checkpoint"}:
         raise ValueError("baseline_mode must be cold_start or checkpoint")
-    role_reports = {name: _role(name, policy["sources"][name]) for name in ROLES}
-    _validate_kpi_retrieval_metadata(Path(role_reports["kpi"]["coco"]))
+    synthesis = policy.get("synthesis", {})
+    synthesis_enabled = bool(synthesis.get("enabled"))
+    role_reports = {}
+    role_documents = {}
+    for name in ROLES:
+        report, document = _role(
+            name, policy["sources"][name], synthesis_enabled and name == "kpi"
+        )
+        role_reports[name] = report
+        role_documents[name] = document
+    _validate_kpi_retrieval_metadata(role_documents["kpi"])
     owners: dict[str, str] = {}
     for name, report in role_reports.items():
         for identity in report.pop("identities"):
@@ -159,8 +233,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("background and near-miss IoU thresholds are inconsistent")
     if policy["class_name"] != "defect":
         raise ValueError("DEFT OD AOI has one foreground class named defect")
-    synthesis = policy.get("synthesis", {})
-    if synthesis.get("enabled"):
+    if synthesis_enabled:
         pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
         if not pool.is_dir():
             raise ValueError("enabled synthesis needs pool_dataset_root")
@@ -178,6 +251,8 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
                                  ("dataset_root", "validation_testcase", "base_checkpoint",
                                   "vae_path", "checkpoint_root", "result_handoff")):
                 raise ValueError(f"synthesis route {name} needs checkpoint/recipe or finetune inputs")
+        # Reuse the document parsed from the resolved, existence-checked KPI path.
+        _validate_routed_kpi_metadata(policy, role_documents["kpi"])
     output.mkdir(parents=True)
     policy["base_checkpoint"] = str(checkpoint)
     policy["sources"] = {name: {"images": role_reports[name]["images"],
@@ -186,7 +261,6 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     frozen.write_text(yaml.safe_dump(policy, sort_keys=False))
     classmap = output / "inference_classmap.txt"
     classmap.write_text("background\ndefect\n")
-    synthesis_enabled = bool(policy.get("synthesis", {}).get("enabled"))
     bootstrap_required = synthesis_enabled and any(
         not (Path(str(route.get("checkpoint") or "")).is_file()
              and Path(str(route.get("recipe") or "")).is_file())

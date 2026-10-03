@@ -65,6 +65,10 @@ AnomalyGen clean-reference images come from the synthesis pool and are not the
 DEFT `clean` retrieval role. Missing references skip only affected synthesis
 FNs; they do not disable real-defect or clean-negative retrieval.
 
+Initialization rejects routed boxed annotations with missing route metadata or
+a nonexistent `fn_mask_source`. It deliberately does not inspect mask contents;
+synthesis preparation owns per-FN mask eligibility.
+
 ## Cumulative admission
 
 `admit_deft_od_aoi_coco.py` recomputes similarity from the frozen embeddings,
