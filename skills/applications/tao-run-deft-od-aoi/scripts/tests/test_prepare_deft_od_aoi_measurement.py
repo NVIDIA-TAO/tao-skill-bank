@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -22,7 +23,8 @@ def test_measurement_freezes_binary_inference_and_dual_gap_specs(tmp_path: Path)
         images.mkdir()
         (images / f"{role}.png").write_bytes(b"image")
         coco = tmp_path / f"{role}.json"
-        coco.write_text(json.dumps({"images": [{"id": 1, "file_name": f"{role}.png"}],
+        coco.write_text(json.dumps({"images": [{"id": 1, "file_name": f"{role}.png",
+                                                 "width": 10, "height": 10}],
                                     "annotations": [{"id": 1, "image_id": 1,
                                                      "category_id": 1, "bbox": [1, 2, 3, 4]}],
                                     "categories": [{"id": 1, "name": "defect"}]}))
@@ -57,6 +59,19 @@ def test_measurement_freezes_binary_inference_and_dual_gap_specs(tmp_path: Path)
     assert label.read_text().startswith("defect 0.0 0 0.0 1.000000 2.000000 4.000000 6.000000")
 
 
+def test_kitti_rejects_bbox_outside_image(tmp_path: Path) -> None:
+    coco = tmp_path / "kpi.json"
+    coco.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": "kpi.png", "width": 10, "height": 8}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1,
+                         "bbox": [8, 2, 3, 4]}],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+
+    with pytest.raises(ValueError, match="normalized COCO bbox exceeds image bounds"):
+        MODULE._kitti(coco, tmp_path / "labels")
+
+
 def test_cold_start_baseline_emits_empty_kpi_predictions_without_inference(
     tmp_path: Path,
 ) -> None:
@@ -67,7 +82,7 @@ def test_cold_start_baseline_emits_empty_kpi_predictions_without_inference(
         (images / f"{role}.png").write_bytes(b"image")
         coco = tmp_path / f"{role}.json"
         coco.write_text(json.dumps({
-            "images": [{"id": 1, "file_name": f"{role}.png"}],
+            "images": [{"id": 1, "file_name": f"{role}.png", "width": 10, "height": 10}],
             "annotations": ([{"id": 1, "image_id": 1, "category_id": 1,
                               "bbox": [1, 2, 3, 4]}] if role == "kpi" else []),
             "categories": [{"id": 1, "name": "defect"}],

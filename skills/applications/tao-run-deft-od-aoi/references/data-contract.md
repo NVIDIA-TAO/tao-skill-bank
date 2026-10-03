@@ -17,6 +17,9 @@ The application consumes four normalized COCO roles:
 Every COCO document declares exactly one foreground category named `defect`.
 Background is implicit. Clean images remain explicit `images` rows with zero
 annotations; files absent from the COCO document do not train the detector.
+Every bbox must have a nonnegative origin, positive dimensions, and remain
+fully within its image dimensions. Boundary overflow is an input-contract
+violation; source ground truth is rejected rather than clipped or rewritten.
 
 Each image resolves through `source_path` when present, otherwise
 `images_dir/file_name`. Resolved identities must be disjoint across KPI,

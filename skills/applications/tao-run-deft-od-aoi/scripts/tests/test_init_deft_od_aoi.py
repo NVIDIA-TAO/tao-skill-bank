@@ -24,7 +24,8 @@ def _role(root: Path, name: str, boxed: bool) -> dict:
     annotations = ([{"id": 1, "image_id": 1, "category_id": 1,
                      "bbox": [1, 1, 4, 4], "area": 16}] if boxed else [])
     coco = root / name / "coco.json"
-    coco.write_text(json.dumps({"images": [{"id": 1, "file_name": image.name}],
+    coco.write_text(json.dumps({"images": [{"id": 1, "file_name": image.name,
+                                             "width": 10, "height": 10}],
                                 "annotations": annotations,
                                 "categories": [{"id": 1, "name": "defect"}]}))
     return {"images": str(images), "coco": str(coco)}
@@ -47,7 +48,7 @@ def _append_boxless_image(role: dict, name: str) -> None:
     image.write_bytes(b"boxless-image")
     coco = Path(role["coco"])
     data = json.loads(coco.read_text())
-    data["images"].append({"id": 2, "file_name": image.name})
+    data["images"].append({"id": 2, "file_name": image.name, "width": 10, "height": 10})
     coco.write_text(json.dumps(data))
 
 
@@ -101,6 +102,24 @@ def test_initialize_rejects_boxed_clean_role(tmp_path: Path) -> None:
                             "bbox": [0, 0, 2, 2]}]
     clean.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="clean role"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+@pytest.mark.parametrize("bbox", [
+    [-1, 1, 4, 4],
+    [1, -1, 4, 4],
+    [7, 1, 4, 4],
+    [1, 7, 4, 4],
+])
+def test_initialize_rejects_bbox_outside_image(tmp_path: Path, bbox: list[int]) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    kpi = Path(value["sources"]["kpi"]["coco"])
+    data = json.loads(kpi.read_text())
+    data["annotations"][0]["bbox"] = bbox
+    kpi.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="normalized COCO bbox exceeds image bounds"):
         MODULE.initialize(config, tmp_path / "results")
 
 

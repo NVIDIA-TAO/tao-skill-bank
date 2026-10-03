@@ -27,6 +27,22 @@ def _sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _bounded_xyxy(value: Any, image: dict[str, Any]) -> tuple[float, float, float, float]:
+    """Validate a COCO xywh box against its image dimensions.
+    Return KITTI xyxy coordinates without clipping or rewriting ground truth.
+    """
+    x, y, width, height = map(float, value)
+    image_width = float(image.get("width") or 0)
+    image_height = float(image.get("height") or 0)
+    if image_width <= 0 or image_height <= 0:
+        raise ValueError("KPI normalized COCO image dimensions must be positive")
+    if width <= 0 or height <= 0:
+        raise ValueError("KPI normalized COCO bbox dimensions must be positive")
+    if x < 0 or y < 0 or x + width > image_width or y + height > image_height:
+        raise ValueError("KPI normalized COCO bbox exceeds image bounds")
+    return x, y, x + width, y + height
+
+
 def _kitti(coco_path: Path, output: Path) -> dict[str, int]:
     coco = json.loads(coco_path.read_text())
     categories = {int(row["id"]): str(row["name"]) for row in coco.get("categories", [])}
@@ -41,11 +57,9 @@ def _kitti(coco_path: Path, output: Path) -> dict[str, int]:
         image_id = int(annotation["image_id"])
         if image_id not in images or categories.get(int(annotation["category_id"])) != "defect":
             raise ValueError("KPI annotation references an unknown image/category")
-        x, y, width, height = map(float, annotation["bbox"])
-        if min(x, y) < 0 or width <= 0 or height <= 0:
-            raise ValueError("KPI annotation has an invalid bbox")
+        x1, y1, x2, y2 = _bounded_xyxy(annotation["bbox"], images[image_id])
         labels[image_id].append(
-            f"defect 0.0 0 0.0 {x:.6f} {y:.6f} {x + width:.6f} {y + height:.6f} 0 0 0 0 0 0 0"
+            f"defect 0.0 0 0.0 {x1:.6f} {y1:.6f} {x2:.6f} {y2:.6f} 0 0 0 0 0 0 0"
         )
     output.mkdir(parents=True)
     for image_id, image in images.items():

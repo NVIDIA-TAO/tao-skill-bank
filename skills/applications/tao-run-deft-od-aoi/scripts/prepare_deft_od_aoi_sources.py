@@ -82,7 +82,7 @@ def _output_name(source: Path) -> str:
 
 
 def _annotation(value: dict[str, Any], image_id: int, annotation_id: int,
-                categories: set[Any], source: Path) -> dict[str, Any]:
+                categories: set[Any], source: Path, width: int, height: int) -> dict[str, Any]:
     if value.get("category_id") not in categories:
         raise ValueError(f"annotation in {source} references an unknown category")
     bbox = value.get("bbox")
@@ -91,6 +91,8 @@ def _annotation(value: dict[str, Any], image_id: int, annotation_id: int,
     box = [float(item) for item in bbox]
     if min(box[:2]) < 0 or box[2] <= 0 or box[3] <= 0:
         raise ValueError(f"annotation in {source} has an invalid bbox")
+    if box[0] + box[2] > width or box[1] + box[3] > height:
+        raise ValueError(f"annotation in {source} exceeds normalized COCO image bounds")
     output = dict(value)
     output.update(id=annotation_id, image_id=image_id, category_id=1, bbox=box,
                   area=float(value.get("area", box[2] * box[3])),
@@ -158,7 +160,7 @@ def prepare(manifest_path: Path) -> tuple[dict[str, list[dict[str, Any]]], dict[
                     for row in by_image[image.get("id")]:
                         document["annotations"].append(_annotation(
                             row, image_id, len(document["annotations"]) + 1,
-                            categories, coco_path
+                            categories, coco_path, width, height
                         ))
                 documents[role].append(document)
                 source_reports.append({"input": input_name, "role": role,
