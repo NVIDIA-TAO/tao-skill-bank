@@ -52,6 +52,14 @@ Common optional fields:
 
 The input parquet must contain a `filepath` column. Any additional columns are carried through to the output verbatim, so metadata such as `label` survives into the embedding parquet.
 
+`filepath` values are transitive file inputs. When another workflow emits this
+spec, its platform action request must declare and mount every image root those
+paths reference; mounting only `input_parquet` is insufficient. Keep these
+mount-only folder inputs outside the native embedding YAML, because the Data
+Services config has no `image_root` field. If the producing workflow freezes
+absolute paths, each embedding container must remount the corresponding source
+at the same compute-visible root.
+
 The default template is `assets/default_image_embeddings.yaml`.
 
 ## Encoder Consistency

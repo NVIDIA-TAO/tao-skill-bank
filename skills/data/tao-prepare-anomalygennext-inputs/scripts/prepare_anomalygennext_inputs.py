@@ -180,7 +180,8 @@ def _select(rows: pd.DataFrame, selection: dict[str, Any]) -> pd.DataFrame:
     return selected.reset_index(drop=True)
 
 
-def prepare(config_path: Path, output: Path) -> dict[str, Any]:
+def prepare(config_path: Path, output: Path,
+            pool_dataset_root: Path | None = None) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite output: {output}")
     config = yaml.safe_load(config_path.read_text())
@@ -193,7 +194,10 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError(f"gap parquet lacks normalized columns: {missing}")
     gaps = gaps[gaps.gap_type.astype(str).str.upper().eq("FN")].copy()
     specs = _defect_specs(Path(config["defect_spec"]).expanduser().resolve())
-    pool_root = Path(config["pool_dataset_root"]).expanduser().resolve()
+    pool_root = (pool_dataset_root or Path(config["pool_dataset_root"])).expanduser().resolve()
+    if not pool_root.is_dir():
+        raise FileNotFoundError(f"pool dataset root is missing: {pool_root}")
+    config["pool_dataset_root"] = str(pool_root)
     datasets = config.get("datasets") or {}
     recipe_types: dict[str, set[str]] = {}
     for name, dataset in datasets.items():
@@ -231,7 +235,7 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
     masks_root = root / "source_masks"
     for directory in (manifests, specs_dir, masks_root):
         directory.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(config_path, root / "filtering_config.yaml")
+    (root / "filtering_config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
     mask_rows, query_rows, clean_rows, prepared_rows, skipped_rows = [], [], [], [], []
     clean_seen: set[tuple[str, str]] = set()
     sampled_used: dict[str, set[Path]] = defaultdict(set)
@@ -316,6 +320,11 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
                 "skipped_fns": skipped_rows, "clean_image_count": len(clean_rows),
                 "source_mask_count": len(mask_rows), "warnings": warnings,
                 "training_pool_mutated": False}
+    pool_mount = {"type": "folder", "compute_path": str(pool_root), "read_only": True}
+    contract["downstream_inputs"] = {
+        "clean_embeddings": {"pool_dataset_root": pool_mount},
+        "run_amp": {"pool_dataset_root": pool_mount},
+    }
     if not prepared_rows:
         _write_json(root / "input_contract.json", contract)
         return contract
@@ -344,9 +353,11 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
+    parser.add_argument("--pool-dataset-root", type=Path, required=True)
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
-    contract = prepare(Path(args.config).resolve(), Path(args.output_dir).resolve())
+    contract = prepare(Path(args.config).resolve(), Path(args.output_dir).resolve(),
+                       args.pool_dataset_root.resolve())
     for warning in contract.get("warnings", []):
         print(f"WARNING: {warning['message']}", file=sys.stderr)
     print(json.dumps(contract, sort_keys=True))
