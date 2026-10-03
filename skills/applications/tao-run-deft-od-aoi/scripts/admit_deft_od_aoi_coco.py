@@ -248,6 +248,10 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
         "status": "PASS", "iteration": int(manifest["iteration"]),
         "mining_admission": "skipped" if synthetic_only else "evaluated", "roles": {},
     }
+    retrieval_admission = {
+        role: {"requested": 0, "deduplicated": 0, "capped": 0}
+        for role in ("real", "clean")
+    }
     minimum = float(policy["retrieval"]["minimum_similarity"])
     for role, reasons in (("real", ("fn", "near_miss_fp")),):
         if role not in enabled:
@@ -255,13 +259,17 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
         excluded = set(existing_sources)
         branches = {}
         for reason in reasons:
+            requested = int((targets.get(role) or {}).get(reason, 0))
             selected, stats = _selected(
-                role, reason, int((targets.get(role) or {}).get(reason, 0)), excluded,
+                role, reason, requested, excluded,
                 candidate_root, retrieval_root, minimum,
             )
             additions[role].extend(selected)
             excluded.update(str(Path(row["source_filepath"]).resolve()) for row in selected)
             branches[reason] = stats
+            retrieval_admission[role]["requested"] += requested
+            retrieval_admission[role]["deduplicated"] += len(selected)
+        retrieval_admission[role]["capped"] = len(additions[role])
         preview["roles"][role] = {
             "requested_crop_count": int((manifest.get("requested_crop_counts") or {}).get(role, 0)),
             "branches": branches,
@@ -271,11 +279,20 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     clean_room = max(0, clean_limit - by_kind["clean_negative"])
     if "clean" in enabled:
         clean_target = (targets.get("clean") or {}).get("background_fp")
-        desired = min(int(clean_target) if clean_target is not None else clean_room,
-                      clean_room)
-        selected, stats = _selected("clean", "background_fp", desired, existing_sources,
+        requested = int(clean_target) if clean_target is not None else clean_room
+        selected, stats = _selected("clean", "background_fp", requested, existing_sources,
                                     candidate_root, retrieval_root, minimum)
-        additions["clean"] = selected
+        retrieval_admission["clean"]["requested"] = requested
+        retrieval_admission["clean"]["deduplicated"] = len(selected)
+        additions["clean"] = selected[:clean_room]
+        retrieval_admission["clean"]["capped"] = len(additions["clean"])
+        desired = min(requested, clean_room)
+        stats.update({
+            "desired_parents": desired,
+            "selected_parents": len(additions["clean"]),
+            "shortfall_parents": max(0, desired - len(additions["clean"])),
+            "quota_met": len(additions["clean"]) >= desired,
+        })
         preview["roles"]["clean"] = {
             "requested_crop_count": int((manifest.get("requested_crop_counts") or {}).get("clean", 0)),
             "branches": {"background_fp": stats},
@@ -385,6 +402,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
               "total_images": len(images), "total_annotations": len(annotations),
               "by_kind": {kind: sum(row["deft_kind"] == kind for row in images)
                           for kind in ("real_defect", "clean_negative", "synthetic_defect")},
+              "retrieval_admission": retrieval_admission,
               "synthetic_admission": {
                   "requested_new": synthetic_requested,
                   "admitted_new": synthetic_admitted,

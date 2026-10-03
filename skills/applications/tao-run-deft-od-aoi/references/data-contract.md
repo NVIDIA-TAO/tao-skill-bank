@@ -83,3 +83,9 @@ do not contain enough novel parent images for a branch target, it admits the
 available parents and records the shortfall instead of failing the iteration.
 Real retrieval may become exhausted while clean retrieval continues until the
 existing cumulative real count's clean allowance is full.
+`admission_report.json.retrieval_admission` records requested parent-image
+targets, counts after previously admitted sources are removed, and final
+counts after policy caps for both real and clean retrieval. For real retrieval,
+the deduplicated count also excludes parents selected for an earlier reason in
+the same iteration. This makes source deduplication and clean cumulative-cap
+truncation visible without recording the excluded filenames.
