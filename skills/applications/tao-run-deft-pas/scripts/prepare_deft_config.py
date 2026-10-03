@@ -27,10 +27,6 @@ from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
 from virtualenv_runtime import resolve_virtualenv_profiles
 
 
-PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
-PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
-
-
 def _bool(value: str) -> bool:
     lowered = value.strip().lower()
     if lowered in {"true", "1", "yes"}:
@@ -98,6 +94,58 @@ def _existing_path(path: pathlib.Path, name: str, *, directory: bool) -> pathlib
         kind = "directory" if directory else "non-empty file"
         raise ValueError(f"{name} must be an existing {kind}: {resolved}")
     return resolved
+
+
+def _validate_lora_attestation(path: pathlib.Path, image: str) -> None:
+    attestation_path = _existing_path(
+        path, "--lora-capability-attestation", directory=False
+    )
+    attestation = json.loads(attestation_path.read_text())
+    if not isinstance(attestation, dict):
+        raise ValueError("LoRA capability attestation root must be an object")
+    if attestation.get("status") != "PASS" or attestation.get("image_ref") != image:
+        raise ValueError("LoRA capability attestation does not pass for --pyt-image")
+
+    contract = attestation.get("clip_lora")
+    if not isinstance(contract, dict):
+        raise ValueError("LoRA capability attestation lacks the CLIP contract")
+    if contract.get("checkpoint_behavior") != "register-and-merge":
+        raise ValueError("LoRA capability attestation lacks checkpoint behavior")
+    required_symbols = {
+        "LoRALinear",
+        "inject_lora",
+        "merge_lora",
+        "_register_lora_checkpoint_compatibility",
+    }
+    runtime_symbols = contract.get("runtime_symbols")
+    if not isinstance(runtime_symbols, list) or set(runtime_symbols) != required_symbols:
+        raise ValueError("LoRA capability attestation lacks runtime symbols")
+    schema = contract.get("schema")
+    if (
+        not isinstance(schema, dict)
+        or schema.get("method") != "lora"
+        or not isinstance(schema.get("enabled"), bool)
+    ):
+        raise ValueError("LoRA capability attestation lacks the PEFT schema")
+    expected_targets = ["q_proj", "k_proj", "v_proj", "out_proj"]
+    required_fields = {
+        "mode",
+        "target_modules",
+        "num_last_blocks",
+        "rank",
+        "alpha",
+        "dropout",
+    }
+    for tower in ("vision", "text"):
+        block = schema.get(tower)
+        if (
+            not isinstance(block, dict)
+            or not required_fields.issubset(block)
+            or block.get("target_modules") != expected_targets
+        ):
+            raise ValueError(
+                f"LoRA capability attestation lacks the {tower} adapter contract"
+            )
 
 
 def _python_tree_sha256(root: pathlib.Path) -> str:
@@ -218,10 +266,17 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "positive integers required: "
             + ", ".join(f"{key}={value}" for key, value in invalid.items())
         )
+    for option, image in (("--pyt-image", args.pyt_image), ("--ds-image", args.ds_image)):
+        if not image.strip():
+            raise ValueError(f"{option} must be a non-empty image reference")
     if not 0.0 <= args.replay_fraction <= 1.0:
         raise ValueError("--replay-fraction must be in [0, 1]")
     if args.knn_metric not in {"cosine", "euclidean"}:
         raise ValueError("--knn-metric must be cosine or euclidean")
+    if args.finetuning_method == "lora":
+        if args.lora_capability_attestation is None:
+            raise ValueError("LoRA requires --lora-capability-attestation")
+        _validate_lora_attestation(args.lora_capability_attestation, args.pyt_image)
     # ``gpu_ids`` is an allocation in the launcher/host namespace. Container
     # runtimes expose that allocation as a dense zero-based CUDA namespace, so
     # TAO must never receive the host ordinals directly.
@@ -304,6 +359,27 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     tao["train"].setdefault("optim", {}).update(
         {"vision_lr": args.vision_lr, "text_lr": args.text_lr}
     )
+    tao.setdefault("model", {}).update(
+        {"freeze_vision_encoder": False, "freeze_text_encoder": False}
+    )
+    if args.finetuning_method == "lora":
+        tower = {
+            "mode": "lora",
+            "target_modules": ["q_proj", "k_proj", "v_proj", "out_proj"],
+            "num_last_blocks": 3,
+            "rank": 8,
+            "alpha": 16,
+            "dropout": 0.05,
+        }
+        tao["peft"] = {
+            "enabled": True,
+            "method": "lora",
+            "train_logit_calibration": True,
+            "vision": dict(tower),
+            "text": dict(tower),
+        }
+    else:
+        tao["peft"] = {"enabled": False}
     tao["dataset"].setdefault("train", {}).update(
         {"batch_size": args.train_batch_size}
     )
@@ -370,8 +446,8 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "host_gpu_ids": host_gpu_ids,
             "container_gpu_ids": container_gpu_ids,
             "metric_contract": metric_contract,
-            "pyt_image": PINNED_PYT_IMAGE,
-            "ds_image": PINNED_DS_IMAGE,
+            "pyt_image": args.pyt_image,
+            "ds_image": args.ds_image,
         },
     )
 
@@ -402,6 +478,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "val_batch_size": args.val_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "text_embed_model": args.text_embed_model,
+        "finetuning_method": args.finetuning_method,
         "approval_manifest": str(config_dir / "approval.json"),
     }
 
@@ -453,6 +530,23 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-iterations", required=True, type=int)
     parser.add_argument("--training-epochs", default=1, type=int)
+    parser.add_argument(
+        "--finetuning-method",
+        choices=("lora", "sft"),
+        default="lora",
+        help="Fine-tuning method (default: lora). SFT explicitly disables PEFT.",
+    )
+    parser.add_argument("--lora-capability-attestation", type=pathlib.Path)
+    parser.add_argument(
+        "--pyt-image",
+        required=True,
+        help="PyTorch image resolved from the workflow versions key.",
+    )
+    parser.add_argument(
+        "--ds-image",
+        required=True,
+        help="Data-services image resolved from the workflow versions key.",
+    )
     parser.add_argument("--num-gpus", default=1, type=int)
     parser.add_argument("--gpu-ids", default="0")
     parser.add_argument("--mining-topn", default=25, type=int)

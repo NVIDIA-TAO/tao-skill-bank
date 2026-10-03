@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib.util
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -116,3 +117,44 @@ def test_probe_rejects_invalid_gpu_requirement(minimum):
             required_clis=[],
             torch_module=_Torch(_Cuda()),
         )
+
+
+@dataclass
+class _Tower:
+    mode: str = "frozen"
+    target_modules: list[str] = field(
+        default_factory=lambda: ["q_proj", "k_proj", "v_proj", "out_proj"]
+    )
+    num_last_blocks: int = 3
+    rank: int = 8
+    alpha: int = 16
+    dropout: float = 0.05
+
+
+@dataclass
+class _Peft:
+    enabled: bool = False
+    method: str = "lora"
+    train_logit_calibration: bool = True
+    vision: _Tower = field(default_factory=_Tower)
+    text: _Tower = field(default_factory=_Tower)
+
+
+@dataclass
+class _Config:
+    peft: _Peft = field(default_factory=_Peft)
+
+
+def test_clip_lora_probe_requires_schema_and_checkpoint_symbols():
+    runtime = SimpleNamespace(
+        LoRALinear=type("LoRALinear", (), {}),
+        inject_lora=lambda: None,
+        merge_lora=lambda: None,
+        _register_lora_checkpoint_compatibility=lambda: None,
+    )
+    result = probe.probe_clip_lora_contract(_Config, runtime)
+    assert result["checkpoint_behavior"] == "register-and-merge"
+
+    del runtime.merge_lora
+    with pytest.raises(RuntimeError, match="merge_lora"):
+        probe.probe_clip_lora_contract(_Config, runtime)

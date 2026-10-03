@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ DEFAULTS = Path(__file__).resolve().parents[1] / "assets" / "default_policy.yaml
 # Normalized handoff roles: KPI/test are held out, ``real`` is the
 # defective-real mining pool, and ``clean`` is the verified-clean mining pool.
 ROLES = ("kpi", "test", "real", "clean")
+IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
 
 
 def _json(path: Path, value: Any) -> None:
@@ -46,6 +48,15 @@ def _image_path(images: Path, row: dict[str, Any]) -> Path:
     return path.expanduser().resolve()
 
 
+def _has_synthesis_clean_reference(pool: Path) -> bool:
+    return any(
+        image.is_file() and image.suffix.lower() in IMAGE_SUFFIXES
+        for texture in pool.iterdir() if texture.is_dir()
+        for clean_dir in (texture / "clean_image",) if clean_dir.is_dir()
+        for image in clean_dir.iterdir()
+    )
+
+
 def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
     images = Path(str(value.get("images") or "")).expanduser().resolve()
     coco_path = Path(str(value.get("coco") or "")).expanduser().resolve()
@@ -58,8 +69,10 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
     category_ids = {int(row["id"]) for row in categories}
     image_rows = coco.get("images", [])
     image_ids = {int(row["id"]) for row in image_rows}
-    if not image_rows or len(image_ids) != len(image_rows):
-        raise ValueError(f"{name} has no images or duplicate image ids")
+    if not image_rows and name != "clean":
+        raise ValueError(f"{name} has no images")
+    if len(image_ids) != len(image_rows):
+        raise ValueError(f"{name} has duplicate image ids")
     counts = {image_id: 0 for image_id in image_ids}
     for annotation in coco.get("annotations", []):
         image_id, category = int(annotation["image_id"]), int(annotation["category_id"])
@@ -116,8 +129,11 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("DEFT OD AOI has one foreground class named defect")
     synthesis = policy.get("synthesis", {})
     if synthesis.get("enabled"):
-        if not Path(str(synthesis.get("pool_dataset_root") or "")).is_dir():
+        pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
+        if not pool.is_dir():
             raise ValueError("enabled synthesis needs pool_dataset_root")
+        if not _has_synthesis_clean_reference(pool):
+            raise ValueError("enabled synthesis needs at least one clean reference image")
         if not Path(str(synthesis.get("defect_spec") or "")).is_file():
             raise ValueError("enabled synthesis needs defect_spec")
         if not synthesis.get("routes"):
@@ -144,6 +160,18 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
              and Path(str(route.get("recipe") or "")).is_file())
         for route in policy.get("synthesis", {}).get("routes", {}).values()
     )
+    retrieval_capabilities = {
+        role: {"status": "AVAILABLE" if role_reports[role]["image_count"] else "UNAVAILABLE",
+               "reason": None if role_reports[role]["image_count"] else "empty_source_role",
+               "source_image_count": role_reports[role]["image_count"]}
+        for role in ("real", "clean")
+    }
+    warnings = [{
+        "code": "empty_retrieval_source_role",
+        "role": role,
+        "message": f"{role} retrieval source role is empty; that producer starts exhausted",
+    } for role, evidence in retrieval_capabilities.items()
+        if evidence["status"] == "UNAVAILABLE"]
     state = {"schema_version": 1, "status": "READY",
              "mode": "rtdetr_with_synthesis" if synthesis_enabled else "rtdetr_real_only",
              "baseline_mode": baseline_mode,
@@ -154,7 +182,9 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
              "max_iterations": policy["max_iterations"], "platform": policy["platform"],
              "base_checkpoint": str(checkpoint), "policy": str(frozen.resolve()),
              "policy_sha256": _sha(frozen), "classmap": str(classmap.resolve()),
-             "roles": role_reports, "iterations": {}}
+             "roles": role_reports,
+             "capabilities": {"retrieval": retrieval_capabilities},
+             "warnings": warnings, "iterations": {}}
     _json(output / "deft_state.json", state)
     return state
 
@@ -164,7 +194,10 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(initialize(args.config.resolve(), args.output_dir.resolve()), sort_keys=True))
+    state = initialize(args.config.resolve(), args.output_dir.resolve())
+    for warning in state.get("warnings", []):
+        print(f"WARNING: {warning['message']}", file=sys.stderr)
+    print(json.dumps(state, sort_keys=True))
     return 0
 
 

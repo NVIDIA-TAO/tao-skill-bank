@@ -23,10 +23,11 @@ request before building the candidate cache.
 
 ## 1. Build candidate embeddings
 
-Run `prepare_deft_od_aoi_retrieval.py candidates`. Submit the emitted real
-and clean embedding specs through `tao-generate-image-embeddings`. The
-completed outputs are immutable and reused by every iteration. Commit the
-`candidate_cache` stage.
+Run `prepare_deft_od_aoi_retrieval.py candidates`. Submit only the emitted real
+and clean embedding specs through `tao-generate-image-embeddings`. An initially
+empty clean role records count zero and emits neither a candidate parquet nor an
+embedding spec. The completed outputs are immutable and reused by every
+iteration. Commit the `candidate_cache` stage.
 
 ## 2. Baseline measurement and gaps
 
@@ -42,9 +43,17 @@ Commit baseline measurement and gap artifacts.
 ## 3. Per-iteration retrieval
 
 Run `prepare_deft_od_aoi_retrieval.py queries` with the previous strict and
-loose gap parquets. Submit each enabled query-embedding action, then each
-enabled `tao-mine-od-images` action. Empty roles require no job. Commit
-`iteration_retrieval`.
+loose gap parquets and the prior cumulative COCO when one exists. Submit each
+enabled query-embedding action, then each enabled `tao-mine-od-images` action.
+Empty and exhausted roles require no job. Commit `iteration_retrieval` with
+each queried role's query parquet and exclusion parquet; the latter preserves
+the exact history/configured exclusion audit even when it is empty.
+Queries routed to an initially empty clean role are typed `EXHAUSTED` with all
+three candidate audit counts at zero, while real retrieval continues. A real
+role may become exhausted only after its nonempty pool has been consumed; clean
+retrieval may then continue within its cumulative real-relative cap. When no
+retrieval role is ready and synthesis cannot add data, commit convergence
+without admission, training, or another unchanged iteration.
 
 ## 4. Admit real and clean data
 
@@ -61,6 +70,15 @@ embedding and AMP actions, then invoke `tao-generate-od-defects`.
 
 Re-run admission with the generated binary COCO and image root. Commit
 `iteration_synthesis`. Never synthesize from a box without its exact mask.
+When the request has no routed FNs, commit `synthesis_request.json` as the
+`synthesis_request` artifact. When mask preparation has no eligible FNs, commit
+its `input_contract.json` as `synthesis_preparation`. These typed skips advance
+to training without embedding, AMP, generation, or synthetic re-admission.
+Preparation uses top-level reason `no_eligible_false_negatives`; detailed
+`skip_counts` and per-FN records retain `no_clean_reference_images` without
+disabling real/clean retrieval. If the committed retrieval manifest has no
+enabled producer either, the synthesis commit records convergence instead of
+starting training or an identical next iteration.
 
 ## 6. Train and select
 
