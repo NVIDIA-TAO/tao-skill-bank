@@ -41,6 +41,9 @@ JSONL must contain `image_filename`, `mask_filename`, and `anomaly_type`; each t
 `TEXTURE+DEFECT` needs at least three rows. A separately stored defect spec is
 accepted with `--defect-spec`.
 
+Dataset and validation images and masks must use `.jpg`, `.jpeg`, or `.png`,
+matching the extensions supported by the AnomalyGenNext 1.1 runtime loader.
+
 An optional user `recipe.yaml` is a template. Custom training settings remain,
 while dataset, checkpoint, validation, type order, and iteration-zero validation
 are replaced by validated identities. Without a template, the packaged recipe
@@ -62,10 +65,11 @@ scripts/prepare_finetune_recipe.py \
   --output /results/canonical_recipe.yaml
 ```
 
-The action freezes absolute validation paths, validates anomaly images and
-masks, checks type agreement with `defect_spec.jsonl`, refuses output reuse,
-and emits a recipe plus metadata. `validation_iter` must be a multiple of
-`save_iter`; `max_iter` must reach a post-baseline validation.
+The action freezes absolute validation paths, rejects image extensions the
+runtime cannot decode, validates anomaly/mask pairing, checks type agreement
+with `defect_spec.jsonl`, refuses output reuse, and emits a recipe plus
+metadata. `validation_iter` must be a multiple of `save_iter`; `max_iter` must
+reach a post-baseline validation.
 
 ## Train and accept
 

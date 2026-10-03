@@ -27,6 +27,11 @@ Each validation row must contain `image_filename`, `mask_filename`, and
 resolves supported relative paths, verifies every file, and emits a normalized
 validation JSONL with absolute paths.
 
+All dataset and validation images and masks must use `.jpg`, `.jpeg`, or
+`.png`, matching the AnomalyGenNext 1.1 runtime loader. The builder rejects
+`.bmp`, `.tif`, `.tiff`, and `.webp` instead of allowing preparation to pass
+and failing later in `ValidationKPI`.
+
 ## Type and recipe identity
 
 The recipe's `anomaly_types` order defines model class IDs. Resolve the order
