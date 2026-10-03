@@ -38,7 +38,19 @@ requested defect center within image bounds. Only source images narrower than
 Retrieval is global within the real or clean role. Provenance metadata does not
 partition the index. Empty query roles emit no action. Admission recomputes
 maximum cosine similarity from the frozen embeddings, applies the frozen
-minimum, deduplicates parent images, and enforces cumulative caps.
+minimum, deduplicates parent images, and enforces cumulative caps. The mining
+request overfetches crop candidates by the frozen factor, while admission
+measures capacity in unique parent images after cumulative exclusions. Parent
+budgets are targets rather than hard minimums: admission takes up to each
+target and writes `admission_preview.json` with desired parents, mined crops,
+unique and novel parents, shortfalls, branch counts, and selected parents by
+source dataset. A completely empty first admission still fails.
+
+Strict-FN real budgets use the selected factor within the frozen `1..6` range.
+Near-miss budgets are computed independently for each frozen
+`dataset_id/texture_id/defect_class` pocket as `min(2 * queries, 20)` by default;
+this cap is not a per-dataset allocation quota. Clean retrieval remains global
+and is capped only by its factor and the cumulative clean-to-real bound.
 
 Pass the prior cumulative COCO when preparing iteration 2 and later so every
 already admitted source is expanded to its candidate-crop exclusion set.

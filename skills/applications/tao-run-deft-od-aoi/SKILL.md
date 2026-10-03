@@ -61,6 +61,10 @@ with the canonical `kpi`, `test`, `real`, and `clean` mapping. Copy
 `assets/default_policy.yaml`, use that mapping for `sources`, fill the other
 required values, and initialize once:
 
+Source COCOs must already satisfy the canonical KPI metadata contract in
+`references/data-contract.md`. The generic source preparer preserves those
+fields; it does not infer dataset-specific identity or mask paths.
+
 ```bash
 scripts/init_deft_od_aoi.py \
   --config /workspace/deft_policy.yaml \
@@ -108,9 +112,15 @@ scripts/prepare_deft_od_aoi_retrieval.py queries \
   --policy "$RESULTS/deft_od_aoi_policy.yaml" \
   --strict-gaps "$ITER/strict/box_gaps.parquet" \
   --loose-gaps "$ITER/loose/box_gaps.parquet" \
+  --previous-coco "$PREVIOUS/train.json" \
   --iteration 1 --candidate-root "$RESULTS/candidates" \
   --output-dir "$ITER/retrieval"
 ```
+
+Omit `--previous-coco` only for iteration 1. Later iterations exclude every
+candidate crop whose source image is already present in the cumulative training
+COCO before unique-neighbor matching. Admission still performs the authoritative
+source-level deduplication gate.
 
 The candidate manifest records a zero count and emits no candidate parquet or
 embedding spec for an empty clean source role. Run every emitted embedding spec
@@ -248,6 +258,9 @@ generation root via `--generation-root`; admission resolves the declared
 logical `binary_coco` output instead of hardcoding its filename. Synthetic
 categories are folded to `defect`, and
 the frozen cumulative fraction cap is applied against admitted real defects.
+For this second pass, provide the same-iteration real admission as
+`--previous-coco` and set `--synthetic-only`; synthetic inputs do not
+implicitly turn off mining admission.
 Boxes alone never substitute for the required pixel mask. If the request has no
 routed FNs, or preparation reports no mask-eligible FNs, commit that typed skip
 contract as `iteration_synthesis` and continue to training without running AMP

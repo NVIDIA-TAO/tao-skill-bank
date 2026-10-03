@@ -27,17 +27,33 @@ test, real, and clean roles. The initializer verifies paths, IDs, boxes,
 category names, role-specific annotation counts, and cross-role overlap before
 freezing hashes in the policy.
 
+## Canonical KPI metadata
+
+Every annotated KPI image must carry the exact fields `dataset_id`,
+`texture_id`, and `defect_class`, either directly on its image record or under
+`deft_od_aoi`. `dataset_id` is the synthesis route/dataset identity;
+`texture_id` is the namespaced product or texture identity; and `defect_class`
+is the source defect label. Retrieval does not accept alternate field names.
+Initialization validates this contract before any embedding or inference work.
+Boxless KPI images used only for clean/background queries may omit
+`defect_class`. Their `dataset_id` and `texture_id` are not required for query
+formation, but should be preserved when available for dataset and object-type
+tracking.
+
+Real query artifacts preserve the three canonical fields and add a derived
+`pocket` value of `dataset_id/texture_id/defect_class` for near-miss accounting.
+Admission preview `per_dataset` counts also use canonical `dataset_id`, so they
+report synthesis-route identity rather than optional source provenance.
+
+When synthesis is enabled, each eligible KPI annotation/image pair must also
+resolve a real pixel `fn_mask_source`. Synthesis metadata may appear directly
+on the image or annotation record or under `deft_od_aoi`; a box never
+substitutes for the mask.
+
 The real role must start with at least one boxed image. The clean role may start
 with zero images; initialization emits a warning and a typed `UNAVAILABLE`
 clean retrieval capability. The clean retrieval role is independent from the
 AnomalyGenNext synthesis reference pool.
-
-## Optional synthesis metadata
-
-Every KPI sample must retain its real nonempty `dataset_id`. Each routed KPI
-annotation/image pair must also resolve `texture_id`, `defect_class`, and a real
-pixel `fn_mask_source`. Metadata may appear directly on the record or under
-`deft_od_aoi`. A box never substitutes for the mask.
 
 `synthesis.routes` is an allowlist: a valid ID absent from it skips synthesis
 but still participates in the separate real-data DEFT path. A missing ID is
@@ -54,10 +70,16 @@ FNs; they do not disable real-defect or clean-negative retrieval.
 `admit_deft_od_aoi_coco.py` recomputes similarity from the frozen embeddings,
 deduplicates selected crops to source images, rejects previously admitted
 sources, and publishes a new binary COCO. Pass `--previous-coco` from
-iteration 2 onward. Clean negatives are capped cumulatively by
-`routing.clean_cumulative_cap_per_real`. Real retrieval may become exhausted
-while clean retrieval continues until the existing cumulative real count's
-clean allowance is full. When synthesis is enabled, pass both
-the generated binary COCO and its image root. Synthetic admission is capped by
+iteration 2 onward. Clean negatives are capped by
+`routing.clean_cumulative_cap_per_real`. When synthesis is enabled, pass both
+the generated binary COCO and its image root. On the second, synthesis-only
+admission pass, also pass `--synthetic-only` with the same-iteration real
+admission `train.json` as `--previous-coco`; the preview records
+`mining_admission: skipped`. Without that explicit flag, mining admission still
+runs. Synthetic admission is capped by
 `synthesis.cumulative_fraction_of_real_defects`. Existing records remain
-unchanged.
+unchanged. Admission also emits `admission_preview.json`. When overfetched crops
+do not contain enough novel parent images for a branch target, it admits the
+available parents and records the shortfall instead of failing the iteration.
+Real retrieval may become exhausted while clean retrieval continues until the
+existing cumulative real count's clean allowance is full.

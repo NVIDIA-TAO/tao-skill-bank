@@ -57,19 +57,29 @@ def _vectors(values: pd.Series) -> np.ndarray:
     return matrix / norm
 
 
-def _selected(role: str, candidate_root: Path, retrieval_root: Path,
-              minimum: float) -> list[dict[str, Any]]:
+def _selected(role: str, reason: str, desired: int, excluded: set[str],
+              candidate_root: Path, retrieval_root: Path,
+              minimum: float) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     mined = retrieval_root / f"mine_{role}" / "final_unique_files.parquet"
     if not mined.is_file():
         raise FileNotFoundError(f"enabled {role} mining output is missing: {mined}")
     chosen = pd.read_parquet(mined)
     if chosen.empty or "filepath" not in chosen:
         raise ValueError(f"enabled {role} mining output is empty")
+    if desired == 0:
+        return [], {"desired_parents": 0, "mined_crops": len(chosen),
+                    "unique_parents": 0, "novel_parents": 0,
+                    "selected_parents": 0, "shortfall_parents": 0,
+                    "quota_met": True}
     candidates = pd.read_parquet(candidate_root / f"{role}_candidate_embeddings.parquet")
     queries = pd.read_parquet(retrieval_root / f"{role}_query_embeddings.parquet")
     required = {"filepath", "source_filepath", "source_image_id", "embedding"}
-    if not required.issubset(candidates) or not {"filepath", "embedding"}.issubset(queries):
+    if (not required.issubset(candidates)
+            or not {"filepath", "embedding", "reason"}.issubset(queries)):
         raise ValueError(f"{role} embedding outputs lack routing columns")
+    queries = queries[queries["reason"].astype(str) == reason]
+    if desired and queries.empty:
+        raise ValueError(f"{role}/{reason} has a positive target but no queries")
     candidates = chosen[["filepath"]].merge(candidates, on="filepath", how="left", validate="one_to_one")
     if candidates.embedding.isna().any():
         raise ValueError(f"{role} mined paths do not match candidate embeddings")
@@ -80,7 +90,17 @@ def _selected(role: str, candidate_root: Path, retrieval_root: Path,
     candidates = candidates[candidates.similarity >= minimum].sort_values(
         ["similarity", "source_filepath"], ascending=[False, True]
     )
-    return candidates.drop_duplicates("source_filepath").to_dict("records")
+    parents = candidates.drop_duplicates("source_filepath")
+    novel = parents[~parents["source_filepath"].map(
+        lambda value: str(Path(value).resolve()) in excluded
+    )]
+    selected = novel.head(desired)
+    stats = {"desired_parents": desired, "mined_crops": len(chosen),
+             "unique_parents": len(parents), "novel_parents": len(novel),
+             "selected_parents": len(selected),
+             "shortfall_parents": max(0, desired - len(selected)),
+             "quota_met": len(selected) >= desired}
+    return selected.to_dict("records"), stats
 
 
 def _source_index(policy: dict[str, Any], role: str) -> dict[str, dict[str, Any]]:
@@ -95,8 +115,14 @@ def _source_index(policy: dict[str, Any], role: str) -> dict[str, dict[str, Any]
         path = Path(str(image.get("source_path") or "")) if image.get("source_path") else (
             images / str(image["file_name"])
         )
-        result[str(path.resolve())] = {"image": image,
-                                      "annotations": annotations.get(int(image["id"]), [])}
+        metadata = image.get("deft_od_aoi") or {}
+        result[str(path.resolve())] = {
+            "image": image,
+            "dataset_id": str(
+                metadata.get("dataset_id") or image.get("dataset_id") or "unknown"
+            ),
+            "annotations": annotations.get(int(image["id"]), []),
+        }
     return result
 
 
@@ -201,32 +227,76 @@ def _stratified_synthetic(candidates: list[dict[str, Any]], limit: int
 
 def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output: Path,
           previous_path: Path | None, mode: str, synthetic_coco: Path | None = None,
-          synthetic_images: Path | None = None) -> dict[str, Any]:
+          synthetic_images: Path | None = None, synthetic_only: bool = False) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
     manifest = json.loads((retrieval_root / "query_manifest.json").read_text())
-    enabled = set(manifest["enabled_roles"])
-    additions = {role: _selected(role, candidate_root, retrieval_root,
-                                  float(policy["retrieval"]["minimum_similarity"]))
-                 for role in enabled}
     previous = ({"images": [], "annotations": [], "categories": []} if previous_path is None
                 else json.loads(previous_path.read_text()))
     existing_sources = {str(row.get("source_path") or Path(str(row["file_name"])).resolve())
                         for row in previous.get("images", [])}
     by_kind = {kind: sum(row.get("deft_kind") == kind for row in previous.get("images", []))
                for kind in ("real_defect", "clean_negative", "synthetic_defect")}
-    for role in additions:
-        additions[role] = [row for row in additions[role]
-                           if str(Path(row["source_filepath"]).resolve()) not in existing_sources]
+    if synthetic_only and (previous_path is None or synthetic_coco is None):
+        raise ValueError("--synthetic-only requires --previous-coco and synthetic inputs")
+    enabled = set() if synthetic_only else set(manifest["enabled_roles"])
+    targets = manifest.get("admission_targets") or {}
+    indexes = {role: _source_index(policy, role) for role in enabled}
+    additions: dict[str, list[dict[str, Any]]] = {role: [] for role in enabled}
+    preview: dict[str, Any] = {
+        "status": "PASS", "iteration": int(manifest["iteration"]),
+        "mining_admission": "skipped" if synthetic_only else "evaluated", "roles": {},
+    }
+    minimum = float(policy["retrieval"]["minimum_similarity"])
+    for role, reasons in (("real", ("fn", "near_miss_fp")),):
+        if role not in enabled:
+            continue
+        excluded = set(existing_sources)
+        branches = {}
+        for reason in reasons:
+            selected, stats = _selected(
+                role, reason, int((targets.get(role) or {}).get(reason, 0)), excluded,
+                candidate_root, retrieval_root, minimum,
+            )
+            additions[role].extend(selected)
+            excluded.update(str(Path(row["source_filepath"]).resolve()) for row in selected)
+            branches[reason] = stats
+        preview["roles"][role] = {
+            "requested_crop_count": int((manifest.get("requested_crop_counts") or {}).get(role, 0)),
+            "branches": branches,
+        }
     real_total = by_kind["real_defect"] + len(additions.get("real", []))
     clean_limit = int(real_total * float(policy["routing"]["clean_cumulative_cap_per_real"]))
     clean_room = max(0, clean_limit - by_kind["clean_negative"])
-    additions["clean"] = additions.get("clean", [])[:clean_room]
+    if "clean" in enabled:
+        clean_target = (targets.get("clean") or {}).get("background_fp")
+        desired = min(int(clean_target) if clean_target is not None else clean_room,
+                      clean_room)
+        selected, stats = _selected("clean", "background_fp", desired, existing_sources,
+                                    candidate_root, retrieval_root, minimum)
+        additions["clean"] = selected
+        preview["roles"]["clean"] = {
+            "requested_crop_count": int((manifest.get("requested_crop_counts") or {}).get("clean", 0)),
+            "branches": {"background_fp": stats},
+        }
+    for role, rows in additions.items():
+        missing = [str(Path(row["source_filepath"]).resolve()) for row in rows
+                   if str(Path(row["source_filepath"]).resolve()) not in indexes[role]]
+        if missing:
+            raise ValueError(
+                f"selected {role} source is absent from its frozen COCO: {missing[0]}"
+            )
+        counts = collections.Counter(
+            indexes[role][str(Path(row["source_filepath"]).resolve())]["dataset_id"]
+            for row in rows
+        )
+        preview["roles"][role]["per_dataset"] = dict(sorted(counts.items()))
     if enabled and not any(additions.get(role) for role in enabled) and not previous.get("images"):
         raise ValueError("mining admitted no source images")
 
     output.mkdir(parents=True)
+    _json(output / "admission_preview.json", preview)
     images_root = output / "images"
     images_root.mkdir()
     images, annotations = [], []
@@ -338,6 +408,7 @@ def main() -> int:
     generated.add_argument("--synthetic-coco", type=Path)
     generated.add_argument("--generation-root", type=Path)
     parser.add_argument("--synthetic-images", type=Path)
+    parser.add_argument("--synthetic-only", action="store_true")
     parser.add_argument("--link-mode", choices=("copy", "hardlink"), default="copy")
     args = parser.parse_args()
     synthetic_coco = (args.synthetic_coco.resolve() if args.synthetic_coco else
@@ -348,7 +419,8 @@ def main() -> int:
                    args.previous_coco.resolve() if args.previous_coco else None, args.link_mode,
                    synthetic_coco,
                    args.synthetic_images.resolve() if args.synthetic_images else
-                   args.generation_root.resolve() if args.generation_root else None)
+                   args.generation_root.resolve() if args.generation_root else None,
+                   args.synthetic_only)
     print(json.dumps(result, sort_keys=True))
     return 0
 
