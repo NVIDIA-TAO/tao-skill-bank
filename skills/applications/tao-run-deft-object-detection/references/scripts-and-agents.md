@@ -12,6 +12,7 @@ Run every bundled script through `scripts/deft_python.sh`. Resolve every path ar
 | `init_deft_state.py` | Write a fresh `deft_state.json`. Atomic; refuses to overwrite without `--force`. Fresh runs only. | `--results-dir --workspace --max-iterations ...` |
 | `commit_stage.py` | The only supported state writer. Validates the ordered transition, updates state, appends one log event, audits, rolls back on failure. | `--results-dir --iter-label --stage --summary [artifact flags] [--status ok\|error]` |
 | `audit_deft_run.py` | Read-only cross-check of state, log, and artifacts. Prints the safe next action and `read_before_action`. | `--results-dir [--require-terminal] [--require-complete]` |
+| `render_report.py` | Render `DEFT_Loop_Report.md` from disk state. Called automatically by `init_deft_state.py` and by every accepted commit; run it directly only to refresh out of band. | `--results-dir [--out] [--require-terminal]` |
 
 ## Pipeline glue scripts
 
@@ -19,6 +20,7 @@ These replace internal container images from the reference pipeline whose script
 
 | Script | Stage | Purpose |
 |---|---|---|
+| `fetch_codetr_checkpoint.py` | Pre-Flight, prep runs only | Download the Co-DETR pseudo-labeller from HuggingFace over stdlib HTTPS when the user supplied none, verifying size and SHA-256. Idempotent: an existing checkpoint is reused after a size check, and its digest too with `--verify`. `--plan` reports without fetching and applies the same checks. |
 | `fetch_gdino_checkpoint.py` | Pre-Flight | Resolve the Grounding DINO zero-shot checkpoint, downloading `nvidia/tao/grounding_dino:...trainable_v1.1` from NGC when the user supplied none. `--plan` resolves the path and reports whether a download is needed without performing one, for use before the approval gate. Idempotent; prints the path on stdout. Verified bit-identical to the hand-staged copy it replaces. |
 | `emit_default_spec.py` | any stage | Emit a stage's starting spec from TAO: `default_specs` for annotations/analytics, the Hydra schema dump for grounding_dino/codetr, a shipped asset for gap_analysis/tmm/embedding (TAO emits none). Reports mandatory fields grouped by block. |
 | `apply_spec_overrides.py` | any stage | Apply the stage's `--apply-workflow-defaults` (settings this workflow requires that differ from TAO's defaults, from `assets/overlays/`) then `--set` (only what varies per run), by dotted key and YAML-typed. A `--set` colliding with a workflow-default key is an error unless `--allow-workflow-default-override`. Refuses unknown keys unless `--allow-new`; `--require-no-mandatory` blocks launching against any remaining `???`, and `--require-no-mandatory-under BLOCK` scopes that to the blocks a stage actually reads — a `default_specs` dump marks fields mandatory for every action it supports, so the unscoped check cannot pass for a single-action run; `--report-json` records every key and its source. |
@@ -52,6 +54,7 @@ must be derived from the run's classes, never pinned.
 | `prepare_mapping_for_kpi_analyze.py` | `kpi_analyze` | Narrow the supplied KPI class mapping to the run's target classes, aliases verbatim. A class the model cannot predict would otherwise score a constant 0 and compress the mAP trend. |
 | `prepare_input_for_image_embeddings.py` | `prep` | List the pool image directory into the `filepath` parquet `embedding image_embeddings` reads. Absolute paths, symlinks resolved, sorted — so the same directory always yields the same parquet. |
 | `prepare_val_split_for_train.py` | `prep` | Carve a validation COCO from 10% of the prepared pool, rewriting category ids to **0-based**. `grounding_dino train` cannot run without a validation source, and its loader uses `category_id` verbatim as a dense label index, so a conventional 1-based COCO overflows on the last class. |
+| `prepare_thresholds_for_gap_analysis.py` | before `gap_analysis` | Write the gate for each of `config.target_classes`, from `config.ap50_thresholds`, into the `weak_thresholds` file the spec build consumes; a gate for an untargeted class is left out. Run it before building the spec: the asset leaves `weak_thresholds` as `???`, so the build fails without it rather than gating on values nobody chose. |
 | `summarize_kpi.py` | after `kpi_analyze` | Recompute the aggregate mAP from `kpi_calc.csv` and write `kpi_summary.json` beside it. The stage prints mAP to stdout and writes it nowhere, so this removes the need to hold a stream open for the length of the stage. |
 | `await_stage.py` | any long stage | Block until a stage finishes by watching its artifacts or `status.json`. **Never wait on a process name.** Pass `--newer-than <marker touched before launch>` so a retry is not satisfied by the previous attempt's leftovers. |
 | `prepare_class_mappings_for_mining_data_prep.py` | `prep` | Translate one `classes.yaml` into the two mappings TAO folds with: the `category_mapping` block for the Co-DETR inference spec (the real fold, applied at detection time with per-category soft-NMS) and the identity `kitti.mapping` for `annotations convert`. Emits nothing else — TAO does the folding. |
@@ -79,29 +82,51 @@ must be derived from the run's classes, never pinned.
 
 If no reliable start time was captured, omit `--duration-sec`; it records `0`. Do not invent a duration.
 
-## Agents
+## Reporting
 
-| Agent | Purpose | Invoke when |
-|---|---|---|
-| `agents/reporter.md` | Render `results/DEFT_Loop_Report.md` from disk state. Atomic write; no HTML template. | After each completed iteration (`trigger="after-iteration"`) and at loop end (`trigger="loop-end"`). |
+`results/DEFT_Loop_Report.md` is rendered by `scripts/render_report.py`, not by an
+agent. **Do not spawn a subagent for it and do not compose it by hand.**
 
-Spawn via the Task tool, passing paths only — the agent reads disk as the single source of truth:
+`init_deft_state.py` writes it before any stage has run, and every accepted
+`commit_stage.py` call re-renders it as a post-commit hook, so it is current after
+each stage rather than after each iteration. The hook is deliberately outside the
+commit transaction: a rendering failure prints a warning and leaves the commit
+standing, because presentation must never roll back a GPU stage or block the state
+machine.
 
+Rendering deterministically is also what makes the report reachable from a runtime
+with no subagent tool. Every stage of this loop already has a fallback that needs
+nothing but `Bash` — a mapped skill falls back to the overlay's documented
+`docker run` — and reporting is now the same.
+
+The renderer reads the audit verdict, `deft_state.json`, `loop_log.jsonl`, each
+phase's `kpi_summary.json` (falling back to `kpi_calc.csv` plus `kpi_analyze.log`),
+and each iteration's mining summary and staging report. Two of its rules matter
+when reading the output:
+
+- **The only mAP in the report is the KPI mAP**, scored against the evaluation set.
+  A `train` summary that improvised from the training container's stdout can carry
+  `val_mAP`/`val_mAP50`, which score agreement with the Co-DETR pseudo-labels on the
+  mined-data validation split rather than accuracy; the timeline drops them. They
+  remain in `loop_log.jsonl`.
+- **A number that is not on disk is left out**, never guessed. A phase whose CSV has
+  no `class_name` column and no committed `kpi_analyze.log` reports its mAP alone
+  and says the per-class breakdown was unavailable, because row order is not a
+  class order.
+
+To re-render by hand, or after fixing whatever made the hook warn:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/render_report.py \
+  --results-dir "${RESULTS_DIR}"
 ```
-Task(
-  description="Render DEFT OD report",
-  subagent_type="general-purpose",
-  prompt=(
-    f"Read {skill_root}/agents/reporter.md and follow its instructions exactly.\n"
-    f"Inputs:\n"
-    f"  results_dir = {RESULTS_DIR}\n"
-    f"  skill_root  = {skill_root}\n"
-    f"  trigger     = after-iteration\n"
-  ),
-)
-```
 
-Never render the report inline in the parent — the agent exists so an end-of-loop render survives a saturated parent context.
+Add `--require-terminal` for an end-of-loop render: it refuses to render until
+`loop_stop` is committed, so a hard stop that has not been finalized cannot be
+presented as a finished run.
+
+`agents/reporter.md` remains only as a compatibility wrapper for a runtime that
+invokes the legacy agent by name; it shells out to the same script.
 
 ## Stage Reference Modules
 

@@ -190,6 +190,10 @@ def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path
     pool, dataset, base, nn = tmp_path / "pool", tmp_path / "ft_dataset", tmp_path / "ft_base", tmp_path / "nn"
     for path in (pool, dataset, base, nn):
         path.mkdir()
+    clean = pool / "texture_1/clean_image/clean.png"
+    clean.parent.mkdir(parents=True)
+    clean.write_bytes(b"clean-image")
+    (pool / "texture_without_clean_references").mkdir()
     defect, validation, vae = tmp_path / "defect.jsonl", tmp_path / "validation.jsonl", tmp_path / "vae.pth"
     defect.write_text("{}\n")
     validation.write_text("{}\n")
@@ -204,3 +208,34 @@ def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path
     state = MODULE.initialize(config, tmp_path / "results")
     assert state["synthesis_bootstrap_required"] is True
     assert state["next_stage"] == "synthesis_bootstrap"
+
+
+@pytest.mark.parametrize("pool_shape", ("empty", "missing_clean_dir", "unsupported_file"))
+def test_initialize_rejects_globally_empty_synthesis_clean_pool(
+        tmp_path: Path, pool_shape: str) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    if pool_shape == "missing_clean_dir":
+        (pool / "texture_1").mkdir()
+    elif pool_shape == "unsupported_file":
+        clean = pool / "texture_1/clean_image/readme.txt"
+        clean.parent.mkdir(parents=True)
+        clean.write_text("not an image")
+    defect = tmp_path / "defect.jsonl"
+    defect.write_text("{}\n")
+    checkpoint = tmp_path / "adapter.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    recipe = tmp_path / "recipe.yaml"
+    recipe.write_text("anomaly_types: []\n")
+    value["synthesis"] = {
+        "enabled": True,
+        "pool_dataset_root": str(pool),
+        "defect_spec": str(defect),
+        "routes": {"route": {"checkpoint": str(checkpoint), "recipe": str(recipe)}},
+    }
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="at least one clean reference image"):
+        MODULE.initialize(config, tmp_path / "results")

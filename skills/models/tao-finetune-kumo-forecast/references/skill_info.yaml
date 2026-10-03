@@ -1,5 +1,5 @@
-name: tao-finetune-nv-tesseract-forecasting
-network_arch: nv_tesseract_forecasting
+name: tao-finetune-kumo-forecast
+network_arch: kumo_forecast
 automl_enabled: true
 container_image: null
 actions:
@@ -48,8 +48,8 @@ spec_templates:
   inference_hpo: references/spec_template_inference_hpo.yaml
 
 description: >-
-  NV-Tesseract Forecasting fine-tuning and DARR inference HPO via VirtualEnvSDK.
+  Kumo-Forecast fine-tuning and DARR inference HPO via VirtualEnvSDK.
   No container required. Fine-tuning AutoML minimizes val_mse over lr, batch_size,
   head_dropout, weight_decay, and max_norm. Inference HPO minimizes val_mse over
   DARR parameters alpha, k, and temperature. Supply execution= to AutoMLRunner.run()
-  with absolute paths to your NV-Tesseract clone.
+  with absolute paths to your Kumo-TS clone.

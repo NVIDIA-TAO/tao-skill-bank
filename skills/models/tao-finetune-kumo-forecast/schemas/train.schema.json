@@ -39,7 +39,7 @@
       "target_cols": "",
       "val_ratio": 0.1,
       "test_ratio": 0.0,
-      "stride": 1
+      "stride": 72
     },
     "model": {
       "seq_len": 512,
@@ -127,8 +127,8 @@
         },
         "stride": {
           "automl_enabled": false,
-          "default": 1,
-          "description": "Sliding window stride. Use 1 for dense windows.",
+          "default": 72,
+          "description": "Sliding window stride. Matches model.forecast_horizon (the runtime default when unset); lower values give denser, overlapping windows.",
           "minimum": 1,
           "title": "stride",
           "type": "int"
@@ -240,7 +240,7 @@
         "num_epochs": {
           "automl_enabled": false,
           "default": 5,
-          "description": "Compatibility epoch count consumed by AutoMLRunner checkpoint retention. Keep equal to train.epochs for NV-Tesseract scripts.",
+          "description": "Compatibility epoch count consumed by AutoMLRunner checkpoint retention. Keep equal to train.epochs for Kumo-Forecast scripts.",
           "maximum": 200,
           "minimum": 1,
           "title": "AutoML runner epoch count",
@@ -332,10 +332,10 @@
   "type": "object",
   "x_tao_schema": {
     "action": "train",
-    "model": "tao-finetune-nv-tesseract-forecasting",
-    "network_arch": "nv_tesseract_forecasting",
+    "model": "tao-finetune-kumo-forecast",
+    "network_arch": "kumo_forecast",
     "schema_action": "train",
     "schema_version": 1,
-    "source": "hand-authored for NV-Tesseract Forecasting finetune_example.py CLI"
+    "source": "hand-authored for Kumo-Forecast finetune_example.py CLI"
   }
 }

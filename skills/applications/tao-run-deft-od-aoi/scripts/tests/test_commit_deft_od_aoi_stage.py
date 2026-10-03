@@ -109,6 +109,37 @@ def _iteration_artifacts(root: Path) -> dict[str, list[str]]:
     }
 
 
+def _advance_to_synthesis(root: Path, *, retrieval_enabled: bool) -> Path:
+    state, _ = _state(root)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", synthesis_enabled=True,
+                 next_stage="iteration_retrieval", current_iteration=0,
+                 last_stage="baseline_gaps", events=[])
+    state.write_text(json.dumps(value))
+    if retrieval_enabled:
+        retrieval = _retrieval(root, sparse=True)
+    else:
+        manifest = root / "query_manifest.json"
+        no_queries = {
+            "status": "NO_QUERIES", "query_count": 0, "candidate_count": 1,
+            "excluded_count": 0, "remaining_candidate_count": 1,
+        }
+        manifest.write_text(json.dumps({
+            "status": "COMPLETE", "iteration": 1,
+            "query_counts": {"real": 0, "clean": 0}, "enabled_roles": [],
+            "role_status": {"real": no_queries, "clean": no_queries},
+            "converged": False, "synthesis_pending": True,
+        }))
+        retrieval = [f"query_manifest={manifest}"]
+    MODULE.commit(state, "iteration_retrieval", 1, retrieval)
+    admission = root / "admission_report.json"
+    admission.write_text(json.dumps({"status": "COMPLETE", "iteration": 1,
+                                     "admitted": {"real": 0, "clean": 0,
+                                                  "synthetic": 0}}))
+    MODULE.commit(state, "iteration_admission", 1, [f"admission_report={admission}"])
+    return state
+
+
 def test_commit_enforces_semantic_evidence_and_completes(tmp_path: Path) -> None:
     state, artifact = _state(tmp_path)
     iteration = _iteration_artifacts(tmp_path)
@@ -208,6 +239,123 @@ def test_synthesis_reconciles_generated_and_blocked_counts(tmp_path: Path) -> No
     result = MODULE.commit(state, "iteration_synthesis", 1,
                            [f"generation_report={generation}",
                             f"admission_report={admission}"])
+    assert result["next_stage"] == "iteration_training"
+
+
+def test_synthesis_accepts_typed_no_eligible_skip(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", synthesis_enabled=True, next_stage="iteration_synthesis",
+                 current_iteration=1, last_stage="iteration_admission")
+    state.write_text(json.dumps(value))
+    preparation = tmp_path / "input_contract.json"
+    preparation.write_text(json.dumps({
+        "status": "SKIPPED", "reason": "no_eligible_false_negatives",
+        "selection_candidate_fn_count": 2, "eligible_fn_count": 0,
+        "skipped_fn_count": 2,
+        "skipped_fns": [{"fn_id": "fn-1"}, {"fn_id": "fn-2"}],
+        "skip_counts": {"empty_fn_mask": 2},
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_synthesis", 1,
+        [f"synthesis_preparation={preparation}"],
+    )
+
+    assert result["next_stage"] == "iteration_training"
+
+
+def test_synthesis_accepts_typed_no_routed_skip(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", synthesis_enabled=True, next_stage="iteration_synthesis",
+                 current_iteration=1, last_stage="iteration_admission")
+    state.write_text(json.dumps(value))
+    request = tmp_path / "synthesis_request.json"
+    request.write_text(json.dumps({
+        "status": "SKIPPED", "reason": "no_routed_false_negatives", "fn_count": 0,
+        "skipped_unrouted_fn_count": 2,
+        "skipped_unrouted_by_dataset": {"boxes_only": 2},
+        "observed_dataset_ids": ["boxes_only"],
+        "configured_route_keys": ["route"],
+        "message": "Skipped synthesis because every FN is unrouted.",
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_synthesis", 1, [f"synthesis_request={request}"],
+    )
+
+    assert result["next_stage"] == "iteration_training"
+
+
+def test_no_clean_reference_skip_allows_retrieval_result_to_train(tmp_path: Path) -> None:
+    state = _advance_to_synthesis(tmp_path, retrieval_enabled=True)
+    preparation = tmp_path / "input_contract.json"
+    preparation.write_text(json.dumps({
+        "status": "SKIPPED", "reason": "no_eligible_false_negatives",
+        "selection_candidate_fn_count": 2, "eligible_fn_count": 0,
+        "skipped_fn_count": 2,
+        "skipped_fns": [{"fn_id": "fn-1", "reason": "no_clean_reference_images"},
+                        {"fn_id": "fn-2", "reason": "no_clean_reference_images"}],
+        "skip_counts": {"no_clean_reference_images": 2},
+        "warnings": [{"code": "no_clean_reference_images", "fn_count": 2,
+                      "message": "No synthesis clean references are available."}],
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_synthesis", 1,
+        [f"synthesis_preparation={preparation}"],
+    )
+
+    assert result["status"] == "RUNNING"
+    assert result["next_stage"] == "iteration_training"
+
+
+def test_no_clean_reference_skip_converges_when_retrieval_has_no_output(
+        tmp_path: Path) -> None:
+    state = _advance_to_synthesis(tmp_path, retrieval_enabled=False)
+    preparation = tmp_path / "input_contract.json"
+    preparation.write_text(json.dumps({
+        "status": "SKIPPED", "reason": "no_eligible_false_negatives",
+        "selection_candidate_fn_count": 1, "eligible_fn_count": 0,
+        "skipped_fn_count": 1,
+        "skipped_fns": [{"fn_id": "fn-1", "reason": "no_clean_reference_images"}],
+        "skip_counts": {"no_clean_reference_images": 1},
+        "warnings": [{"code": "no_clean_reference_images", "fn_count": 1,
+                      "message": "No synthesis clean references are available."}],
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_synthesis", 1,
+        [f"synthesis_preparation={preparation}"],
+    )
+
+    assert result["status"] == "COMPLETE" and result["next_stage"] is None
+    assert result["completion_reason"] == "all_producers_exhausted"
+
+
+def test_no_eligible_skip_accepts_mixed_detailed_reasons(tmp_path: Path) -> None:
+    state = _advance_to_synthesis(tmp_path, retrieval_enabled=True)
+    preparation = tmp_path / "input_contract.json"
+    preparation.write_text(json.dumps({
+        "status": "SKIPPED", "reason": "no_eligible_false_negatives",
+        "selection_candidate_fn_count": 2, "eligible_fn_count": 0,
+        "skipped_fn_count": 2,
+        "skipped_fns": [
+            {"fn_id": "fn-1", "reason": "no_clean_reference_images"},
+            {"fn_id": "fn-2", "reason": "empty_fn_mask"},
+        ],
+        "skip_counts": {"empty_fn_mask": 1, "no_clean_reference_images": 1},
+        "warnings": [{"code": "no_clean_reference_images", "fn_count": 1,
+                      "message": "One synthesis clean reference is unavailable."}],
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_synthesis", 1,
+        [f"synthesis_preparation={preparation}"],
+    )
+
+    assert result["status"] == "RUNNING"
     assert result["next_stage"] == "iteration_training"
 
 

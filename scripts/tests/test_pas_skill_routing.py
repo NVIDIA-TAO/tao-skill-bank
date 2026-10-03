@@ -47,3 +47,21 @@ def test_pas_routing_contract_is_structural_and_competitors_are_bounded():
         "tao-run-deft-pas",
     ):
         assert signal in orchestration
+
+
+def test_clip_and_pas_require_one_explicit_finetuning_method_choice():
+    clip = (REPO_ROOT / "skills/models/tao-finetune-clip/SKILL.md").read_text()
+    pas = (REPO_ROOT / "skills/applications/tao-run-deft-pas/SKILL.md").read_text()
+    preflight = (
+        REPO_ROOT
+        / "skills/applications/tao-run-deft-pas/references/preflight.md"
+    ).read_text()
+
+    question = "Fine-tuning method: LoRA (default) or full-parameter SFT?"
+    assert question in clip
+    assert question in pas
+    assert "`--finetuning-method` to `lora`" in pas
+    assert "`--finetuning-method sft`" in pas
+    assert "method=<full-parameter SFT | LoRA>" in preflight
+    assert "| fine-tuning method | `LoRA`;" in preflight
+    assert '--finetuning-method "$FINETUNING_METHOD"' in preflight
