@@ -37,6 +37,35 @@ def _pair_id(fn_id: str, clean: str) -> str:
     return "pair-" + hashlib.sha256(f"{fn_id}\0{clean}".encode()).hexdigest()[:16]
 
 
+def _rank_clean_images(
+    clean: pd.DataFrame,
+    clean_vectors: np.ndarray,
+    query: pd.Series,
+    query_vector: np.ndarray,
+    topn: int,
+) -> list[tuple[str, float]]:
+    eligible = clean.pool_key.astype(str) == str(query.pool_key)
+    if "anomaly_type_eligibility" in clean.columns:
+        eligible &= (
+            clean.anomaly_type_eligibility.astype(str) == str(query.anomaly_type)
+        )
+    pool = clean.index[eligible].to_numpy()
+    if not len(pool):
+        raise ValueError(
+            "no clean embeddings for "
+            f"pool_key={query.pool_key}, anomaly_type={query.anomaly_type}"
+        )
+
+    scores = clean_vectors[pool] @ query_vector
+    best_by_filepath: dict[str, float] = {}
+    for index, score in zip(pool, scores, strict=True):
+        filepath = str(clean.loc[int(index), "filepath"])
+        value = float(score)
+        if filepath not in best_by_filepath or value > best_by_filepath[filepath]:
+            best_by_filepath[filepath] = value
+    return sorted(best_by_filepath.items(), key=lambda item: (-item[1], item[0]))[:topn]
+
+
 def _validate_amp_mask(path: Path) -> None:
     if not path.is_file():
         raise FileNotFoundError(f"AMP mask is missing: {path}")
@@ -84,16 +113,13 @@ def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
 
     candidates, requests = [], []
     for position, query in queries.reset_index(drop=True).iterrows():
-        pool = clean.index[clean.pool_key.astype(str) == str(query.pool_key)].to_numpy()
-        if not len(pool):
-            raise ValueError(f"no clean embeddings for pool_key={query.pool_key}")
-        scores = clean_vectors[pool] @ query_vectors[position]
+        ranked = _rank_clean_images(
+            clean, clean_vectors, query, query_vectors[position], topn
+        )
         mask_rows = masks[masks.fn_id == query.fn_id]
         if set(mask_rows.branch.astype(str)) != BRANCHES or len(mask_rows) != 2:
             raise ValueError(f"FN {query.fn_id} needs exactly two mask branches")
-        for rank, local in enumerate(np.argsort(-scores, kind="stable")[:topn], start=1):
-            clean_path = str(clean.loc[int(pool[local]), "filepath"])
-            score = float(scores[local])
+        for rank, (clean_path, score) in enumerate(ranked, start=1):
             reason = "below_similarity_floor" if score < floor else (
                 "prior_iteration_exclusion" if clean_path in excluded else ""
             )
