@@ -38,7 +38,9 @@ def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
                        "source_image_id": 1, "embedding": [similarity, 1.0 - similarity]}]).to_parquet(
             candidate_root / f"{role}_candidate_embeddings.parquet"
         )
-        pd.DataFrame([{"filepath": f"/{role}-query.png", "embedding": [1.0, 0.0]}]).to_parquet(
+        reason = "fn" if role == "real" else "background_fp"
+        pd.DataFrame([{"filepath": f"/{role}-query.png", "embedding": [1.0, 0.0],
+                       "reason": reason}]).to_parquet(
             retrieval_root / f"{role}_query_embeddings.parquet"
         )
         mine = retrieval_root / f"mine_{role}"
@@ -52,7 +54,10 @@ def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
                                                     "maximum_box_aspect": 25.0},
                                       "synthesis": {"cumulative_fraction_of_real_defects": 1.0}}))
     (retrieval_root / "query_manifest.json").write_text(
-        json.dumps({"iteration": 1, "enabled_roles": ["real", "clean"]})
+        json.dumps({"iteration": 1, "enabled_roles": ["real", "clean"],
+                    "admission_targets": {"real": {"fn": 1, "near_miss_fp": 0},
+                                          "clean": {"background_fp": 1}},
+                    "requested_crop_counts": {"real": 15, "clean": 15}})
     )
     return policy, candidate_root, retrieval_root
 
@@ -63,6 +68,13 @@ def test_admission_deduplicates_sources_and_preserves_explicit_clean(tmp_path: P
     assert report["admitted"] == {"real": 1, "clean": 1, "synthetic": 0}
     assert report["by_kind"] == {"real_defect": 1, "clean_negative": 1,
                                  "synthetic_defect": 0}
+    preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
+    assert preview["roles"]["real"]["branches"]["fn"] == {
+        "desired_parents": 1, "mined_crops": 1, "unique_parents": 1,
+        "novel_parents": 1, "selected_parents": 1, "shortfall_parents": 0,
+        "quota_met": True,
+    }
+    assert preview["roles"]["real"]["per_dataset"] == {"unknown": 1}
     coco = json.loads((tmp_path / "out/train.json").read_text())
     assert len(coco["images"]) == 2 and len(coco["annotations"]) == 1
     clean_id = next(row["id"] for row in coco["images"] if row["deft_kind"] == "clean_negative")
@@ -113,8 +125,66 @@ def test_clean_admission_uses_cumulative_real_capacity_after_real_mining_exhaust
 
 def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: Path) -> None:
     policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
-    with pytest.raises(ValueError, match="admitted no source images"):
+    with pytest.raises(ValueError, match="mining admitted no source images"):
         MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+
+
+def test_admission_reports_parent_shortfall_without_failing(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    manifest = json.loads((retrieval / "query_manifest.json").read_text())
+    manifest["admission_targets"]["real"]["fn"] = 2
+    (retrieval / "query_manifest.json").write_text(json.dumps(manifest))
+
+    report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+
+    assert report["admitted"]["real"] == 1
+    preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
+    assert preview["roles"]["real"]["branches"]["fn"] == {
+        "desired_parents": 2, "mined_crops": 1, "unique_parents": 1,
+        "novel_parents": 1, "selected_parents": 1, "shortfall_parents": 1,
+        "quota_met": False,
+    }
+
+
+def test_admission_uses_overfetch_to_replace_a_previously_used_parent(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    first, second = tmp_path / "real.png", tmp_path / "real-second.png"
+    second.write_bytes(b"second")
+    document = json.loads((tmp_path / "real.json").read_text())
+    document["images"].append({"id": 2, "file_name": second.name, "source_path": str(second),
+                               "deft_od_aoi": {
+                                   "dataset_id": "canonical-dataset-b",
+                                    "benchmark": "source-dataset-b",
+                               }})
+    document["annotations"].append({"id": 6, "image_id": 2, "category_id": 1,
+                                    "bbox": [1, 1, 4, 4], "area": 16})
+    (tmp_path / "real.json").write_text(json.dumps(document))
+    pd.DataFrame([
+        {"filepath": "/real-crop-a.png", "source_filepath": str(first),
+         "source_image_id": 1, "embedding": [1.0, 0.0]},
+        {"filepath": "/real-crop-b.png", "source_filepath": str(second),
+         "source_image_id": 2, "embedding": [0.9, 0.1]},
+    ]).to_parquet(candidates / "real_candidate_embeddings.parquet")
+    pd.DataFrame([{"filepath": "/real-crop-a.png"},
+                  {"filepath": "/real-crop-b.png"}]).to_parquet(
+        retrieval / "mine_real/final_unique_files.parquet"
+    )
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": first.name, "source_path": str(first),
+                    "deft_kind": "real_defect"}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1,
+                         "bbox": [1, 1, 4, 4]}],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+
+    report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", previous, "copy")
+
+    assert report["admitted"]["real"] == 1
+    preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
+    assert preview["roles"]["real"]["branches"]["fn"]["unique_parents"] == 2
+    assert preview["roles"]["real"]["branches"]["fn"]["novel_parents"] == 1
+    assert preview["roles"]["real"]["per_dataset"] == {"canonical-dataset-b": 1}
 
 
 def test_admission_folds_capped_synthetic_categories_to_defect(tmp_path: Path) -> None:
@@ -185,7 +255,7 @@ def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) ->
                                      "categories": [{"id": 7, "name": "defect-variant"}]}))
 
     report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", previous, "copy",
-                          synthetic, generated)
+                          synthetic, generated, synthetic_only=True)
 
     admission = report["synthetic_admission"]
     assert admission["quality_filter"]["rejected_annotations_full_frame"] == 1
@@ -193,6 +263,47 @@ def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) ->
     assert admission["requested_new"] == 4
     assert admission["admitted_new"] == 2
     assert admission["admitted_by_stratum"] == {"line-a": 1, "line-b": 1}
+    preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
+    assert preview["mining_admission"] == "skipped" and preview["roles"] == {}
+
+
+def test_synthetic_inputs_do_not_implicitly_disable_mining(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": "old.png", "source_path": str(tmp_path / "old.png"),
+                    "deft_kind": "synthetic_defect"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    (tmp_path / "old.png").write_bytes(b"old")
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    image = generated / "synthetic.png"
+    image.write_bytes(b"synthetic")
+    synthetic = tmp_path / "synthetic.json"
+    synthetic.write_text(json.dumps({
+        "images": [{"id": 2, "file_name": image.name, "width": 16, "height": 16}],
+        "annotations": [{"id": 2, "image_id": 2, "category_id": 1,
+                         "bbox": [1, 1, 3, 3]}],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+
+    report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", previous, "copy",
+                          synthetic, generated)
+
+    assert report["admitted"]["real"] == 1
+    preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
+    assert preview["mining_admission"] == "evaluated"
+
+
+def test_admission_reports_missing_selected_source_cleanly(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    frame = pd.read_parquet(candidates / "real_candidate_embeddings.parquet")
+    frame["source_filepath"] = str(tmp_path / "not-in-frozen-coco.png")
+    frame.to_parquet(candidates / "real_candidate_embeddings.parquet", index=False)
+
+    with pytest.raises(ValueError, match="selected real source is absent from its frozen COCO"):
+        MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
 
 
 def test_synthetic_cap_selection_is_independent_of_coco_order(tmp_path: Path) -> None:

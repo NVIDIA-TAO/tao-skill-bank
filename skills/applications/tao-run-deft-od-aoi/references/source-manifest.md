@@ -33,6 +33,23 @@ through typed capability and warning evidence.
 The preparer maps all input categories to the one `defect` category and rejects
 cross-role image overlap.
 
+## Canonical metadata boundary
+
+The generic preparer preserves metadata; it does not invent dataset-specific
+identity. Before referencing a benchmark COCO in `dataset_sources.json`, its
+upstream dataset ingestion must populate these canonical fields on every boxed
+KPI image:
+
+- `dataset_id`: synthesis route/dataset identity;
+- `texture_id`: namespaced product or texture identity;
+- `defect_class`: source defect label;
+- `fn_mask_source`: a real same-size segmentation mask when `dataset_id` is
+  synthesis-applicable.
+
+Dataset-specific ingestion owns any path, category, or source-schema mapping
+needed to produce these values. This application accepts only the canonical
+contract and does not define legacy aliases or infer identities from filenames.
+
 Validate without writing output, then materialize into a new directory:
 
 ```bash
@@ -77,9 +94,8 @@ contracts and resolves every referenced image during initialization.
 - Preserve an intentionally empty clean role as a zero-image canonical COCO and
   mark its retrieval capability unavailable; reject an empty real role.
 - Never place one resolved image identity in more than one role.
-- Preserve provenance metadata needed for audit.
-- For synthesis, preserve exact `dataset_id`, `texture_id`, `defect_class`,
-  and pixel-mask paths on eligible benchmark records.
+- Preserve canonical `dataset_id`, `texture_id`, and `defect_class` values plus
+  pixel-mask paths on synthesis-applicable benchmark records.
 - Do not infer AnomalyGenNext types from filenames at this boundary.
 
 Validate the resulting handoff with `init_deft_od_aoi.py`; its output policy is

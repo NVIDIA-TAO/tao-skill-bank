@@ -30,9 +30,14 @@ def _source(root: Path, name: str, *, boxed: bool, category: int = 7,
     annotations = ([{"id": 9, "image_id": 4, "category_id": category,
                      "bbox": [1, 2, 3, 4], "label": "scratch"}] if boxed else [])
     coco = root / name / "source.json"
+    image_row = {"id": 4, "file_name": image.name, "width": 12, "height": 10,
+                 "customer_field": name}
+    if name == "kpi" and boxed:
+        image_row["deft_od_aoi"] = {
+            "dataset_id": "route", "texture_id": "texture", "defect_class": "scratch"
+        }
     coco.write_text(json.dumps({
-        "images": [{"id": 4, "file_name": image.name, "width": 12, "height": 10,
-                    "customer_field": name}],
+        "images": [image_row],
         "annotations": annotations,
         "categories": [{"id": category, "name": "customer-defect"}],
     }))
@@ -82,6 +87,7 @@ def test_prepares_binary_roles_and_customer_handoff(tmp_path: Path) -> None:
     assert documents["real"][0]["categories"] == [{"id": 1, "name": "defect"}]
     assert documents["real"][0]["annotations"][0]["category_id"] == 1
     assert documents["real"][0]["images"][0]["customer_field"] == "mine"
+    assert documents["kpi"][0]["images"][0]["deft_od_aoi"]["dataset_id"] == "route"
     assert not documents["clean"][0]["annotations"]
     assert report["roles"]["real"] == {"images": 1, "annotations": 1}
     assert report["sources"][0]["input"] == "benchmark"

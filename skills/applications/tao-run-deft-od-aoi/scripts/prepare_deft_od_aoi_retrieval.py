@@ -112,6 +112,25 @@ def _embedding_spec(policy: dict[str, Any], input_path: Path, output: Path) -> d
             "model_config_path": "", "batch_size": 64}
 
 
+def _kpi_pockets(policy: dict[str, Any]) -> dict[str, dict[str, str]]:
+    source = policy["sources"]["kpi"]
+    images = Path(source["images"])
+    document = json.loads(Path(source["coco"]).read_text())
+    result = {}
+    for row in document["images"]:
+        path = _source(images, row)
+        metadata = row.get("deft_od_aoi") or {}
+        values = {
+            key: str(metadata.get(key) or row.get(key) or "unknown")
+            for key in ("dataset_id", "texture_id", "defect_class")
+        }
+        values["pocket"] = "/".join(values[key] for key in (
+            "dataset_id", "texture_id", "defect_class"
+        ))
+        result[str(path)] = values
+    return result
+
+
 def _path_values(path: Path, label: str) -> set[str]:
     if not path.is_file():
         raise FileNotFoundError(f"{label} exclusion input is missing: {path}")
@@ -130,7 +149,8 @@ def _history_sources(path: Path | None) -> set[str]:
     if not isinstance(value.get("images"), list):
         raise ValueError("previous COCO lacks images")
     return {
-        str(Path(str(row.get("source_path") or path.parent / "images" / row["file_name"])).resolve())
+        str(Path(str(row.get("original_source_path") or row.get("source_path")
+                          or path.parent / "images" / row["file_name"])).resolve())
         for row in value["images"]
     }
 
@@ -215,6 +235,22 @@ def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
     return report
 
 
+def _previous_sources(previous_path: Path | None) -> dict[str, set[Path]]:
+    result = {"real": set(), "clean": set()}
+    if previous_path is None:
+        return result
+    previous = json.loads(previous_path.read_text())
+    kinds = {"real_defect": "real", "clean_negative": "clean"}
+    for row in previous.get("images", []):
+        role = kinds.get(str(row.get("deft_kind") or ""))
+        if role:
+            for key in ("source_path", "original_source_path"):
+                raw = row.get(key)
+                if raw:
+                    result[role].add(Path(str(raw)).resolve())
+    return result
+
+
 def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: int,
             output: Path, candidate_root: Path, real_factor: int | None,
             previous_coco: Path | None = None,
@@ -238,14 +274,22 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         elif iou < gap["near_miss_iou_upper"]:
             events.append(("real", "near_miss_fp", row))
     output.mkdir(parents=True)
+    pockets = _kpi_pockets(policy)
     history = _history_sources(previous_coco)
+    prior_sources = _previous_sources(previous_coco)
     candidate_counts = _candidate_counts(candidate_root)
     configured_exclusions = exclusion_paths or {}
-    counts, frames, role_status, warnings = {}, {}, {}, []
+    counts, frames, targets, requested, role_status = {}, {}, {}, {}, {}
+    excluded_candidate_crops, excluded_source_images = {}, {}
+    warnings = []
     for role in ("real", "clean"):
         rows = []
         for index, (_, reason, event) in enumerate(item for item in events if item[0] == role):
             source = Path(str(event["filepath"])).resolve()
+            if str(source) not in pockets:
+                raise ValueError(f"gap image is absent from the frozen KPI role: {source}")
+            if role == "real" and "unknown" in pockets[str(source)].values():
+                raise ValueError(f"gap image lacks frozen pocket metadata: {source}")
             width, height = _size(source)
             box = _gap_box(event["bbox"], width, height,
                            float(policy["retrieval"]["defect_context_scale"]))
@@ -254,9 +298,12 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             _crop(source, box, crop)
             rows.append({"filepath": str(crop), "query_id": query_id, "role": role,
                          "reason": reason, "source_filepath": str(source),
-                         "source_bbox": event["bbox"], "best_iou": float(event["best_iou"])})
+                         "source_bbox": event["bbox"], "best_iou": float(event["best_iou"]),
+                         **pockets[str(source)]})
         counts[role], frames[role] = len(rows), pd.DataFrame(rows)
         if not rows:
+            excluded_candidate_crops[role] = 0
+            excluded_source_images[role] = 0
             role_status[role] = {"status": "NO_QUERIES", "query_count": 0,
                                  "candidate_count": candidate_counts[role],
                                  "excluded_count": 0,
@@ -274,6 +321,8 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
                 "exclusion_manifest": str(exclusion_file.resolve()),
                 "history_source_count": 0, "explicit_exclusion_count": 0,
             }
+            excluded_candidate_crops[role] = 0
+            excluded_source_images[role] = 0
             warnings.append({
                 "code": "retrieval_role_has_no_candidates", "role": role,
                 "message": f"{role} queries were routed to an empty candidate role; mining is skipped",
@@ -296,6 +345,11 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         }
         if len(candidate_files) != candidate_counts[role]:
             raise ValueError(f"{role} candidate parquet disagrees with candidate manifest")
+        if prior_sources[role] and not {
+                str(path) for path in prior_sources[role]} & candidate_sources:
+            raise ValueError(
+                f"{role} prior sources matched no frozen candidate source paths"
+            )
         explicit = set()
         if role in configured_exclusions:
             explicit = _path_values(configured_exclusions[role], role)
@@ -317,6 +371,12 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         remaining = len(candidate_files - {
             str(Path(value).expanduser().resolve()) for value in excluded.filepath.astype(str)
         })
+        excluded_candidate_crops[role] = int(excluded.filepath.nunique())
+        excluded_source_images[role] = int(
+            candidates.loc[excluded.index, "source_filepath"].astype(str).map(
+                lambda value: str(Path(value).expanduser().resolve())
+            ).nunique()
+        )
         role_status[role] = {
             "status": "READY" if remaining else "EXHAUSTED",
             "query_count": len(rows), "candidate_count": len(candidate_files),
@@ -333,11 +393,27 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             yaml.safe_dump(_embedding_spec(policy, parquet, embedded), sort_keys=False)
         )
         routing = policy["routing"]
-        factor = (real_factor or int(routing["real_mine_factor_min"])) if role == "real" else int(routing["clean_factor"])
-        desired = min(remaining, max(1, len(rows) * factor))
+        if role == "real":
+            factor = real_factor or int(routing["real_mine_factor_min"])
+            if not int(routing["real_mine_factor_min"]) <= factor <= int(routing["real_mine_factor_max"]):
+                raise ValueError("real factor is outside the frozen policy range")
+            strict_count = sum(row["reason"] == "fn" for row in rows)
+            near = pd.DataFrame(row for row in rows if row["reason"] == "near_miss_fp")
+            near_target = (0 if near.empty else sum(
+                min(len(group) * int(routing["near_miss_real_factor"]),
+                    int(routing["near_miss_real_cap_per_pocket"]))
+                for _, group in near.groupby("pocket")
+            ))
+            targets[role] = {"fn": strict_count * factor, "near_miss_fp": near_target}
+        else:
+            targets[role] = {"background_fp": len(rows) * int(routing["clean_factor"])}
+        desired = sum(targets[role].values())
+        requested[role] = min(
+            remaining, desired * int(policy["retrieval"]["candidate_overfetch"])
+        )
         mining = {"source_path": str(candidate_root / f"{role}_candidate_embeddings.parquet"),
                   "target_path": str(embedded), "output_dir": str(output / f"mine_{role}"),
-                  "desired_unique_count": desired, "allocation_policy": "global",
+                  "desired_unique_count": requested[role], "allocation_policy": "global",
                   "distance_metric": "cosine", "candidate_expansion_factor": int(policy["retrieval"]["candidate_overfetch"])}
         if role_status[role]["excluded_count"]:
             mining["exclude_path"] = str(exclusion_file.resolve())
@@ -349,7 +425,11 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
     report = {"status": "COMPLETE", "iteration": iteration, "query_counts": counts,
               "enabled_roles": enabled, "role_status": role_status,
               "converged": not enabled and not synthesis_pending,
-              "synthesis_pending": synthesis_pending, "warnings": warnings}
+              "synthesis_pending": synthesis_pending,
+              "admission_targets": targets, "requested_crop_counts": requested,
+              "excluded_candidate_crops": excluded_candidate_crops,
+              "excluded_source_images": excluded_source_images,
+              "warnings": warnings}
     _json(output / "query_manifest.json", report)
     return report
 
