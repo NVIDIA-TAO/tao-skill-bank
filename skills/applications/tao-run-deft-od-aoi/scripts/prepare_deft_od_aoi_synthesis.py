@@ -86,6 +86,7 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
         raise ValueError(f"strict gaps lack {sorted(required - set(gaps))}")
     rows = []
     skipped_unrouted: Counter[str] = Counter()
+    observed_datasets: set[str] = set()
     for gap in gaps[gaps.gap_type.astype(str).str.upper().eq("FN")].to_dict("records"):
         image_id, box = str(gap["image_id"]), _xyxy(gap["bbox"])
         if image_id not in images:
@@ -104,7 +105,12 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
             metadata.update({key: source[key] for key in FIELDS if key in source})
         dataset = str(metadata.get("dataset_id") or "").strip()
         if not dataset:
-            raise ValueError(f"FN metadata is incomplete for {image_id}: ['dataset_id']")
+            raise ValueError(
+                f"KPI FN {image_id} has no dataset_id; every KPI sample must retain its "
+                "real nonempty dataset_id. synthesis.routes is an allowlist, and a missing "
+                "dataset_id is malformed metadata, not a synthesis opt-out"
+            )
+        observed_datasets.add(dataset)
         if dataset not in routes:
             skipped_unrouted[dataset] += 1
             continue
@@ -125,9 +131,25 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
             raise ValueError(f"gap filepath does not match frozen KPI image: {image_id}")
         rows.append({**gap, "filepath": str(source_path), "split": "kpi", **metadata,
                      "anomaly_type": f"{metadata['texture_id']}+{metadata['defect_class']}"})
-    if not rows:
-        raise ValueError("strict gaps contain no synthesis-eligible false negatives")
     output.mkdir(parents=True)
+    if not rows:
+        configured_routes = sorted(map(str, routes))
+        skipped_count = sum(skipped_unrouted.values())
+        report = {
+            "status": "SKIPPED", "reason": "no_routed_false_negatives", "fn_count": 0,
+            "skipped_unrouted_fn_count": skipped_count,
+            "skipped_unrouted_by_dataset": dict(sorted(skipped_unrouted.items())),
+            "observed_dataset_ids": sorted(observed_datasets),
+            "configured_route_keys": configured_routes,
+            "message": (
+                f"Skipped synthesis: all {skipped_count} strict false negatives use "
+                f"unrouted dataset IDs {sorted(observed_datasets)}; configured synthesis "
+                f"routes are {configured_routes}."
+            ),
+            "config": "",
+        }
+        (output / "synthesis_request.json").write_text(json.dumps(report, indent=2) + "\n")
+        return report
     normalized = output / "normalized_fn_gaps.parquet"
     pd.DataFrame(rows).to_parquet(normalized, index=False)
     config = {"source_tag": "deft_od_aoi", "gap_parquet": str(normalized),
@@ -152,6 +174,8 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
         "fn_count": len(rows),
         "skipped_unrouted_fn_count": sum(skipped_unrouted.values()),
         "skipped_unrouted_by_dataset": dict(sorted(skipped_unrouted.items())),
+        "observed_dataset_ids": sorted(observed_datasets),
+        "configured_route_keys": sorted(map(str, routes)),
         "config": str(config_path.resolve()),
     }
     (output / "synthesis_request.json").write_text(json.dumps(report, indent=2) + "\n")

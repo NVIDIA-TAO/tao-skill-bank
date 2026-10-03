@@ -6,7 +6,7 @@
     "ground_truth": "Validate the paired anomaly/mask/clean layout, defect specification and frozen validation rows, preserve custom recipe knobs, replace run identities, and require iteration-zero validation.",
     "expected_behavior": [
       "Select tao-finetune-anomalygennext",
-      "Require the dataset, validation JSONL, base checkpoint, VAE, and NN backbone",
+      "Require the dataset, validation JSONL, base checkpoint, VAE, and complete checkpoint root",
       "Preserve custom recipe settings while replacing run identity fields",
       "Require aligned validation and checkpoint intervals"
     ],

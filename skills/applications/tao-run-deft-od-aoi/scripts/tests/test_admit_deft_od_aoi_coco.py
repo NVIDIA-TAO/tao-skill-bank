@@ -81,6 +81,48 @@ def test_admission_deduplicates_sources_and_preserves_explicit_clean(tmp_path: P
     assert all(row["image_id"] != clean_id for row in coco["annotations"])
 
 
+def test_clean_admission_uses_cumulative_real_capacity_after_real_mining_exhausts(
+        tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    extra_clean = tmp_path / "clean-2.png"
+    extra_clean.write_bytes(b"clean-2")
+    clean_coco = tmp_path / "clean.json"
+    clean_document = json.loads(clean_coco.read_text())
+    clean_document["images"].append({
+        "id": 2, "file_name": extra_clean.name, "source_path": str(extra_clean)})
+    clean_coco.write_text(json.dumps(clean_document))
+    clean_embeddings = candidates / "clean_candidate_embeddings.parquet"
+    embedded = pd.read_parquet(clean_embeddings)
+    embedded.loc[len(embedded)] = {
+        "filepath": "/clean-crop-2.png", "source_filepath": str(extra_clean),
+        "source_image_id": 2, "embedding": [1.0, 0.0],
+    }
+    embedded.to_parquet(clean_embeddings, index=False)
+    mined = retrieval / "mine_clean/final_unique_files.parquet"
+    pd.DataFrame({"filepath": ["/clean-crop.png", "/clean-crop-2.png"]}).to_parquet(
+        mined, index=False)
+    (retrieval / "query_manifest.json").write_text(
+        json.dumps({"iteration": 2, "enabled_roles": ["clean"]})
+    )
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": "real.png",
+                    "source_path": str(tmp_path / "real.png"),
+                    "width": 16, "height": 16, "deft_kind": "real_defect"}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1,
+                         "bbox": [1, 1, 4, 4], "area": 16}],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+
+    report = MODULE.admit(
+        policy, candidates, retrieval, tmp_path / "out", previous, "copy")
+
+    assert len(pd.read_parquet(mined)) == 2
+    assert report["admitted"] == {"real": 0, "clean": 1, "synthetic": 0}
+    assert report["by_kind"] == {"real_defect": 1, "clean_negative": 1,
+                                 "synthetic_defect": 0}
+
+
 def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: Path) -> None:
     policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
     with pytest.raises(ValueError, match="mining admitted no source images"):
@@ -162,6 +204,20 @@ def test_admission_folds_capped_synthetic_categories_to_defect(tmp_path: Path) -
     assert report["admitted"]["synthetic"] == 1
     output = json.loads((tmp_path / "out/train.json").read_text())
     assert {row["category_id"] for row in output["annotations"]} == {1}
+
+
+def test_admission_resolves_binary_coco_from_declared_generation_output(tmp_path: Path) -> None:
+    root = tmp_path / "generation"
+    relative = "pseudo_labels/coco_annotations_od_defect.json"
+    target = root / relative
+    target.parent.mkdir(parents=True)
+    target.write_text('{"images": [], "annotations": [], "categories": []}\n')
+
+    assert MODULE._generation_output(root, "binary_coco") == target.resolve()
+
+    target.unlink()
+    with pytest.raises(FileNotFoundError, match="declared generation output binary_coco"):
+        MODULE._generation_output(root, "binary_coco")
 
 
 def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) -> None:

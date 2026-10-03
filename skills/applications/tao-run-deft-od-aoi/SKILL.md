@@ -74,8 +74,10 @@ scripts/init_deft_od_aoi.py \
 Never reinitialize an existing result. The validator requires disjoint KPI,
 test, defective-real, and verified-clean roles; every COCO must declare only
 `defect`. KPI and test may mix boxed and boxless images because they never enter
-training. Every defective-real image needs at least one box, while clean images
-remain explicit zero-annotation COCO entries.
+training. The defective-real role must be nonempty and needs at least one box
+on every image. Clean images remain explicit zero-annotation COCO entries; an
+empty clean role is accepted as an unavailable retrieval capability with a
+startup warning.
 
 ## Loop boundary
 
@@ -120,11 +122,17 @@ candidate crop whose source image is already present in the cumulative training
 COCO before unique-neighbor matching. Admission still performs the authoritative
 source-level deduplication gate.
 
-Run every emitted embedding spec through `tao-generate-image-embeddings`, then
+The candidate manifest records a zero count and emits no candidate parquet or
+embedding spec for an empty clean source role. Run every emitted embedding spec
+through `tao-generate-image-embeddings`, then
 each enabled mining spec through `tao-mine-od-images`. Defective candidates
 and gap queries use contextual crops; clean candidates use the frozen grid.
 Strict FNs and loose near-miss FPs route to real data. Background-like loose
-FPs route only to the verified-clean role. Empty roles emit no mining action.
+FPs route only to the verified-clean role. Pass the prior cumulative COCO as
+`--previous-coco`; optional role-specific exclusion parquets use
+`--real-exclusions` and `--clean-exclusions`. Empty or fully excluded roles
+emit audited exhaustion evidence and no mining action. If every producer is
+exhausted and synthesis is not pending, the stage records convergence.
 
 ## Admission and cumulative COCO
 
@@ -227,9 +235,11 @@ durable workflow history, not a scheduler substitute.
 
 ## Optional synthesis with existing task weights
 
-Enable `synthesis` only when KPI annotations carry `dataset_id`. Dataset IDs
-absent from `synthesis.routes` remain in the normal real-data path. Every FN in
-a configured route must also carry `texture_id`, `defect_class`, and a pixel
+Enable `synthesis` only when every KPI sample retains its real, nonempty
+`dataset_id`; a missing ID is malformed KPI metadata and is never an opt-out.
+`synthesis.routes` is the synthesis allowlist. Dataset IDs absent from it skip
+synthesis but remain in the separate normal real-data DEFT path. Every FN in a
+configured route must also carry `texture_id`, `defect_class`, and a pixel
 `fn_mask_source`, and the route must provide an existing AnomalyGenNext
 checkpoint and matching recipe. After strict gap analysis, normalize exact
 FN/annotation matches:
@@ -244,18 +254,31 @@ scripts/prepare_deft_od_aoi_synthesis.py \
 Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
 then its finalized generation plan through `tao-generate-od-defects`. Commit
 `iteration_synthesis` before training. Re-run admission with the generated
-native COCO and image root; synthetic categories are folded to `defect`, and
+generation root via `--generation-root`; admission resolves the declared
+logical `binary_coco` output instead of hardcoding its filename. Synthetic
+categories are folded to `defect`, and
 the frozen cumulative fraction cap is applied against admitted real defects.
 For this second pass, provide the same-iteration real admission as
 `--previous-coco` and set `--synthetic-only`; synthetic inputs do not
 implicitly turn off mining admission.
-Boxes alone never substitute for the required pixel mask.
+Boxes alone never substitute for the required pixel mask. If the request has no
+routed FNs, or preparation reports no mask-eligible FNs, commit that typed skip
+contract as `iteration_synthesis` and continue to training without running AMP
+or fabricating generation/admission success. Missing or empty AnomalyGen clean
+reference pools likewise skip only affected FN/types with
+`no_clean_reference_images`; eligible types and real/clean retrieval continue.
+Initialization rejects synthesis when the entire configured reference pool has
+no supported image under any `TEXTURE/clean_image` directory.
+If no FN remains eligible, the preparation-level reason is
+`no_eligible_false_negatives` while per-FN evidence retains the specific cause.
+If every producer is unavailable, the typed skip commits convergence instead of
+training on an unchanged iteration.
 
 ## Missing AnomalyGenNext task weights
 
 A synthesis route may replace `checkpoint` and `recipe` with a `finetune` block
 containing `dataset_root`, frozen `validation_testcase`, Cosmos3-Nano
-`base_checkpoint`, `vae_path`, `nn_backbone`, future `result_handoff`, and
+`base_checkpoint`, `vae_path`, `checkpoint_root`, future `result_handoff`, and
 optional user `recipe_template`/`defect_spec`. These are AnomalyGenNext inputs;
 the application policy is not an upstream training recipe.
 

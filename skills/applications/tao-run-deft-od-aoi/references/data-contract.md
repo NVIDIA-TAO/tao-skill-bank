@@ -12,11 +12,14 @@ The application consumes four normalized COCO roles:
 | KPI | labeled or empty | never | gap queries and checkpoint selection |
 | Test | labeled or empty | never | report-only measurement |
 | Real | at least one per image | after retrieval and admission | positive mining |
-| Clean | exactly zero per image | after retrieval and admission | negative mining |
+| Clean | exactly zero per image when nonempty | after retrieval and admission | negative mining |
 
 Every COCO document declares exactly one foreground category named `defect`.
 Background is implicit. Clean images remain explicit `images` rows with zero
 annotations; files absent from the COCO document do not train the detector.
+Every bbox must have a nonnegative origin, positive dimensions, and remain
+fully within its image dimensions. Boundary overflow is an input-contract
+violation; source ground truth is rejected rather than clipped or rewritten.
 
 Each image resolves through `source_path` when present, otherwise
 `images_dir/file_name`. Resolved identities must be disjoint across KPI,
@@ -47,8 +50,20 @@ resolve a real pixel `fn_mask_source`. Synthesis metadata may appear directly
 on the image or annotation record or under `deft_od_aoi`; a box never
 substitutes for the mask.
 
-`dataset_id` selects a route, and `texture_id+defect_class` must match a
-type declared by that route's recipe and defect specification.
+The real role must start with at least one boxed image. The clean role may start
+with zero images; initialization emits a warning and a typed `UNAVAILABLE`
+clean retrieval capability. The clean retrieval role is independent from the
+AnomalyGenNext synthesis reference pool.
+
+`synthesis.routes` is an allowlist: a valid ID absent from it skips synthesis
+but still participates in the separate real-data DEFT path. A missing ID is
+malformed metadata, not a synthesis opt-out. For routed FNs,
+`texture_id+defect_class` must match a type declared by that route's recipe and
+defect specification.
+
+AnomalyGen clean-reference images come from the synthesis pool and are not the
+DEFT `clean` retrieval role. Missing references skip only affected synthesis
+FNs; they do not disable real-defect or clean-negative retrieval.
 
 ## Cumulative admission
 
@@ -66,3 +81,5 @@ runs. Synthetic admission is capped by
 unchanged. Admission also emits `admission_preview.json`. When overfetched crops
 do not contain enough novel parent images for a branch target, it admits the
 available parents and records the shortfall instead of failing the iteration.
+Real retrieval may become exhausted while clean retrieval continues until the
+existing cumulative real count's clean allowance is full.

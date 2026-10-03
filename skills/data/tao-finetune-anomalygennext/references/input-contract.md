@@ -40,7 +40,9 @@ the verified values. Preserve the emitted canonical recipe beside the selected
 adapter; generation must use that pair unchanged.
 
 The dataset root, defect specification, validation testcase, optional template,
-Cosmos3-Nano checkpoint, VAE, and DINOv2 backbone may live at separate absolute
+Cosmos3-Nano checkpoint, VAE, and checkpoint root may live at separate absolute
 paths. The selected platform must expose all of them to the container. The
-DINOv2 directory needs a Transformers-compatible `config.json` and model
-weights.
+checkpoint root must be mounted over the image's complete `checkpoints/` tree
+and contain the required Qwen tokenizer model assets under `hf/` plus a
+Transformers-compatible
+`facebook/dinov2-large/config.json` and model weights.

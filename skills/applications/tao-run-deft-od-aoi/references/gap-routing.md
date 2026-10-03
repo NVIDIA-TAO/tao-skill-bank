@@ -31,6 +31,9 @@ Build the candidate cache once:
 For each iteration, crop strict FNs and near-miss FPs as real queries, and
 background-like loose FPs as clean queries. Embed queries with the identical
 encoder. Invoke `tao-mine-od-images` using the emitted role-specific specs.
+Context crops smaller than 8 pixels on either edge are expanded around the
+requested defect center within image bounds. Only source images narrower than
+8 pixels require mean-color padding; ordinary crop dimensions remain unchanged.
 
 Retrieval is global within the real or clean role. Provenance metadata does not
 partition the index. Empty query roles emit no action. Admission recomputes
@@ -48,6 +51,14 @@ Near-miss budgets are computed independently for each frozen
 `dataset_id/texture_id/defect_class` pocket as `min(2 * queries, 20)` by default;
 this cap is not a per-dataset allocation quota. Clean retrieval remains global
 and is capped only by its factor and the cumulative clean-to-real bound.
+
+Pass the prior cumulative COCO when preparing iteration 2 and later so every
+already admitted source is expanded to its candidate-crop exclusion set.
+Role-specific exclusion parquets are reconciled against candidate crop or
+source paths and are never ignored. A role with zero remaining candidates is
+typed `EXHAUSTED` while other roles continue. When every role is exhausted and
+no synthesis work is pending, the query manifest marks convergence and the
+workflow completes without submitting an empty mining request.
 
 The initial `-1.0` similarity threshold is an explicit calibration policy,
 not evidence that all candidates are equally useful. Review retrieval outputs
