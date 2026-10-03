@@ -28,14 +28,19 @@ def _fixture(root: Path) -> list[str]:
         "image_filename": str(dataset / "texture" / "clean_image" / "clean.png"),
         "mask_filename": str(dataset / "texture" / "mask" / "defect" / "a_mask.png"),
         "anomaly_type": "texture+defect"}) + "\n" for _ in range(3)))
-    base, nn = root / "Cosmos3-Nano", root / "dinov2-large"
+    base = root / "Cosmos3-Nano"
+    checkpoints = root / "checkpoints"
+    nn = checkpoints / "facebook" / "dinov2-large"
     base.mkdir()
-    nn.mkdir()
+    (checkpoints / "hf").mkdir(parents=True)
+    nn.mkdir(parents=True)
+    (nn / "config.json").write_text("{}")
+    (nn / "model.safetensors").write_bytes(b"weights")
     vae = root / "Wan2.2_VAE.pth"
     vae.write_bytes(b"model")
     return ["--dataset-root", str(dataset), "--validation-testcase", str(validation),
             "--base-checkpoint", str(base), "--vae-path", str(vae),
-            "--nn-backbone", str(nn), "--dataset-name", "fixture",
+            "--checkpoint-root", str(checkpoints), "--dataset-name", "fixture",
             "--output", str(root / "out" / "recipe.yaml")]
 
 
@@ -59,6 +64,7 @@ def test_prepare_preserves_custom_knobs_and_freezes_identities(tmp_path: Path) -
     assert all(Path(row["image_filename"]).is_absolute() for row in rows)
     metadata = json.loads((tmp_path / "out" / "recipe.metadata.json").read_text())
     assert metadata["anomaly_types"] == ["texture+defect"]
+    assert metadata["checkpoint_root"] == str((tmp_path / "checkpoints").resolve())
 
 
 def test_prepare_rejects_undercovered_validation(tmp_path: Path) -> None:
@@ -68,3 +74,14 @@ def test_prepare_rejects_undercovered_validation(tmp_path: Path) -> None:
     result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
     assert result.returncode != 0
     assert "validation coverage mismatch" in result.stderr
+
+
+def test_prepare_rejects_incomplete_checkpoint_root(tmp_path: Path) -> None:
+    args = _fixture(tmp_path)
+    checkpoint_root = Path(args[args.index("--checkpoint-root") + 1])
+    (checkpoint_root / "hf").rmdir()
+
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "lacks required Qwen tokenizer assets under hf/" in result.stderr

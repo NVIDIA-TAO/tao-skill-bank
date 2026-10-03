@@ -206,8 +206,9 @@ def test_initialize_rejects_duplicate_image_ids_with_specific_error(tmp_path: Pa
 def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())
-    pool, dataset, base, nn = tmp_path / "pool", tmp_path / "ft_dataset", tmp_path / "ft_base", tmp_path / "nn"
-    for path in (pool, dataset, base, nn):
+    pool, dataset, base, checkpoints = (tmp_path / "pool", tmp_path / "ft_dataset",
+                                         tmp_path / "ft_base", tmp_path / "checkpoints")
+    for path in (pool, dataset, base, checkpoints):
         path.mkdir()
     clean = pool / "texture_1/clean_image/clean.png"
     clean.parent.mkdir(parents=True)
@@ -221,7 +222,7 @@ def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path
                           "defect_spec": str(defect), "routes": {"route": {"finetune": {
                               "dataset_root": str(dataset), "validation_testcase": str(validation),
                               "base_checkpoint": str(base), "vae_path": str(vae),
-                              "nn_backbone": str(nn),
+                              "checkpoint_root": str(checkpoints),
                               "result_handoff": str(tmp_path / "future/handoff.json")}}}}
     config.write_text(yaml.safe_dump(value))
     state = MODULE.initialize(config, tmp_path / "results")

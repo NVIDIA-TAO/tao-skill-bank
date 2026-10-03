@@ -106,14 +106,31 @@ def _validation(path: Path, dataset: Path, name: str) -> tuple[list[dict[str, An
     return rows, counts
 
 
+def _validate_checkpoint_tree(root: Path) -> None:
+    root = root.expanduser().resolve()
+    qwen_assets = root / "hf"
+    dinov2 = root / "facebook" / "dinov2-large"
+    if not qwen_assets.is_dir():
+        raise ValueError(
+            f"checkpoint root lacks required Qwen tokenizer assets under hf/: {qwen_assets}"
+        )
+    if not (dinov2 / "config.json").is_file():
+        raise ValueError(f"checkpoint root lacks DINOv2 config: {dinov2}")
+    if not ((dinov2 / "model.safetensors").is_file()
+            or (dinov2 / "pytorch_model.bin").is_file()):
+        raise ValueError(f"checkpoint root lacks DINOv2 weights: {dinov2}")
+
+
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     required = (("dataset root", args.dataset_root, True),
                 ("validation testcase", args.validation_testcase, False),
                 ("base checkpoint", args.base_checkpoint, True),
-                ("VAE", args.vae_path, False), ("NN backbone", args.nn_backbone, True))
+                ("VAE", args.vae_path, False),
+                ("checkpoint root", args.checkpoint_root, True))
     for label, path, directory in required:
         if not (path.is_dir() if directory else path.is_file()):
             raise ValueError(f"{label} is missing: {path}")
+    _validate_checkpoint_tree(args.checkpoint_root)
     if not SAFE_NAME.fullmatch(args.dataset_name) or not SAFE_NAME.fullmatch(args.job_name):
         raise ValueError("dataset and job names may contain only letters, numbers, dot, dash, underscore")
     recipe = yaml.safe_load(DEFAULT_RECIPE.read_text())
@@ -174,7 +191,8 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     report = {"status": "COMPLETE", "recipe": str(args.output.resolve()),
               "recipe_sha256": _sha256(args.output), "validation_testcase": str(normalized.resolve()),
               "dataset_root": str(args.dataset_root.resolve()), "defect_spec": str(defect_spec),
-              "nn_backbone": str(args.nn_backbone.resolve()), "anomaly_types": types,
+              "checkpoint_root": str(args.checkpoint_root.resolve()),
+              "anomaly_types": types,
               "validation_counts": {name: counts[name] for name in types},
               "metric": "Average.nn_score", "direction": "max"}
     metadata.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
@@ -187,7 +205,7 @@ def main() -> int:
     parser.add_argument("--validation-testcase", type=Path, required=True)
     parser.add_argument("--base-checkpoint", type=Path, required=True)
     parser.add_argument("--vae-path", type=Path, required=True)
-    parser.add_argument("--nn-backbone", type=Path, required=True)
+    parser.add_argument("--checkpoint-root", type=Path, required=True)
     parser.add_argument("--dataset-name", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--defect-spec", type=Path)
