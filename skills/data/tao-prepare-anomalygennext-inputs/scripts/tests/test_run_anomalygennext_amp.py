@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from PIL import Image
 
 
@@ -17,6 +18,17 @@ SPEC = importlib.util.spec_from_file_location("run_anomalygennext_amp", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
+
+
+def checkpoint_root(repo: Path) -> Path:
+    root = repo / "checkpoints"
+    cache = root / "hf/hub/models--Qwen--Qwen3-VL-8B-Instruct"
+    (cache / "blobs").mkdir(parents=True)
+    (cache / "snapshots").mkdir()
+    sam2 = root / "facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt"
+    sam2.parent.mkdir(parents=True)
+    sam2.write_bytes(b"weights")
+    return root
 
 
 def inputs(root: Path) -> dict:
@@ -108,17 +120,21 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
 ) -> None:
     frozen = tmp_path / "prepared_anomalygennext_inputs/filtering_config.yaml"
     frozen.parent.mkdir()
-    frozen.write_text("defect_spec: /input/defects.jsonl\n")
-    config = tmp_path / "filtering.yaml"
-    config.write_bytes(frozen.read_bytes())
-    checkpoint = tmp_path / "sam2.pt"
-    checkpoint.write_bytes(b"weights")
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    frozen.write_text(f"defect_spec: /input/defects.jsonl\npool_dataset_root: {pool}\n")
+    repo = tmp_path / "repo"
+    checkpoints = checkpoint_root(repo)
     published = tmp_path.parent / "persistent-output"
     monkeypatch.setattr(MODULE, "plan", lambda root, value: {"candidates": 1})
 
-    def fake_run(command: list[str], *, check: bool, stdout: object) -> None:
+    def fake_run(command: list[str], *, check: bool, stdout: object,
+                 env: dict[str, str]) -> None:
         assert check is True and stdout is sys.stderr
-        assert command[1] == "-c" and str(checkpoint.resolve()) in command
+        assert command[1:3] == ["-m", "anomalygen.scripts.auto_mask_placement.roi_place"]
+        assert env["HF_HOME"] == str(checkpoints / "hf")
+        assert env["HF_HUB_CACHE"] == str(checkpoints / "hf/hub")
+        assert env["HF_HUB_OFFLINE"] == env["TRANSFORMERS_OFFLINE"] == "1"
         print("native AMP progress", file=stdout)
         amp = tmp_path / "amp"
         amp.mkdir()
@@ -127,7 +143,7 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
         )
 
     monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
-    report = MODULE.run(config, tmp_path, checkpoint, published)
+    report = MODULE.run(tmp_path, checkpoints, pool, published, repo)
 
     assert report["testcase"] == str(published.resolve() / "amp/testcase.jsonl")
     row = json.loads((tmp_path / "amp/testcase.jsonl").read_text())
@@ -136,9 +152,47 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
     assert captured.out == "" and "native AMP progress" in captured.err
 
 
-def test_run_requires_sam2_checkpoint(tmp_path: Path) -> None:
+def test_checkpoint_root_requires_canonical_mount_and_amp_assets(tmp_path: Path) -> None:
+    external = checkpoint_root(tmp_path / "external")
+    with pytest.raises(ValueError, match="must be mounted"):
+        MODULE._validate_checkpoint_root(external, tmp_path / "repo")
+
+    repo = tmp_path / "repo"
+    root = checkpoint_root(repo)
+    snapshots = root / "hf/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots"
+    snapshots.rmdir()
+    with pytest.raises(FileNotFoundError, match="Qwen3-VL-8B-Instruct"):
+        MODULE._validate_checkpoint_root(root, repo)
+    snapshots.mkdir()
+    (root / "facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt").unlink()
     with pytest.raises(FileNotFoundError, match="SAM2.1 checkpoint"):
-        MODULE.run(tmp_path / "config.yaml", tmp_path, tmp_path / "missing.pt")
+        MODULE._validate_checkpoint_root(root, repo)
+
+
+def test_run_amp_contract_mounts_complete_checkpoint_root() -> None:
+    contract = yaml.safe_load(
+        (SCRIPT.parents[1] / "references/skill_info.yaml").read_text()
+    )["actions"]["run_amp"]
+    inputs = contract["inputs"]
+    assert inputs["checkpoint_root"]["container_path"] == (
+        "/workspace/paidf-anomalygen/checkpoints"
+    )
+    assert "sam2_checkpoint" not in inputs
+    assert contract["args"]["checkpoint_root"] == "--checkpoint-root {checkpoint_root}"
+
+
+def test_run_rejects_pool_mount_that_differs_from_frozen_path(tmp_path: Path) -> None:
+    frozen = tmp_path / "prepared_anomalygennext_inputs/filtering_config.yaml"
+    frozen.parent.mkdir()
+    expected, wrong = tmp_path / "pool", tmp_path / "wrong-pool"
+    expected.mkdir()
+    wrong.mkdir()
+    frozen.write_text(f"pool_dataset_root: {expected}\n")
+    repo = tmp_path / "repo"
+    checkpoints = checkpoint_root(repo)
+
+    with pytest.raises(ValueError, match="pool must be remounted.*expected.*received"):
+        MODULE.run(tmp_path, checkpoints, wrong, repo=repo)
 
 
 def test_plan_rejects_nonbinary_amp_mask(tmp_path: Path) -> None:

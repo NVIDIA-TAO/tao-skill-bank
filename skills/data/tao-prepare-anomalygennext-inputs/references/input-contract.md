@@ -26,6 +26,49 @@ and recipe. This action verifies that both files exist and that the recipe's
 integration may resolve those two paths from a completed fine-tuning handoff,
 but they must be concrete before invoking this leaf.
 
+`pool_dataset_root` is one user-level typed folder input, not an incidental path
+hidden only inside YAML. The platform stages the source once, records its
+source-to-compute binding, and passes the resolved compute path to preparation.
+Preparation freezes that path in `filtering_config.yaml` and in every pool
+filepath carried by the clean embedding parquet. It also records the pool under
+`input_contract.json.downstream_inputs` as a required read-only folder for the
+clean-image embedding and AMP actions. Each action has a separate container
+mount namespace, so staging may be reused but the source must be remounted at
+the same frozen compute path for each consumer.
+
+The frozen contract shape is:
+
+```json
+{
+  "downstream_inputs": {
+    "clean_embeddings": {
+      "pool_dataset_root": {
+        "type": "folder",
+        "compute_path": "/inputs/anomalygen_pool",
+        "read_only": true
+      }
+    },
+    "run_amp": {
+      "pool_dataset_root": {
+        "type": "folder",
+        "compute_path": "/inputs/anomalygen_pool",
+        "read_only": true
+      }
+    }
+  }
+}
+```
+
+`compute_path` is the required mount destination, not a second source input.
+The platform retains the original user-supplied source binding and uses it to
+construct each later container mount.
+
+The emitted embedding YAML files remain native Data Services configs; do not
+add mount-only fields to them. The platform action request carries the typed
+folder mount separately. The clean embedding consumes the frozen pool binding.
+The FN embedding does not consume the pool, but its container must separately
+mount every source-image root referenced by `fn_embedding_inputs.parquet`.
+
 Selection supports:
 
 - `all_eligible`: every eligible FN in the listed datasets.
@@ -46,8 +89,17 @@ pool, and creates two AMP requests for every eligible pair. When the embedding
 action emits several crop vectors for one clean image, its maximum crop
 similarity is the image-level score; crop rows never occupy separate neighbor
 ranks. It rejects missing, non-finite, zero-norm, or width-mismatched
-embeddings. AMP itself remains owned by the container-native
-`anomalygen.scripts.auto_mask_placement.roi_place` entry point.
+embeddings. It always loads the frozen config from the
+prepared root; no caller-supplied config is compared or accepted. The typed pool
+argument is generated from the retained binding and must resolve to the pool
+path frozen during preparation. AMP itself remains owned by the
+container-native `anomalygen.scripts.auto_mask_placement.roi_place` entry point.
+
+The `run_amp` action also requires the complete AnomalyGenNext checkpoint root
+mounted at `/workspace/paidf-anomalygen/checkpoints`. Before native AMP starts,
+it verifies the pinned Qwen cache and
+`facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt`; a standalone
+SAM2 file or a checkpoint tree mounted at another path is rejected.
 
 `finalize_inputs` retains the configured number of successful neighbors per FN.
 Both aligned mask branches must match the clean image and cover neither zero nor

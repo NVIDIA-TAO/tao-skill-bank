@@ -86,6 +86,7 @@ def test_prepare_preserves_box_level_queries_and_unique_embedding_input(tmp_path
     output = tmp_path / "output"
     report = MODULE.prepare(config, output)
     assert report["status"] == "COMPLETE"
+    assert report["source_tag"] == "test"
     assert report["selected_fn_count"] == report["eligible_fn_count"] == 2
     assert report["skipped_fn_count"] == 0
     assert report["clean_image_count"] == 2 and report["source_mask_count"] == 4
@@ -100,6 +101,52 @@ def test_prepare_preserves_box_level_queries_and_unique_embedding_input(tmp_path
     clean_spec = yaml.safe_load((output / "specs" / "clean_embeddings.yaml").read_text())
     fn_spec = yaml.safe_load((output / "specs" / "fn_embeddings.yaml").read_text())
     assert clean_spec["model_path"] == fn_spec["model_path"] == "local/siglip"
+
+
+def test_typed_pool_root_is_frozen_for_both_embedding_specs(tmp_path: Path) -> None:
+    config, _ = fixture(tmp_path)
+    configured_pool = tmp_path / "pool"
+    staged_pool = tmp_path / "staged/pool"
+    staged_pool.parent.mkdir()
+    configured_pool.rename(staged_pool)
+    output = tmp_path / "output"
+
+    MODULE.prepare(config, output, staged_pool)
+
+    frozen = yaml.safe_load(
+        (output / "prepared_anomalygennext_inputs/filtering_config.yaml").read_text()
+    )
+    assert frozen["pool_dataset_root"] == str(staged_pool.resolve())
+    clean = pd.read_parquet(output / "manifests/clean_pool.parquet")
+    assert all(Path(path).is_relative_to(staged_pool.resolve()) for path in clean.filepath)
+    contract = json.loads(
+        (output / "prepared_anomalygennext_inputs/input_contract.json").read_text()
+    )
+    expected_mount = {
+        "type": "folder", "compute_path": str(staged_pool.resolve()), "read_only": True
+    }
+    assert contract["downstream_inputs"] == {
+        "clean_embeddings": {"pool_dataset_root": expected_mount},
+        "run_amp": {"pool_dataset_root": expected_mount},
+    }
+    for name in ("clean", "fn"):
+        spec = yaml.safe_load((output / f"specs/{name}_embeddings.yaml").read_text())
+        assert "pool_dataset_root" not in spec
+        assert Path(spec["input_parquet"]).is_relative_to(output.resolve())
+        assert Path(spec["output_parquet"]).is_relative_to(output.resolve())
+        inputs = pd.read_parquet(spec["input_parquet"])
+        assert all(Path(path).is_file() for path in inputs.filepath)
+
+
+def test_action_contract_declares_pool_folder_for_prepare_and_amp() -> None:
+    info = yaml.safe_load(
+        (Path(__file__).parents[2] / "references/skill_info.yaml").read_text()
+    )
+    for action in ("prepare_plan", "run_amp"):
+        assert info["actions"][action]["inputs"]["pool_dataset_root"] == {"type": "folder"}
+        assert "{pool_dataset_root}" in info["actions"][action]["args"]["pool_dataset_root"]
+    assert "config" not in info["actions"]["run_amp"]["inputs"]
+    assert "config" not in info["actions"]["run_amp"]["args"]
 
 
 def test_prepare_requires_normalized_identity(tmp_path: Path) -> None:
