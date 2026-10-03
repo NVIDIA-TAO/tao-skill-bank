@@ -33,10 +33,7 @@ RUN_SPEC_NAMES = (
     "mining_spec.yaml",
     "approval.json",
 )
-PINNED_IMAGES = {
-    "pyt": "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch",  # versions-key: images.tao_toolkit.deft_pas_pyt
-    "ds": "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch",  # versions-key: images.tao_toolkit.deft_pas_data_services
-}
+IMAGE_KINDS = frozenset(("pyt", "ds"))
 
 
 def safe_absolute_path(
@@ -308,12 +305,12 @@ def validate_action(
     config = state.get("config")
     if not isinstance(config, dict):
         raise ValueError("state.config must be an object")
-    if image_kind not in PINNED_IMAGES:
+    if image_kind not in IMAGE_KINDS:
         raise ValueError(f"unsupported image kind: {image_kind!r}")
     image_key = "pyt_image" if image_kind == "pyt" else "ds_image"
     image = str(config.get(image_key, "")).strip()
-    if image != PINNED_IMAGES[image_kind]:
-        raise ValueError(f"state.config.{image_key} must be the pinned {image_kind} image")
+    if not image:
+        raise ValueError(f"state.config.{image_key} must be a non-empty approved image")
     workspace, dataset_root, config_dir = validate_runtime_paths(results_dir, config)
     platform = str(config["platform"])
     patches_dir = pathlib.Path(__file__).resolve().parent.parent / "patches"
@@ -352,7 +349,7 @@ def validate_action(
     legacy_virtualenv = config.get("virtualenv")
     virtualenvs = config.get("virtualenvs")
     if platform == "virtualenv":
-        if isinstance(virtualenvs, dict) and set(virtualenvs) == set(PINNED_IMAGES):
+        if isinstance(virtualenvs, dict) and set(virtualenvs) == IMAGE_KINDS:
             selected = virtualenvs.get(image_kind)
         elif isinstance(legacy_virtualenv, str) and legacy_virtualenv.strip():
             # Compatibility is truthful only when the same environment passed

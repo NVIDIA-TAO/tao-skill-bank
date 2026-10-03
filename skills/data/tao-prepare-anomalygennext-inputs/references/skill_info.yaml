@@ -22,10 +22,13 @@ actions:
         type: folder
       clean_embedding_spec:
         type: file
+        optional: true
       fn_embedding_spec:
         type: file
+        optional: true
       selected_fn_queries:
         type: file
+        optional: true
       input_contract:
         type: file
     upload_excludes:
@@ -45,8 +48,9 @@ actions:
       published_root:
         type: folder
         optional: true
-      sam2_checkpoint:
-        type: file
+      checkpoint_root:
+        type: folder
+        container_path: /workspace/paidf-anomalygen/checkpoints
     outputs:
       amp_testcase:
         type: file
@@ -58,7 +62,7 @@ actions:
       prepared_root: --prepared-root {prepared_root}
       pool_dataset_root: --pool-dataset-root {pool_dataset_root}
       published_root: --published-root {published_root}
-      sam2_checkpoint: --sam2-checkpoint {sam2_checkpoint}
+      checkpoint_root: --checkpoint-root {checkpoint_root}
   finalize_inputs:
     command: scripts/finalize_anomalygennext_inputs.py
     mode: args

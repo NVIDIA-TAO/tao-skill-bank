@@ -24,7 +24,8 @@ def _role(root: Path, name: str, boxed: bool) -> dict:
     annotations = ([{"id": 1, "image_id": 1, "category_id": 1,
                      "bbox": [1, 1, 4, 4], "area": 16}] if boxed else [])
     coco = root / name / "coco.json"
-    coco.write_text(json.dumps({"images": [{"id": 1, "file_name": image.name}],
+    coco.write_text(json.dumps({"images": [{"id": 1, "file_name": image.name,
+                                             "width": 10, "height": 10}],
                                 "annotations": annotations,
                                 "categories": [{"id": 1, "name": "defect"}]}))
     return {"images": str(images), "coco": str(coco)}
@@ -47,7 +48,7 @@ def _append_boxless_image(role: dict, name: str) -> None:
     image.write_bytes(b"boxless-image")
     coco = Path(role["coco"])
     data = json.loads(coco.read_text())
-    data["images"].append({"id": 2, "file_name": image.name})
+    data["images"].append({"id": 2, "file_name": image.name, "width": 10, "height": 10})
     coco.write_text(json.dumps(data))
 
 
@@ -104,6 +105,24 @@ def test_initialize_rejects_boxed_clean_role(tmp_path: Path) -> None:
         MODULE.initialize(config, tmp_path / "results")
 
 
+@pytest.mark.parametrize("bbox", [
+    [-1, 1, 4, 4],
+    [1, -1, 4, 4],
+    [7, 1, 4, 4],
+    [1, 7, 4, 4],
+])
+def test_initialize_rejects_bbox_outside_image(tmp_path: Path, bbox: list[int]) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    kpi = Path(value["sources"]["kpi"]["coco"])
+    data = json.loads(kpi.read_text())
+    data["annotations"][0]["bbox"] = bbox
+    kpi.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="normalized COCO bbox exceeds image bounds"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
 def test_initialize_accepts_mixed_boxed_and_boxless_heldout_roles(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())
@@ -126,12 +145,75 @@ def test_initialize_rejects_boxless_defective_real_role(tmp_path: Path) -> None:
         MODULE.initialize(config, tmp_path / "results")
 
 
+def test_initialize_accepts_empty_clean_role_with_capability_evidence(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    role = "clean"
+    coco = Path(value["sources"][role]["coco"])
+    data = json.loads(coco.read_text())
+    data["images"] = []
+    data["annotations"] = []
+    coco.write_text(json.dumps(data))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    assert state["roles"][role]["image_count"] == 0
+    assert state["capabilities"]["retrieval"][role] == {
+        "status": "UNAVAILABLE", "reason": "empty_source_role", "source_image_count": 0}
+    assert state["warnings"][0]["code"] == "empty_retrieval_source_role"
+
+
+def test_initialize_rejects_empty_real_role(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    coco = Path(value["sources"]["real"]["coco"])
+    data = json.loads(coco.read_text())
+    data["images"] = []
+    data["annotations"] = []
+    coco.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="real has no images"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+@pytest.mark.parametrize("role", ("kpi", "test"))
+def test_initialize_rejects_empty_heldout_role_with_specific_error(
+        tmp_path: Path, role: str) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    coco = Path(value["sources"][role]["coco"])
+    data = json.loads(coco.read_text())
+    data["images"] = []
+    data["annotations"] = []
+    coco.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match=rf"{role} has no images"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_rejects_duplicate_image_ids_with_specific_error(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    coco = Path(value["sources"]["real"]["coco"])
+    data = json.loads(coco.read_text())
+    data["images"].append(dict(data["images"][0]))
+    coco.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="real has duplicate image ids"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
 def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())
-    pool, dataset, base, nn = tmp_path / "pool", tmp_path / "ft_dataset", tmp_path / "ft_base", tmp_path / "nn"
-    for path in (pool, dataset, base, nn):
+    pool, dataset, base, checkpoints = (tmp_path / "pool", tmp_path / "ft_dataset",
+                                         tmp_path / "ft_base", tmp_path / "checkpoints")
+    for path in (pool, dataset, base, checkpoints):
         path.mkdir()
+    clean = pool / "texture_1/clean_image/clean.png"
+    clean.parent.mkdir(parents=True)
+    clean.write_bytes(b"clean-image")
+    (pool / "texture_without_clean_references").mkdir()
     defect, validation, vae = tmp_path / "defect.jsonl", tmp_path / "validation.jsonl", tmp_path / "vae.pth"
     defect.write_text("{}\n")
     validation.write_text("{}\n")
@@ -140,9 +222,40 @@ def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path
                           "defect_spec": str(defect), "routes": {"route": {"finetune": {
                               "dataset_root": str(dataset), "validation_testcase": str(validation),
                               "base_checkpoint": str(base), "vae_path": str(vae),
-                              "nn_backbone": str(nn),
+                              "checkpoint_root": str(checkpoints),
                               "result_handoff": str(tmp_path / "future/handoff.json")}}}}
     config.write_text(yaml.safe_dump(value))
     state = MODULE.initialize(config, tmp_path / "results")
     assert state["synthesis_bootstrap_required"] is True
     assert state["next_stage"] == "synthesis_bootstrap"
+
+
+@pytest.mark.parametrize("pool_shape", ("empty", "missing_clean_dir", "unsupported_file"))
+def test_initialize_rejects_globally_empty_synthesis_clean_pool(
+        tmp_path: Path, pool_shape: str) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    if pool_shape == "missing_clean_dir":
+        (pool / "texture_1").mkdir()
+    elif pool_shape == "unsupported_file":
+        clean = pool / "texture_1/clean_image/readme.txt"
+        clean.parent.mkdir(parents=True)
+        clean.write_text("not an image")
+    defect = tmp_path / "defect.jsonl"
+    defect.write_text("{}\n")
+    checkpoint = tmp_path / "adapter.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    recipe = tmp_path / "recipe.yaml"
+    recipe.write_text("anomaly_types: []\n")
+    value["synthesis"] = {
+        "enabled": True,
+        "pool_dataset_root": str(pool),
+        "defect_spec": str(defect),
+        "routes": {"route": {"checkpoint": str(checkpoint), "recipe": str(recipe)}},
+    }
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="at least one clean reference image"):
+        MODULE.initialize(config, tmp_path / "results")
