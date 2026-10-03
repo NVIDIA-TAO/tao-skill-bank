@@ -121,3 +121,13 @@ def test_plan_rejects_nonbinary_amp_mask(tmp_path: Path) -> None:
     Image.fromarray(values).save(bad)
     with pytest.raises(ValueError, match="exactly binary values"):
         MODULE.plan(tmp_path, config)
+
+
+def test_plan_still_rejects_fn_without_exactly_two_mask_branches(tmp_path: Path) -> None:
+    config = inputs(tmp_path)
+    masks = pd.read_parquet(tmp_path / "manifests/mask_selection.parquet")
+    masks = masks[~((masks.fn_id == "fn-1") & (masks.branch == "fn_mask"))]
+    masks.to_parquet(tmp_path / "manifests/mask_selection.parquet", index=False)
+
+    with pytest.raises(ValueError, match="needs exactly two mask branches"):
+        MODULE.plan(tmp_path, config)

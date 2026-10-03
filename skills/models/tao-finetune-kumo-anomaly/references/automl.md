@@ -1,6 +1,6 @@
-# AD Diffusion AutoML Details
+# Kumo-Anomaly AutoML Details
 
-Read this reference when the user asks for NV-Tesseract AD Diffusion AutoML/HPO setup, tunable parameters, VirtualEnvSDK setup, config flow, window-length constraints, inference trial scripts, or AutoML result handoff details.
+Read this reference when the user asks for Kumo-Anomaly AutoML/HPO setup, tunable parameters, VirtualEnvSDK setup, config flow, window-length constraints, inference trial scripts, or AutoML result handoff details.
 
 ## Contents
 
@@ -14,7 +14,7 @@ Read this reference when the user asks for NV-Tesseract AD Diffusion AutoML/HPO 
 
 > For algorithm selection, budget configuration, preflight checks, monitoring,
 > and result handoff, use the **`tao-skill-bank:tao-run-automl`** skill. This
-> section documents what AD Diffusion tunes, the VirtualEnvSDK setup required
+> section documents what Kumo-Anomaly tunes, the VirtualEnvSDK setup required
 > for this containerless model, and the inference HPO trial script.
 
 This skill supports AutoML for two use cases — both run locally via
@@ -75,7 +75,7 @@ under "VirtualEnvSDK (containerless venv runs)".
 > directory. Point it at a scratch filesystem with room for
 > `automl_max_recommendations` checkpoints.
 
-This model reference lists NV-Tesseract AD Diffusion search spaces, overrides,
+This model reference lists Kumo-Anomaly search spaces, overrides,
 constraints, and trial payloads.
 
 ### Fine-tuning AutoML
@@ -83,8 +83,8 @@ constraints, and trial payloads.
 ```python
 from pathlib import Path
 
-ad_diffusion_dir = Path("/path/to/NV-Tesseract/ad_diffusion")
-skill_dir = Path("/path/to/tao-skill-bank/skills/models/tao-finetune-nv-tesseract-ad-diffusion")
+kumo_anomaly_dir = Path("/path/to/Kumo-TS/Kumo-Anomaly")
+skill_dir = Path("/path/to/tao-skill-bank/skills/models/tao-finetune-kumo-anomaly")
 
 # Build sdk + runner per tao-run-automl section "Runner Construction":
 # sdk = VirtualEnvSDK(venv_path=<venv>, work_dir=<scratch>)  # work_dir is not optional in practice
@@ -119,9 +119,9 @@ result = runner.run(
     workspace_path="automl_workspace/finetune",
     execution={
         "type":          "python_script",
-        "script":        str(ad_diffusion_dir / "examples/finetune_example.py"),
+        "script":        str(kumo_anomaly_dir / "examples/finetune_example.py"),
         "args":          ["--run-config", "{config_path}"],
-        "cwd":           str(ad_diffusion_dir),
+        "cwd":           str(kumo_anomaly_dir),
         "config_format": "yaml",
     },
 )
@@ -169,7 +169,7 @@ to `valid_options` rather than raising the schema cap.
 Requires **labeled data** — a CSV with a ground-truth `label` column (0/1).
 AutoML tunes `nsample` to maximize F1 on that eval set.
 
-The trial script is not shipped with NV-Tesseract — generate it for the user's
+The trial script is not shipped with Kumo-TS — generate it for the user's
 working directory based on the template below, then point `execution.script` at it.
 
 **Trial script template** (save anywhere, e.g. `inference_hpo_trial.py`):
@@ -181,8 +181,8 @@ from pathlib import Path
 import yaml, pandas as pd
 from sklearn.metrics import f1_score
 
-AD_DIR = Path("/path/to/NV-Tesseract/ad_diffusion")   # adjust to actual clone path
-sys.path.insert(0, str(AD_DIR))
+KUMO_ANOMALY_DIR = Path("/path/to/Kumo-TS/Kumo-Anomaly")   # adjust to actual clone path
+sys.path.insert(0, str(KUMO_ANOMALY_DIR))
 
 from sdk.anomaly_analysis import perform_anomaly_analysis_with_diffusion
 
@@ -206,7 +206,7 @@ def main():
         nsample=inf["nsample"],
         threshold_strategy=inf["threshold_strategy"],
         model_path=inf.get("model_path") or None,
-        config_path=inf.get("config_path") or None,
+        model_config_path=inf.get("config_path") or None,
     )
     f1 = f1_score(labels, results["Anomaly"].values, zero_division=0)
     (out / "metrics.json").write_text(json.dumps({"f1_score": f1}))
@@ -221,8 +221,8 @@ if __name__ == "__main__":
 ```python
 from pathlib import Path
 
-ad_diffusion_dir = Path("/path/to/NV-Tesseract/ad_diffusion")
-skill_dir = Path("/path/to/tao-skill-bank/skills/models/tao-finetune-nv-tesseract-ad-diffusion")
+kumo_anomaly_dir = Path("/path/to/Kumo-TS/Kumo-Anomaly")
+skill_dir = Path("/path/to/tao-skill-bank/skills/models/tao-finetune-kumo-anomaly")
 
 # Build sdk + runner per tao-run-automl section "Runner Construction":
 # sdk = VirtualEnvSDK(venv_path=<venv>, work_dir=<scratch>)  # work_dir is not optional in practice
@@ -248,7 +248,7 @@ for strategy in ["scs", "macs"]:
             "type":          "python_script",
             "script":        "/path/to/inference_hpo_trial.py",   # generated trial script
             "args":          ["--run-config", "{config_path}"],
-            "cwd":           str(ad_diffusion_dir),
+            "cwd":           str(kumo_anomaly_dir),
             "config_format": "yaml",
         },
     )

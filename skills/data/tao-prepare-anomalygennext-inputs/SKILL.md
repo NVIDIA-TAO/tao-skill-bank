@@ -37,6 +37,10 @@ Identity is explicit: `anomaly_type` must equal
 directory-layout inference. A caller adapting an unfamiliar dataset must
 normalize these fields before this boundary.
 
+Clean references are resolved independently for each routed FN/type. A missing
+directory or a directory with no supported images skips only affected FNs with
+reason `no_clean_reference_images`; it does not disable other types.
+
 Each selected dataset maps to an existing fine-tuned checkpoint and recipe.
 The recipe must declare the exact anomaly type, and `defect_spec.jsonl` must
 contain its placement definition. Text-routed definitions require a nonempty
@@ -60,7 +64,17 @@ scripts/prepare_anomalygennext_inputs.py \
 The output root must not exist. The action emits `fn_queries.parquet`,
 `selected_fn_queries.parquet`, `mask_selection.parquet`, `clean_pool.parquet`,
 two `tao-generate-image-embeddings` specs, the copied filtering config, and
-`input_contract.json`.
+`input_contract.json`. Mask eligibility is evaluated per FN. The contract lists
+eligible FN IDs plus stable skipped FN IDs and machine-readable reasons; skipped
+FNs are absent from every query, embedding, mask, and AMP input. Donor masks are
+tried in deterministic order until one valid same-type donor is found.
+
+If no FN survives, preparation emits only a `SKIPPED` `input_contract.json`
+with reason `no_eligible_false_negatives`. Detailed `skip_counts`, per-FN
+records, and warning evidence distinguish missing clean references from mask
+eligibility failures. Do not run embeddings or AMP for that typed no-op, and do
+not represent it as generation success. A partial skip emits warning evidence
+while specs contain only eligible FNs.
 
 Run both emitted specs through `tao-generate-image-embeddings`, preserving the
 same encoder. Place their outputs under `embeddings/` as named by the specs,
@@ -92,6 +106,7 @@ Platform skills own staging and cache placement.
 
 - Preserve each box-level FN as a distinct `fn_id`.
 - Produce exactly two masks per FN: isolated FN and deterministic same-type.
+- Skip one invalid FN without aborting other eligible FNs.
 - Embed a repeated source image once while preserving every FN query row.
 - Require successful, nonempty, non-full-image aligned masks for both branches.
 - Never infer an anomaly type or placement prompt.
