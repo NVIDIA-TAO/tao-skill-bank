@@ -18,9 +18,14 @@ cache, this skill directory, and a new durable output directory. Preserve
 absolute paths or rewrite all related paths consistently inside the compute
 frame. The platform owns writable temporary storage and caches.
 
-For offline use, preflight the selected Hugging Face cache for the tokenizer
-and guardrail assets resolved by the pinned image. Missing assets can fail
-before sampling. Keep registry and Hugging Face credentials out of specs,
+The wrapper preserves the native default invocation when guardrails are on and
+passes `--no-guardrail` only when they are explicitly disabled. The flag
+disables text screening,
+image content-safety screening, and face blurring together. For offline use,
+preflight the selected Hugging Face cache for the Nano tokenizer and Edge
+processor assets resolved by the pinned image. When guardrails are enabled,
+also require Qwen3Guard and Cosmos Guardrail assets; those assets are optional
+with `--no-guardrail`. Keep registry and Hugging Face credentials out of specs,
 commands, logs, and job records.
 
 Invoke the command declared in `skill_info.yaml`, for example inside the
@@ -31,6 +36,7 @@ python /opt/tao-generate-od-defects/scripts/generate_od_defects.py \
   --inputs-dir /inputs/prepared \
   --base-checkpoint /models/Cosmos3-Nano \
   --output-dir /results/generation \
+  --no-guardrail \
   --num-gpus 1
 ```
 

@@ -23,6 +23,7 @@ actions:
       base_checkpoint: {type: folder}
       hf_cache: {type: folder, optional: true}
       published_root: {type: folder, optional: true}
+      guardrail: {type: bool}
     outputs:
       results_dir: {type: folder}
       validation_summary: {type: file, relative_path: validation_summary.json}
@@ -42,5 +43,7 @@ actions:
       datasets: --datasets {datasets}
       num_gpus: --num-gpus {num_gpus}
       hf_cache: --hf-cache {hf_cache}
+      guardrail: --guardrail/--no-guardrail {guardrail}
     defaults:
       num_gpus: 1
+      guardrail: true
