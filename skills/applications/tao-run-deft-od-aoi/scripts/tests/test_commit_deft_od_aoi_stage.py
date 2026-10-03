@@ -140,6 +140,35 @@ def _advance_to_synthesis(root: Path, *, retrieval_enabled: bool) -> Path:
     return state
 
 
+def _budget_skip(root: Path, admitted_real: int) -> tuple[Path, list[str]]:
+    state, _ = _state(root)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", synthesis_enabled=True,
+                 next_stage="iteration_admission", current_iteration=1,
+                 last_stage="iteration_retrieval")
+    state.write_text(json.dumps(value))
+    admission = root / "admission_report.json"
+    admission.write_text(json.dumps({
+        "status": "COMPLETE", "iteration": 1,
+        "admitted": {"real": admitted_real, "clean": 0, "synthetic": 0},
+    }))
+    MODULE.commit(
+        state, "iteration_admission", 1, [f"admission_report={admission}"]
+    )
+    request = root / "synthesis_request.json"
+    request.write_text(json.dumps({
+        "status": "SKIPPED", "reason": "no_synthetic_budget",
+        "selection_mode": "generated_per_type_plan", "fn_count": 0,
+        "eligible_fn_count": 2,
+        "planning": {
+            "new_image_budget": 1, "images_per_fn": 2,
+            "eligible_fn_count": 2, "selected_fn_count": 0,
+            "planned_images": 0, "unplanned_budget": 1,
+        },
+    }))
+    return state, [f"synthesis_request={request}", f"admission_report={admission}"]
+
+
 def test_commit_enforces_semantic_evidence_and_completes(tmp_path: Path) -> None:
     state, artifact = _state(tmp_path)
     iteration = _iteration_artifacts(tmp_path)
@@ -357,6 +386,54 @@ def test_no_eligible_skip_accepts_mixed_detailed_reasons(tmp_path: Path) -> None
 
     assert result["status"] == "RUNNING"
     assert result["next_stage"] == "iteration_training"
+
+
+@pytest.mark.parametrize(
+    ("admitted_real", "expected_status", "expected_stage"),
+    [(1, "RUNNING", "iteration_training"), (0, "COMPLETE", None)],
+)
+def test_synthesis_budget_skip_trains_only_with_new_admission(
+        tmp_path: Path, admitted_real: int,
+        expected_status: str, expected_stage: str | None) -> None:
+    state, artifacts = _budget_skip(tmp_path, admitted_real)
+
+    result = MODULE.commit(state, "iteration_synthesis", 1, artifacts)
+
+    assert result["status"] == expected_status
+    assert result["next_stage"] == expected_stage
+    decision = result["events"][-1]["synthesis_decision"]
+    assert decision == {"status": "SKIPPED", "reason": "no_synthetic_budget"}
+    assert set(result["events"][-1]["artifacts"]) == {
+        "synthesis_request", "admission_report",
+    }
+    if admitted_real == 0:
+        assert result["completion_reason"] == "no_new_training_images"
+
+
+def test_synthesis_budget_skip_requires_exact_committed_admission(
+        tmp_path: Path) -> None:
+    state, artifacts = _budget_skip(tmp_path, 1)
+    original = Path(artifacts[1].split("=", 1)[1])
+    replacement = tmp_path / "replacement_admission_report.json"
+    replacement.write_bytes(original.read_bytes())
+    artifacts[1] = f"admission_report={replacement}"
+
+    with pytest.raises(ValueError, match="committed admission report"):
+        MODULE.commit(state, "iteration_synthesis", 1, artifacts)
+
+
+def test_synthesis_budget_skip_rejects_all_eligible_mode(tmp_path: Path) -> None:
+    state, artifacts = _budget_skip(tmp_path, 1)
+    request = Path(artifacts[0].split("=", 1)[1])
+    value = json.loads(request.read_text())
+    value["selection_mode"] = "all_eligible"
+    request.write_text(json.dumps(value))
+
+    with pytest.raises(
+        ValueError,
+        match="no_synthetic_budget requires selection_mode=generated_per_type_plan",
+    ):
+        MODULE.commit(state, "iteration_synthesis", 1, artifacts)
 
 
 def test_commit_rejects_out_of_order_stage(tmp_path: Path) -> None:

@@ -225,6 +225,18 @@ def _stratified_synthetic(candidates: list[dict[str, Any]], limit: int
     return sorted(selected, key=lambda row: str(row["source"]))
 
 
+def _synthetic_limit(real_total: int, synthesis: dict[str, Any]) -> tuple[int, str, float]:
+    if "cumulative_fraction_of_total_defects" in synthesis:
+        fraction = float(synthesis["cumulative_fraction_of_total_defects"])
+        if not math.isfinite(fraction) or not 0 <= fraction < 1:
+            raise ValueError("cumulative_fraction_of_total_defects must be in [0, 1)")
+        return int(fraction / (1.0 - fraction) * real_total), "fraction_of_total", fraction
+    fraction = float(synthesis["cumulative_fraction_of_real_defects"])
+    if not math.isfinite(fraction) or fraction < 0:
+        raise ValueError("cumulative_fraction_of_real_defects must be finite and nonnegative")
+    return int(real_total * fraction), "fraction_of_real", fraction
+
+
 def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output: Path,
           previous_path: Path | None, mode: str, synthetic_coco: Path | None = None,
           synthetic_images: Path | None = None, synthetic_only: bool = False) -> dict[str, Any]:
@@ -358,7 +370,9 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                 raise ValueError(f"conflicting duplicate synthetic source: {key}")
             unique.setdefault(key, candidate)
         synthetic_requested = len(unique)
-        limit = int(real_total * float(policy["synthesis"]["cumulative_fraction_of_real_defects"]))
+        limit, fraction_basis, configured_fraction = _synthetic_limit(
+            real_total, policy["synthesis"]
+        )
         room = max(0, limit - by_kind["synthetic_defect"])
         admitted = _stratified_synthetic(list(unique.values()), room)
         admitted_by_stratum = dict(sorted(collections.Counter(
@@ -386,6 +400,9 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
               "by_kind": {kind: sum(row["deft_kind"] == kind for row in images)
                           for kind in ("real_defect", "clean_negative", "synthetic_defect")},
               "synthetic_admission": {
+                  "fraction_basis": fraction_basis if synthetic_coco else None,
+                  "configured_fraction": configured_fraction if synthetic_coco else None,
+                  "cumulative_limit": limit if synthetic_coco else None,
                   "requested_new": synthetic_requested,
                   "admitted_new": synthetic_admitted,
                   "excluded_by_cap": synthetic_requested - synthetic_admitted,

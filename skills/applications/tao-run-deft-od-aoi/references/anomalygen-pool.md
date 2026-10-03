@@ -102,3 +102,43 @@ continue. When all routed FNs have that reason, the input contract is typed
 `SKIPPED` with preparation-level reason `no_eligible_false_negatives`, carries
 the specific per-FN reason and warning evidence, and emits no embedding or AMP
 work.
+
+## Runtime-generated FN selection
+
+The default generates a bounded plan deterministically after real admission:
+
+```yaml
+synthesis:
+  cumulative_fraction_of_total_defects: 0.25
+  fn_selection:
+    mode: generated_per_type_plan
+  max_neighbors_per_fn: 1
+```
+
+Pass the admitted real COCO with `--real-coco`. The planner solves
+`synthetic / (real + synthetic) = fraction`, subtracts previously admitted
+synthetic images, and distributes the remaining whole-FN budget across anomaly
+types in proportion to eligible FN counts with deterministic remainder ties.
+The planner derives the expected finalized generation yield for one selected
+FN as:
+
+```text
+retained neighbors per FN × mask branches per neighbor × images per branch
+```
+
+The accepted configuration uses one retained neighbor, two mask branches, and
+one generated image per branch, so the value is `1 × 2 × 1 = 2`. This derived
+value is recorded as `images_per_fn` in the frozen plan evidence. The retrieval
+`candidate_topn` may be larger (for example, three) because it supplies fallback
+neighbors before AMP finalization; it does not increase the expected yield once
+`max_neighbors_per_fn` retains only one neighbor. Increasing that setting
+automatically increases the bounded-plan yield by two images per added neighbor.
+
+Set `synthesis.fn_selection.mode: all_eligible` explicitly only when every
+routed FN should proceed without pre-generation budgeting. That compatibility
+mode does not require `--real-coco`, but the cumulative admission cap still
+applies after generation.
+
+It writes `synthetic_plan.json`, binds its SHA-256 into the request, and records
+the complete budget calculation. If no budget remains, preparation emits a
+typed `SKIPPED/no_synthetic_budget` result.

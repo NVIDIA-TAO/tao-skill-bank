@@ -58,10 +58,12 @@ training:
   extension_epochs: 12
 synthesis:
   enabled: false
+  fn_selection:
+    mode: generated_per_type_plan
   pool_dataset_root: null
   defect_spec: null
   routes: {}
-  max_neighbors_per_fn: 5
+  max_neighbors_per_fn: 1
   min_similarity: 0.9
-  cumulative_fraction_of_real_defects: 0.25
+  cumulative_fraction_of_total_defects: 0.25
   amp_model_id: nvidia/Cosmos3-Nano
