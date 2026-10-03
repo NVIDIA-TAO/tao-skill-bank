@@ -228,6 +228,19 @@ def test_accepts_coco_list_with_one_shared_image_root(tmp_path: Path) -> None:
     assert report["roles"]["real"] == {"images": 2, "annotations": 2}
 
 
+@pytest.mark.parametrize("bbox", [[10, 2, 3, 4], [1, 8, 3, 4]])
+def test_rejects_source_bbox_beyond_image_bounds(tmp_path: Path, bbox: list[int]) -> None:
+    manifest = _manifest(tmp_path)
+    value = json.loads(manifest.read_text())
+    source = Path(value["inputs"]["benchmark"][0]["coco"])
+    coco = json.loads(source.read_text())
+    coco["annotations"][0]["bbox"] = bbox
+    source.write_text(json.dumps(coco))
+
+    with pytest.raises(ValueError, match="exceeds normalized COCO image bounds"):
+        MODULE.prepare(manifest)
+
+
 def test_rejects_boxless_mining_until_it_is_explicitly_routed(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     value = json.loads(manifest.read_text())

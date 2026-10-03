@@ -48,6 +48,18 @@ def _image_path(images: Path, row: dict[str, Any]) -> Path:
     return path.expanduser().resolve()
 
 
+def _validate_bbox(value: Any, image: dict[str, Any], role: str) -> None:
+    x, y, width, height = map(float, value)
+    image_width = float(image.get("width") or 0)
+    image_height = float(image.get("height") or 0)
+    if image_width <= 0 or image_height <= 0:
+        raise ValueError(f"{role} normalized COCO image dimensions must be positive")
+    if width <= 0 or height <= 0:
+        raise ValueError(f"{role} normalized COCO bbox dimensions must be positive")
+    if x < 0 or y < 0 or x + width > image_width or y + height > image_height:
+        raise ValueError(f"{role} normalized COCO bbox exceeds image bounds")
+
+
 def _has_synthesis_clean_reference(pool: Path) -> bool:
     return any(
         image.is_file() and image.suffix.lower() in IMAGE_SUFFIXES
@@ -68,7 +80,8 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"{name} must declare only the defect category")
     category_ids = {int(row["id"]) for row in categories}
     image_rows = coco.get("images", [])
-    image_ids = {int(row["id"]) for row in image_rows}
+    images_by_id = {int(row["id"]): row for row in image_rows}
+    image_ids = set(images_by_id)
     if not image_rows and name != "clean":
         raise ValueError(f"{name} has no images")
     if len(image_ids) != len(image_rows):
@@ -78,9 +91,7 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
         image_id, category = int(annotation["image_id"]), int(annotation["category_id"])
         if image_id not in counts or category not in category_ids:
             raise ValueError(f"{name} annotation references unknown image/category")
-        x, y, width, height = map(float, annotation["bbox"])
-        if min(x, y) < 0 or width <= 0 or height <= 0:
-            raise ValueError(f"{name} contains an invalid bbox")
+        _validate_bbox(annotation["bbox"], images_by_id[image_id], name)
         counts[image_id] += 1
     paths = [_image_path(images, row) for row in image_rows]
     missing = [path for path in paths if not path.is_file()]
