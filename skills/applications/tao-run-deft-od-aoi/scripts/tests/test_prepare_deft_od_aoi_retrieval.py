@@ -7,8 +7,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 SCRIPT = Path(__file__).parents[1] / "prepare_deft_od_aoi_retrieval.py"
@@ -27,7 +28,9 @@ def _oriented_image(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     exif = Image.Exif()
     exif[274] = 8
-    Image.fromarray(np.full((20, 40, 3), 80, dtype=np.uint8)).save(path, exif=exif)
+    y, x = np.indices((20, 40), dtype=np.uint8)
+    values = np.stack((x, y, x + y), axis=-1)
+    Image.fromarray(values).save(path, exif=exif)
 
 
 def _policy(root: Path) -> Path:
@@ -83,6 +86,23 @@ def test_candidate_cache_applies_exif_orientation_before_cropping(tmp_path: Path
         assert crop.size == (9, 9)
 
 
+def test_tiny_crop_uses_displayed_geometry_before_minimum_expansion(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "oriented.png"
+    output = tmp_path / "crop.png"
+    _oriented_image(source)
+
+    MODULE._crop(source, (1, 30, 3, 32), output)
+
+    with Image.open(source) as opened:
+        displayed = ImageOps.exif_transpose(opened).convert("RGB")
+    expected = displayed.crop((0, 27, 8, 35))
+    with Image.open(output) as crop:
+        assert crop.size == (8, 8)
+        assert np.array_equal(np.asarray(crop), np.asarray(expected))
+
+
 def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     policy = _policy(tmp_path)
     query_image = tmp_path / "query.png"
@@ -103,3 +123,39 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     clean_mining = yaml.safe_load((tmp_path / "queries/mine_clean.yaml").read_text())
     assert real_mining["desired_unique_count"] == 2
     assert clean_mining["desired_unique_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("size", "box", "expected_box", "expected_padding"),
+    [
+        ((32, 32), (0, 0, 2, 2), (0, 0, 8, 8), (0, 0, 0, 0)),
+        ((32, 32), (30, 30, 32, 32), (24, 24, 32, 32), (0, 0, 0, 0)),
+        ((5, 3), (0, 0, 1, 1), (0, 0, 5, 3), (3, 4, 0, 1)),
+        ((32, 32), (4, 5, 20, 24), (4, 5, 20, 24), (0, 0, 0, 0)),
+    ],
+)
+def test_minimum_crop_geometry_expands_then_pads_only_when_required(
+    size: tuple[int, int], box: tuple[int, int, int, int],
+    expected_box: tuple[int, int, int, int], expected_padding: tuple[int, int, int, int],
+) -> None:
+    assert MODULE._minimum_crop_geometry(box, *size) == (expected_box, expected_padding)
+
+
+def test_tiny_gap_crops_are_embedding_safe_at_boundaries(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    query_image = tmp_path / "narrow.png"
+    Image.fromarray(np.full((3, 5, 3), 80, dtype=np.uint8)).save(query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [0, 0, 1, 1], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [4, 2, 5, 3], "best_iou": 0.01}]).to_parquet(loose)
+
+    MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
+                   tmp_path / "candidates", None)
+
+    crops = list((tmp_path / "queries/crops").rglob("*.png"))
+    assert len(crops) == 2
+    assert all(Image.open(path).size == (8, 8) for path in crops)
+    assert all(Image.open(path).getextrema() == ((80, 80),) * 3 for path in crops)
