@@ -144,7 +144,9 @@ invokes the legacy agent by name; it shells out to the same script.
 
 ### Direct-container fallback
 
-Use only when the mapped Skill tool is unavailable and Docker plus the current overlay are present. Record `execution_path=direct-container` in the transcript, then run the overlay's documented `docker run` with the same arguments and absolute output paths. The fallback changes the invocation mechanism only: it must produce the same artifacts and commit them through `commit_stage.py`.
+Use only when the mapped Skill tool is unavailable and Docker plus the current overlay are present. Run the overlay's documented `docker run` with the same arguments and absolute output paths. The fallback changes the invocation mechanism only: it must produce the same artifacts and commit them through `commit_stage.py`.
+
+Commit a stage that ran this way with **`--execution-path direct-container`**. It is recorded at `state.iterations.<phase>.execution_paths.<stage>`, and `audit_deft_run.py` lists every such stage as `direct_container_stages`, so a finished run can be attributed to the code path that produced it. A stage committed without the flag ran through its mapped skill, the documented default.
 
 ## Invariants
 
