@@ -49,6 +49,12 @@ image-safety state applies only to image content-safety enforcement; it does not
 imply that text screening or face blurring was active. Report component states
 independently when the runtime exposes them.
 
+| Component | Stage | Effect |
+|---|---|---|
+| Text screening | Before generation | A blocklist and text-safety classifier screen the input prompt and any upsampled prompt. Unsafe text can stop the sample before image generation. |
+| Image content-safety screening | After generation | A content-safety classifier evaluates generated visual content and can reject an unsafe result before downstream use. |
+| Face blur | After generation | A face detector locates faces and blurs the detected regions in the output. This is a privacy transformation, not a safe/unsafe verdict, and does not by itself prove image-safety enforcement. |
+
 A workflow that records the observed image-safety state must use one of these
 values:
 
