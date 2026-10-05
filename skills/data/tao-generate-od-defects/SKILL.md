@@ -30,10 +30,11 @@ Pass either:
 - `--input-data-path`, `--checkpoint`, and matching `--recipe` for a native
   AnomalyGenNext testcase.
 
-Also provide the Cosmos3-Nano base checkpoint and one or more GPUs. Every
-testcase image and aligned mask must exist, every anomaly type must occur in the
-recipe, and the requested row count must match the testcase. When a prepared
-integrity manifest exists, every recorded hash is verified before generation.
+Also provide the Cosmos3-Nano base checkpoint, the complete AnomalyGenNext
+checkpoint root, and one or more GPUs. Every testcase image and aligned mask
+must exist, every anomaly type must occur in the recipe, and the requested row
+count must match the testcase. When a prepared integrity manifest exists,
+every recorded hash is verified before generation.
 
 ## Run
 
@@ -44,6 +45,7 @@ and output directory, then submit the `generate` action:
 scripts/generate_od_defects.py \
   --inputs-dir /results/prepared_inputs \
   --base-checkpoint /models/Cosmos3-Nano \
+  --checkpoint-root /workspace/paidf-anomalygen/checkpoints \
   --output-dir /temporary/generation \
   --published-root /persistent/generation \
   --num-gpus 1
@@ -53,10 +55,14 @@ When execution uses temporary storage, `--published-root` records the
 persistent locations that will contain the saved results.
 
 The action deliberately exposes no switch that disables the image's default
-guardrail path. An optional Hugging Face cache can provide the tokenizer and
-guardrail assets for offline execution. Offline mode validates the required
-pinned repositories before generation starts. The base-checkpoint argument is
-the parent containing `checkpoint.json` and the `model/` checkpoint directory.
+guardrail path. The checkpoint root is mounted over the image's canonical
+`/workspace/paidf-anomalygen/checkpoints` tree and validated before GPU work
+for the pinned tokenizer, guardrail, and DINOv2 assets. The selected platform
+must honor the declared `checkpoint_root.container_path`; the generation leaf
+rejects a different mount point. Generation is forced offline after that
+validation. The base-checkpoint argument remains separate:
+it is the parent containing `checkpoint.json` and the `model/` checkpoint
+directory.
 
 ## Completion
 

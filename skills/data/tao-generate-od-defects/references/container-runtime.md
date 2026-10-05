@@ -13,10 +13,10 @@ The image contains AnomalyGenNext 1.1 and its runtime at
 not overlay an external checkout or host virtualenv.
 
 Expose the testcase or prepared-input result, task checkpoint and recipe,
-Cosmos3-Nano base checkpoint, optional real-image root, optional Hugging Face
-cache, this skill directory, and a new durable output directory. Preserve
-absolute paths or rewrite all related paths consistently inside the compute
-frame. The platform owns writable temporary storage and caches.
+Cosmos3-Nano base checkpoint, complete checkpoint root, this skill directory,
+and a new durable output directory. Preserve absolute paths or rewrite all
+related paths consistently inside the compute frame. The platform owns
+writable temporary storage and caches.
 
 The image defaults to the non-root `anomalygen` user with UID 10000. Every
 input mount must be readable and traversable by the effective container user;
@@ -29,10 +29,14 @@ username and all home and cache locations must remain writable. For the local
 Docker identity-mapping recipe, see
 [Running in Docker](../../tao-generate-anomalies/references/docker.md).
 
-For offline use, preflight the selected Hugging Face cache for the tokenizer
-and guardrail assets resolved by the pinned image. Missing assets can fail
-before sampling. Keep registry and Hugging Face credentials out of specs,
-commands, logs, and job records.
+Mount the complete checkpoint root read-only at
+`/workspace/paidf-anomalygen/checkpoints`. The action rejects any other mount
+location and validates `Qwen/Qwen3-VL-8B-Instruct`,
+`Qwen/Qwen3Guard-Gen-0.6B`, `nvidia/Cosmos-Guardrail1`, and
+`nvidia/Cosmos3-Edge` in the Hugging Face cache under `hf/`, plus a
+Transformers-compatible `facebook/dinov2-large`. It then forces Hugging Face
+and Transformers offline. Missing assets fail before sampling. Keep registry
+and Hugging Face credentials out of specs, commands, logs, and job records.
 
 Invoke the command declared in `skill_info.yaml`, for example inside the
 container:
@@ -41,11 +45,12 @@ container:
 python /opt/tao-generate-od-defects/scripts/generate_od_defects.py \
   --inputs-dir /inputs/prepared \
   --base-checkpoint /models/Cosmos3-Nano \
+  --checkpoint-root /workspace/paidf-anomalygen/checkpoints \
   --output-dir /results/generation \
   --num-gpus 1
 ```
 
 The exposed GPU count must match `--num-gpus`. The output directory must not
 already exist. The base path must contain `checkpoint.json` and the `model/`
-checkpoint directory. Read `execution-contract.md` for the completion and
-accounting gates.
+checkpoint directory; it is not the shared checkpoint root. Read
+`execution-contract.md` for the completion and accounting gates.
