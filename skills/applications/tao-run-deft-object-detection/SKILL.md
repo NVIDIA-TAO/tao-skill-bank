@@ -147,7 +147,7 @@ Each stage maps to one underlying skill or to bundled glue. **Read only the curr
 
 The overlays are written against two loop variables that Pre-Flight sets and every stage uses: `N`, the current iteration number, and `PHASE`, which is `baseline` or `iter${N}`. They are stated here because a stage overlay is read on its own — see `references/preflight.md` for the full set.
 
-If an *overlay* is missing, stop and ask the user to reinstall the plugin — the loop cannot run a stage whose settings it does not have. If a mapped *skill* is unavailable, do not stop and do not improvise: fall back to the overlay's documented `docker run` as described in `references/scripts-and-agents.md`, and commit that stage with `--execution-path direct-container`. The overlay carries everything the invocation needs, so the fallback produces the same artifacts.
+If an *overlay* is missing, stop and ask the user to reinstall the plugin — the loop cannot run a stage whose settings it does not have. If a mapped *skill* is unavailable, do not stop and do not improvise: fall back to the overlay's documented `docker run` as described in `references/scripts-and-agents.md`, and commit that stage with `--execution-path direct-container` instead of the documented `skill`. The overlay carries everything the invocation needs, so the fallback produces the same artifacts.
 
 | Stage | Overlay | Underlying skill |
 |---|---|---|

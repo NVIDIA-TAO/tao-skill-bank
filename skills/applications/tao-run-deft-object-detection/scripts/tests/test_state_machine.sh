@@ -127,8 +127,17 @@ assert_rc() {  # assert_rc EXPECTED_RC LABEL
 commit() {  # commit RESULTS_DIR PHASE STAGE [extra args...]
   local results=$1 phase=$2 stage=$3
   shift 3
+  # A skill-mapped stage must say which way it ran. Tests drive the documented skill
+  # path unless they pass their own --execution-path, or set OMIT_EXECUTION_PATH=1 to
+  # exercise the refusal.
+  local path=()
+  case "$stage" in
+    gap_analysis|embed|mine|train|inference|kpi_analyze) path=(--execution-path skill) ;;
+  esac
+  case " $* " in *" --execution-path "*) path=() ;; esac
+  [ "${OMIT_EXECUTION_PATH:-0}" = 1 ] && path=()
   run "$PY" "$COMMIT" --results-dir "$results" --iter-label "$phase" \
-    --stage "$stage" "$@"
+    --stage "$stage" ${path[@]+"${path[@]}"} "$@"
 }
 
 # ── reading the audit ────────────────────────────────────────────────────────
@@ -845,7 +854,7 @@ export DEFT_TEST_BASE_EVENTS=2   # baseline inference + kpi_analyze
 make_iter_artifacts "$RUN_C" iter1
 freeze "$RUN_C"
 DEFT_TEST_INJECT=after run "$PY" "$WORK/commit_with_stub_audit.py" \
-  --results-dir "$RUN_C" --iter-label iter1 --stage gap_analysis \
+  --results-dir "$RUN_C" --iter-label iter1 --stage gap_analysis --execution-path skill \
   --weak-images "$RUN_C/iter1/gaps/weak_images.parquet" \
   --gap-report "$RUN_C/iter1/gaps/gap_report.json" \
   --weak-image-count 120 --summary "gap_analysis the audit will reject"
@@ -868,7 +877,7 @@ assert_no_tmp_files "$RUN_C" "the rollback left no tmp file behind"
 # went inconsistent for an unrelated reason still has to be able to record a
 # stage, a failure, and above all its loop_stop.
 DEFT_TEST_INJECT=always run "$PY" "$WORK/commit_with_stub_audit.py" \
-  --results-dir "$RUN_C" --iter-label iter1 --stage gap_analysis \
+  --results-dir "$RUN_C" --iter-label iter1 --stage gap_analysis --execution-path skill \
   --weak-images "$RUN_C/iter1/gaps/weak_images.parquet" \
   --gap-report "$RUN_C/iter1/gaps/gap_report.json" \
   --weak-image-count 120 --summary "gap_analysis over a pre-existing inconsistency"
@@ -1352,7 +1361,7 @@ for round in 1 2 3 4 5; do
   g_baseline "$G_RUN" "G6-$round" >/dev/null 2>&1
   for worker in 1 2; do
     (
-      "$PY" "$COMMIT" --results-dir "$G_RUN" --iter-label iter1 --stage gap_analysis \
+      "$PY" "$COMMIT" --results-dir "$G_RUN" --iter-label iter1 --stage gap_analysis --execution-path skill \
         --weak-images "$G_RUN/iter1/gaps/weak_images.parquet" \
         --gap-report "$G_RUN/iter1/gaps/gap_report.json" \
         --weak-image-count 120 --summary "gap_analysis (worker $worker)" \
@@ -1400,7 +1409,7 @@ g_init ws_torn_write 2
 make_iter_artifacts "$G_RUN" iter1
 g_baseline "$G_RUN" G7
 DEFT_TEST_SCRIPTS="$SCRIPTS_DIR" run "$PY" "$WORK/crash_in_window.py" \
-  --results-dir "$G_RUN" --iter-label iter1 --stage gap_analysis \
+  --results-dir "$G_RUN" --iter-label iter1 --stage gap_analysis --execution-path skill \
   --weak-images "$G_RUN/iter1/gaps/weak_images.parquet" \
   --gap-report "$G_RUN/iter1/gaps/gap_report.json" \
   --weak-image-count 120 --summary "gap_analysis killed mid-write" --duration-sec 9
@@ -3104,7 +3113,7 @@ def probe(results_dir, report=None, out=None):
         os.close(fd)
 commit_stage.render_loop_report = probe
 sys.argv = ["commit_stage.py", "--results-dir", run, "--iter-label", "iter1",
-            "--stage", "embed",
+            "--stage", "embed", "--execution-path", "skill",
             "--embeddings-parquet", f"{run}/iter1/embeddings/weak_images_embeddings.parquet",
             "--summary", "embedded 120 weak images", "--duration-sec", "5"]
 rc = commit_stage.main()
@@ -3522,11 +3531,26 @@ case "$RUN_OUT" in
 esac
 assert_unchanged "$G35_RUN" "[G35] the refused commit writes nothing"
 
+# Which way a skill-mapped stage ran is recorded, never assumed: a missing value is
+# refused rather than read as "skill", or a forgotten fallback is filed as a skill run.
+OMIT_EXECUTION_PATH=1 commit "$G35_RUN" iter1 gap_analysis \
+  --weak-images "$G35_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G35_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 9 --summary s --duration-sec 1
+assert_rc 1 "[G35] an ok skill-stage commit without --execution-path is refused"
+case "$RUN_OUT" in
+  *"requires --execution-path"*) ok "[G35] the refusal says which values to pass" ;;
+  *) notok "[G35] the refusal says which values to pass" "output: $RUN_OUT" ;;
+esac
+assert_unchanged "$G35_RUN" "[G35] and writes nothing"
+commit "$G35_RUN" iter1 loop_stop --execution-path skill --summary s --duration-sec 1
+assert_rc 1 "[G35] --execution-path on a stage that runs no skill is refused"
+
 # Every usage error is a rejection before any write, so it exits 1 -- never 2, which
 # this script reserves for "written, then rolled back". argparse's own default is 2.
 commit "$G35_RUN" iter1 gap_analysis --status bogus --summary s --duration-sec 1
 assert_rc 1 "[G35] an invalid --status is exit 1, not argparse's 2"
-run "$PY" "$COMMIT" --results-dir "$G35_RUN" --stage gap_analysis --summary s
+run "$PY" "$COMMIT" --results-dir "$G35_RUN" --stage gap_analysis --execution-path skill --summary s
 assert_rc 1 "[G35] a missing required flag is exit 1, not argparse's 2"
 assert_unchanged "$G35_RUN" "[G35] neither usage error writes anything"
 

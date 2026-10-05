@@ -55,6 +55,7 @@ CLI:
 
     python3 scripts/commit_stage.py \\
         --results-dir /abs/results/run_X --iter-label iter1 --stage mine \\
+        --execution-path skill \\
         --mining-output /abs/.../final_unique_files.parquet \\
         --mining-summary /abs/.../summary.json \\
         --summary "mined 500 unique images" --duration-sec 612
@@ -125,6 +126,13 @@ RESERVED_RECORD_FIELDS = {
     "execution_paths": "--execution-path",
 }
 STATE_BOOKKEEPING_FIELDS = {"stage_completed", "status", "failed_stage"}
+
+# Stages that run a mapped tao-skill-bank skill, and so can run two ways: through
+# that skill, or through the overlay's documented docker run when the skill is
+# unavailable. `stage` runs bundled scripts and `loop_stop` runs nothing, so neither
+# has a path to record. prep runs several skills and may record one, but is not
+# required to.
+SKILL_STAGES = ("gap_analysis", "embed", "mine", "train", "inference", "kpi_analyze")
 
 
 def _dest(flag: str) -> str:
@@ -515,11 +523,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="error records a hard stop and fails the run. Never auto-retry after one.")
     parser.add_argument("--execution-path", choices=("skill", "direct-container"),
                         default=None,
-                        help="How the stage ran. Pass direct-container when the mapped "
-                             "skill was unavailable and the overlay's documented docker run "
-                             "was used instead; recorded at state.iterations.<phase>."
-                             "execution_paths.<stage>. A stage committed without it ran "
-                             "through the mapped skill, the documented default.")
+                        help="How the stage ran: skill, through its mapped skill, or "
+                             "direct-container, through the overlay's documented docker run "
+                             "when the skill was unavailable. Required on an ok commit of a "
+                             "skill-mapped stage; recorded at state.iterations.<phase>."
+                             "execution_paths.<stage>.")
     parser.add_argument("--duration-sec", type=int, default=0,
                         help="Stage wall-clock seconds. Omit when no start time was captured; "
                              "it records 0. Do not invent a duration.")
@@ -662,6 +670,20 @@ def main() -> int:
                 "not succeeded, and committing it ok would let the loop advance past a "
                 "missing result. If kpi_analyze printed 'mAP: nan', a target class has no "
                 "ground truth in the KPI set: commit this stage with --status error")
+
+        # Which way a stage ran is recorded, not assumed. Inferring "skill" from a
+        # missing flag would record a forgotten fallback as a skill run, most likely
+        # where the fallback is the norm -- a runtime with no Skill tool, where every
+        # stage takes it. An error commit is exempt: refusing it would lose the only
+        # evidence of the failure.
+        if args.execution_path is not None and stage not in SKILL_STAGES + ("prep",):
+            raise ValueError(
+                f"--execution-path does not apply to {stage!r}, which runs no mapped skill "
+                f"and so has only one way to run")
+        if stage in SKILL_STAGES and args.status == "ok" and args.execution_path is None:
+            raise ValueError(
+                f"stage {stage!r} requires --execution-path: skill if it ran through its "
+                f"mapped skill, direct-container if it used the overlay's docker run")
 
         results_dir = Path(args.results_dir).expanduser().resolve()
         if not results_dir.is_dir():

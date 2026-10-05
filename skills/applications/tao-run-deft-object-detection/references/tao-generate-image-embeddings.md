@@ -69,6 +69,7 @@ The embedding column is named **`embedding`**, which is what `tmm unique_neighbo
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "iter${N}" --stage embed \
+  --execution-path skill \
   --embeddings-parquet "${RESULTS_DIR}/iter${N}/embeddings/weak_images_embeddings.parquet" \
   --duration-sec "$(( SECONDS - started ))" \
   --summary "embedded <N> weak images with <model>"
