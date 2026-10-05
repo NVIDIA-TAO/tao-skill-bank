@@ -303,6 +303,20 @@ needed, then ask before installing. Examples:
 After user approval and installation, rerun the same preflight. Do not create
 runner files or launch jobs between the failed check and the rerun.
 
+### Runtime downloads
+
+Use normal networking, including verification. Set `--network none`,
+`UV_OFFLINE`, `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE` only when required by
+user, policy or test; explain at launch review. Local checkpoints do not imply
+cached packages.
+
+Approved runs may fetch declared Python dependencies in their runtime,
+keeping version constraints and the small-helper approval exception; report
+installs. Missing helpers need no rebuild, extra stage or cache.
+Check network restrictions, DNS and proxy/index access on download failure.
+Keep offline rules and approval gates for model/data downloads, system changes
+and upgrades.
+
 ## Dataset Intake
 
 Accept dataset inputs in either mode:
