@@ -66,6 +66,10 @@ def test_admission_deduplicates_sources_and_preserves_explicit_clean(tmp_path: P
     policy, candidates, retrieval = _fixture(tmp_path)
     report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
     assert report["admitted"] == {"real": 1, "clean": 1, "synthetic": 0}
+    assert report["retrieval_admission"] == {
+        "real": {"requested": 1, "deduplicated": 1, "capped": 1},
+        "clean": {"requested": 1, "deduplicated": 1, "capped": 1},
+    }
     assert report["by_kind"] == {"real_defect": 1, "clean_negative": 1,
                                  "synthetic_defect": 0}
     preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
@@ -119,8 +123,46 @@ def test_clean_admission_uses_cumulative_real_capacity_after_real_mining_exhaust
 
     assert len(pd.read_parquet(mined)) == 2
     assert report["admitted"] == {"real": 0, "clean": 1, "synthetic": 0}
+    assert report["retrieval_admission"] == {
+        "real": {"requested": 0, "deduplicated": 0, "capped": 0},
+        "clean": {"requested": 1, "deduplicated": 1, "capped": 1},
+    }
     assert report["by_kind"] == {"real_defect": 1, "clean_negative": 1,
                                  "synthetic_defect": 0}
+
+
+def test_admission_reports_requested_deduplicated_and_capped_role_counts(
+        tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    clean_coco = tmp_path / "clean.json"
+    clean_document = json.loads(clean_coco.read_text())
+    embedded = pd.read_parquet(candidates / "clean_candidate_embeddings.parquet")
+    mined = pd.read_parquet(retrieval / "mine_clean/final_unique_files.parquet")
+    for image_id in (2, 3):
+        image = tmp_path / f"clean-{image_id}.png"
+        image.write_bytes(f"clean-{image_id}".encode())
+        clean_document["images"].append({
+            "id": image_id, "file_name": image.name, "source_path": str(image),
+        })
+        embedded.loc[len(embedded)] = {
+            "filepath": f"/clean-crop-{image_id}.png",
+            "source_filepath": str(image), "source_image_id": image_id,
+            "embedding": [1.0, 0.0],
+        }
+        mined.loc[len(mined)] = {"filepath": f"/clean-crop-{image_id}.png"}
+    clean_coco.write_text(json.dumps(clean_document))
+    embedded.to_parquet(candidates / "clean_candidate_embeddings.parquet", index=False)
+    mined.to_parquet(retrieval / "mine_clean/final_unique_files.parquet", index=False)
+    manifest = json.loads((retrieval / "query_manifest.json").read_text())
+    manifest["admission_targets"]["clean"]["background_fp"] = 3
+    (retrieval / "query_manifest.json").write_text(json.dumps(manifest))
+
+    report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+
+    assert report["retrieval_admission"] == {
+        "real": {"requested": 1, "deduplicated": 1, "capped": 1},
+        "clean": {"requested": 3, "deduplicated": 3, "capped": 1},
+    }
 
 
 def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: Path) -> None:
@@ -169,6 +211,9 @@ def test_admission_uses_overfetch_to_replace_a_previously_used_parent(tmp_path: 
                   {"filepath": "/real-crop-b.png"}]).to_parquet(
         retrieval / "mine_real/final_unique_files.parquet"
     )
+    manifest = json.loads((retrieval / "query_manifest.json").read_text())
+    manifest["admission_targets"]["real"]["fn"] = 2
+    (retrieval / "query_manifest.json").write_text(json.dumps(manifest))
     previous = tmp_path / "previous.json"
     previous.write_text(json.dumps({
         "images": [{"id": 1, "file_name": first.name, "source_path": str(first),
@@ -181,6 +226,9 @@ def test_admission_uses_overfetch_to_replace_a_previously_used_parent(tmp_path: 
     report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", previous, "copy")
 
     assert report["admitted"]["real"] == 1
+    assert report["retrieval_admission"]["real"] == {
+        "requested": 2, "deduplicated": 1, "capped": 1,
+    }
     preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
     assert preview["roles"]["real"]["branches"]["fn"]["unique_parents"] == 2
     assert preview["roles"]["real"]["branches"]["fn"]["novel_parents"] == 1
