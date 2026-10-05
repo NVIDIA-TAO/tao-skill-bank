@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -85,3 +86,36 @@ def test_prepare_rejects_incomplete_checkpoint_root(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "lacks required Qwen tokenizer assets under hf/" in result.stderr
+
+
+@pytest.mark.parametrize("suffix", [".bmp", ".tif", ".tiff", ".webp"])
+def test_prepare_rejects_runtime_unsupported_image_extensions(
+        tmp_path: Path, suffix: str) -> None:
+    args = _fixture(tmp_path)
+    anomaly = tmp_path / "dataset/texture/anomaly_image/defect/a.png"
+    anomaly.rename(anomaly.with_suffix(suffix))
+
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "unsupported AnomalyGenNext image extension" in result.stderr
+
+
+@pytest.mark.parametrize("key", ["image_filename", "mask_filename"])
+def test_prepare_rejects_runtime_unsupported_validation_extensions(
+        tmp_path: Path, key: str) -> None:
+    args = _fixture(tmp_path)
+    validation = Path(args[args.index("--validation-testcase") + 1])
+    rows = [json.loads(line) for line in validation.read_text().splitlines()]
+    source = Path(rows[0][key])
+    unsupported = source.with_suffix(".bmp")
+    unsupported.write_bytes(source.read_bytes())
+    for row in rows:
+        row[key] = str(unsupported)
+    validation.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    label = key.removesuffix("_filename")
+    assert f"unsupported AnomalyGenNext {label} extension" in result.stderr
