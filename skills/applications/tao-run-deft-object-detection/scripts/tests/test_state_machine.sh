@@ -3246,6 +3246,67 @@ PYEOF
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G37. a target class that mines nothing is named in the report
+#
+# Under class_stratified each rare class is allocated a share of the mining budget.
+# A class that gets nothing has its slots backfilled from the others, so the totals
+# and the coverage stay healthy and neither existing rule fires. TAO's summary.json
+# records the achieved per-class counts; nothing read them.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G37 a starved class is reported"
+
+while IFS= read -r line; do
+  case "$line" in
+    "ok "*) ok "[G37] ${line#ok }" ;;
+    "not ok "*) notok "[G37] ${line#not ok }" ;;
+  esac
+done < <("$PY" - "$SCRIPTS_DIR" "$(new_workspace g37)" <<'PYEOF'
+import json, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import render_report as rr
+
+root = pathlib.Path(sys.argv[2])
+def check(label, cond, detail=""):
+    print(f"ok {label}" if cond else f"not ok {label} :: {detail}")
+
+def doc_for(summary):
+    path = root / f"summary_{abs(hash(json.dumps(summary, sort_keys=True)))}.json"
+    path.write_text(json.dumps(summary))
+    state = {"config": {"target_classes": ["bicycle", "car", "person"]},
+             "iterations": {"iter1": {"weak_image_count": 100,
+                                      "mining_summary_json": str(path)}}}
+    return rr.compose(root, state, [], {"status": "VALID"}, "t")
+
+base = {"retrieved_unique_count": 500, "desired_unique_count": 500, "coverage_pct": 100.0,
+        "allocation": {"per_class": {"bicycle": {"desired_count": 120},
+                                     "person": {"desired_count": 300}}}}
+
+starved = dict(base, resultant_dataset={"per_class": {
+    "car": {"image_count": 480}, "person": {"image_count": 310}}})
+doc = doc_for(starved)
+check("a target class absent from the mined set is named, with its allocation",
+      "`iter1` mined no images of target class `bicycle` (it was allocated 120)" in doc, doc)
+check("the classes that were fed are not named", "class `person`" not in doc
+      and "class `car`" not in doc, doc)
+
+zero = dict(base, resultant_dataset={"per_class": {
+    "car": {"image_count": 480}, "person": {"image_count": 310},
+    "bicycle": {"image_count": 0}}})
+check("a target class recorded with zero images is named too",
+      "target class `bicycle`" in doc_for(zero))
+
+fed = dict(base, resultant_dataset={"per_class": {
+    "car": {"image_count": 480}, "person": {"image_count": 310},
+    "bicycle": {"image_count": 90}}})
+check("an iteration that fed every target class flags nothing",
+      "mined no images" not in doc_for(fed))
+
+check("a summary with no per-class breakdown flags nothing rather than guessing",
+      "mined no images" not in doc_for(base))
+PYEOF
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then
