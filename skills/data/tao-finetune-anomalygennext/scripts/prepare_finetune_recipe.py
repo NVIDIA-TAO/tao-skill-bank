@@ -16,7 +16,8 @@ from typing import Any
 import yaml
 
 
-IMAGES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+IMAGES = {".jpeg", ".jpg", ".png"}
+UNSUPPORTED_IMAGE_EXTS = {".bmp", ".tif", ".tiff", ".webp"}
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 DEFAULT_RECIPE = Path(__file__).resolve().parents[1] / "assets" / "default_recipe.yaml"
 
@@ -30,7 +31,23 @@ def _sha256(path: Path) -> str:
 
 
 def _images(path: Path) -> list[Path]:
-    return sorted(item for item in path.iterdir() if item.is_file() and item.suffix.lower() in IMAGES)
+    files = sorted(item for item in path.iterdir() if item.is_file())
+    unsupported = [item for item in files
+                   if item.suffix.lower() in UNSUPPORTED_IMAGE_EXTS]
+    if unsupported:
+        raise ValueError(
+            f"unsupported AnomalyGenNext image extension: {unsupported[0]}; "
+            "use .jpg, .jpeg, or .png"
+        )
+    return [item for item in files if item.suffix.lower() in IMAGES]
+
+
+def _validate_extension(path: Path, label: str) -> None:
+    if path.suffix.lower() not in IMAGES:
+        raise ValueError(
+            f"unsupported AnomalyGenNext {label} extension: {path}; "
+            "use .jpg, .jpeg, or .png"
+        )
 
 
 def _pairs(root: Path) -> list[list[str]]:
@@ -98,7 +115,9 @@ def _validation(path: Path, dataset: Path, name: str) -> tuple[list[dict[str, An
         for key in ("image_filename", "mask_filename"):
             if not row.get(key):
                 raise ValueError(f"missing {key} at {path}:{number}")
-            row[key] = str(_validation_path(str(row[key]), path, dataset, name))
+            resolved = _validation_path(str(row[key]), path, dataset, name)
+            _validate_extension(resolved, "mask" if key == "mask_filename" else "image")
+            row[key] = str(resolved)
         rows.append(row)
         counts[anomaly] += 1
     if not rows:
