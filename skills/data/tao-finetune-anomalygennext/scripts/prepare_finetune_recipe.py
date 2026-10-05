@@ -162,7 +162,7 @@ def _validate_base_checkpoint(root: Path) -> None:
     model = root / "model"
     if (not (root / "checkpoint.json").is_file()
             or not (model / ".metadata").is_file()
-            or not any(model.glob("*.distcp"))):
+            or not any(path.is_file() for path in model.glob("*.distcp"))):
         raise ValueError(
             "Cosmos3-Nano base checkpoint must be a DCP directory containing "
             f"checkpoint.json, model/.metadata, and model/*.distcp: {root}. "

@@ -125,6 +125,23 @@ def test_prepare_rejects_incomplete_dcp_base_checkpoint(tmp_path: Path, missing:
     assert "references/container-runtime.md" in result.stderr
 
 
+@pytest.mark.parametrize("invalid_shard", ["directory", "broken_symlink"])
+def test_prepare_rejects_non_file_dcp_shard(tmp_path: Path, invalid_shard: str) -> None:
+    args = _fixture(tmp_path)
+    base = Path(args[args.index("--base-checkpoint") + 1])
+    shard = base / "model" / "__0_0.distcp"
+    shard.unlink()
+    if invalid_shard == "directory":
+        shard.mkdir()
+    else:
+        shard.symlink_to(base / "missing.distcp")
+
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "base checkpoint must be a DCP directory" in result.stderr
+
+
 @pytest.mark.parametrize("suffix", [".bmp", ".tif", ".tiff", ".webp"])
 def test_prepare_rejects_runtime_unsupported_image_extensions(
         tmp_path: Path, suffix: str) -> None:
