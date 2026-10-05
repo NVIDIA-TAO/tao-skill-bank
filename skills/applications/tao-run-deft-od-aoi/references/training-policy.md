@@ -56,3 +56,9 @@ history.
 An operational resume preserves data, optimizer settings, target epoch, and
 output identity. It is not the policy extension and never initializes the next
 iteration. Platform-specific recovery belongs to the selected platform skill.
+
+With the packaged `dataset.workers: 4`, an undersized container `/dev/shm` can
+stall training instead of failing it: the log shows `unable to allocate shared
+memory(shm)`, `status.json` stays `RUNNING`, and no new epoch or checkpoint
+appears. Treat that as a failed run: stop it, relaunch with the platform
+skill's shared-memory sizing, and resume from the last checkpoint.
