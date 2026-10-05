@@ -39,7 +39,7 @@ selected tree read-only at:
 /workspace/paidf-anomalygen/checkpoints
 ```
 
-It must contain the Qwen assets under `hf/` plus
+It must contain the `Qwen/Qwen3-VL-8B-Instruct` assets under `hf/` plus
 `facebook/dinov2-large/config.json` and either
 `facebook/dinov2-large/model.safetensors` or
 `facebook/dinov2-large/pytorch_model.bin`. The `hf/` name is fixed by the
