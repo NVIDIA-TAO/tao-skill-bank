@@ -22,9 +22,16 @@ SPEC.loader.exec_module(MODULE)
 
 def checkpoint_root(repo: Path) -> Path:
     root = repo / "checkpoints"
-    cache = root / "hf/hub/models--Qwen--Qwen3-VL-8B-Instruct"
-    (cache / "blobs").mkdir(parents=True)
-    (cache / "snapshots").mkdir()
+    for model_id in MODULE.AMP_HF_REPOS:
+        cache = root / f"hf/hub/models--{model_id.replace('/', '--')}"
+        (cache / "blobs").mkdir(parents=True)
+        (cache / "snapshots").mkdir()
+    model = root / "hf/hub/models--nvidia--Cosmos3-Nano"
+    (model / "blobs").mkdir(parents=True)
+    snapshot = model / "snapshots/revision"
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_text("{}\n")
+    (snapshot / "model.safetensors").write_bytes(b"weights")
     sam2 = root / "facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt"
     sam2.parent.mkdir(parents=True)
     sam2.write_bytes(b"weights")
@@ -115,16 +122,24 @@ def test_plan_rejects_zero_norm_embeddings(tmp_path: Path) -> None:
         MODULE.plan(tmp_path, config)
 
 
-def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
+def test_run_launches_native_amp_offline_and_publishes_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ) -> None:
     frozen = tmp_path / "prepared_anomalygennext_inputs/filtering_config.yaml"
     frozen.parent.mkdir()
     pool = tmp_path / "pool"
     pool.mkdir()
-    frozen.write_text(f"defect_spec: /input/defects.jsonl\npool_dataset_root: {pool}\n")
+    frozen.write_text(
+        f"defect_spec: /input/defects.jsonl\npool_dataset_root: {pool}\n"
+        "amp:\n"
+        "  model_id: acme/custom-amp\n"
+    )
     repo = tmp_path / "repo"
     checkpoints = checkpoint_root(repo)
+    custom_model = checkpoints / "acme/custom-amp"
+    custom_model.mkdir(parents=True)
+    (custom_model / "config.json").write_text("{}\n")
+    (custom_model / "model.safetensors").write_bytes(b"weights")
     published = tmp_path.parent / "persistent-output"
     monkeypatch.setattr(MODULE, "plan", lambda root, value: {"candidates": 1})
 
@@ -135,6 +150,7 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
         assert env["HF_HOME"] == str(checkpoints / "hf")
         assert env["HF_HUB_CACHE"] == str(checkpoints / "hf/hub")
         assert env["HF_HUB_OFFLINE"] == env["TRANSFORMERS_OFFLINE"] == "1"
+        assert command[command.index("--model_id") + 1] == "acme/custom-amp"
         print("native AMP progress", file=stdout)
         amp = tmp_path / "amp"
         amp.mkdir()
@@ -167,6 +183,41 @@ def test_checkpoint_root_requires_canonical_mount_and_amp_assets(tmp_path: Path)
     (root / "facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt").unlink()
     with pytest.raises(FileNotFoundError, match="SAM2.1 checkpoint"):
         MODULE._validate_checkpoint_root(root, repo)
+
+
+def test_checkpoint_root_validates_configured_amp_model(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    root = checkpoint_root(repo)
+
+    with pytest.raises(FileNotFoundError, match="acme/custom-amp"):
+        MODULE._validate_checkpoint_root(root, repo, "acme/custom-amp")
+
+
+def test_checkpoint_root_accepts_complete_direct_local_amp_model(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    root = checkpoint_root(repo)
+    cached = root / "hf/hub/models--nvidia--Cosmos3-Nano"
+    for path in sorted(cached.rglob("*"), reverse=True):
+        path.unlink() if path.is_file() else path.rmdir()
+    cached.rmdir()
+    local = root / "nvidia/Cosmos3-Nano"
+    local.mkdir(parents=True)
+    (local / "config.json").write_text("{}\n")
+    (local / "model.safetensors").write_bytes(b"weights")
+
+    MODULE._validate_checkpoint_root(root, repo, "nvidia/Cosmos3-Nano")
+
+
+def test_checkpoint_root_rejects_processor_only_amp_model(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    root = checkpoint_root(repo)
+    model = root / "hf/hub/models--nvidia--Cosmos3-Edge/snapshots/revision"
+    model.mkdir(parents=True)
+    (model / "config.json").write_text("{}\n")
+    (model / "tokenizer.json").write_text("{}\n")
+
+    with pytest.raises(FileNotFoundError, match="complete checkpoints/nvidia/Cosmos3-Edge"):
+        MODULE._validate_checkpoint_root(root, repo, "nvidia/Cosmos3-Edge")
 
 
 def test_run_amp_contract_mounts_complete_checkpoint_root() -> None:

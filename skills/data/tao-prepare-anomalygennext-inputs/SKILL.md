@@ -110,10 +110,13 @@ This writes `knn_candidates.parquet`, the native AMP request, and
 records the persistent locations that will contain the saved results. The
 complete checkpoint root is a required typed input mounted at the image's
 canonical `/workspace/paidf-anomalygen/checkpoints` path. Before GPU work,
-`run_amp` verifies the pinned Qwen cache and
+`run_amp` verifies the pinned Qwen cache, the configured `amp.model_id` as a
+complete direct-local model or Hugging Face snapshot, and
 `facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt`; a separately mounted SAM2
 file does not satisfy
-the native runtime contract. Finalize the saved output in that persistent
+the native runtime contract. The selected platform must honor the declared
+`checkpoint_root.container_path`; the leaf rejects a different mount point.
+Finalize the saved output in that persistent
 result root:
 
 ```bash

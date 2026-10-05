@@ -97,7 +97,8 @@ container-native `anomalygen.scripts.auto_mask_placement.roi_place` entry point.
 
 The `run_amp` action also requires the complete AnomalyGenNext checkpoint root
 mounted at `/workspace/paidf-anomalygen/checkpoints`. Before native AMP starts,
-it verifies the pinned Qwen cache and
+it verifies the pinned Qwen cache, the configured `amp.model_id` as a complete
+direct-local model or Hugging Face snapshot, and
 `facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt`; a standalone
 SAM2 file or a checkpoint tree mounted at another path is rejected.
 
