@@ -617,6 +617,29 @@ def main() -> int:
                 "no phase of this run can score -- commit the stage with --status error "
                 "rather than writing a non-JSON literal into deft_state.json"
             )
+        # The mAP is kpi_analyze's result, and the per-phase trend built from it is the
+        # only thing the loop produces. These are argument rules, so they sit with the
+        # others and reject a commit before the lock is taken or any state is read.
+        #
+        # Only kpi_analyze may record one. map_value lives on the phase entry, not the
+        # stage, so another stage's commit -- a loop_stop filed under that phase, say --
+        # would overwrite the phase's measured mAP with a number nobody scored.
+        if args.map_value is not None and stage != "kpi_analyze":
+            raise ValueError(
+                f"--map-value belongs to kpi_analyze, not {stage!r}; only kpi_analyze "
+                "scores a phase, and a value recorded by any other stage would overwrite "
+                "the phase's measured mAP")
+        # And a kpi_analyze recorded ok must carry it: a phase scored without one has not
+        # delivered, and accepting it lets the next iteration start on a trend with a
+        # hole in it. A real `mAP: nan` cannot be iteration-specific -- the KPI set and
+        # mapping are the same for every phase -- so it is a configuration fault.
+        if stage == "kpi_analyze" and args.status == "ok" and args.map_value is None:
+            raise ValueError(
+                "stage 'kpi_analyze' requires --map-value, the mAP summarize_kpi.py "
+                "prints and writes to kpi_summary.json. A phase scored without one has "
+                "not succeeded, and committing it ok would let the loop advance past a "
+                "missing result. If kpi_analyze printed 'mAP: nan', a target class has no "
+                "ground truth in the KPI set: commit this stage with --status error")
 
         results_dir = Path(args.results_dir).expanduser().resolve()
         if not results_dir.is_dir():
@@ -745,20 +768,6 @@ def main() -> int:
                     unavailable.append(flag)
             if args.map_value is not None:
                 extras["map_value"] = args.map_value
-
-            # The mAP is kpi_analyze's result, and the per-phase trend built from it is
-            # the only thing the loop produces. A kpi_analyze recorded ok without one is
-            # a phase that did not deliver: allowing it lets the next iteration start on
-            # a trend with a hole in it, and the run end "complete" anyway. A real
-            # `mAP: nan` cannot be iteration-specific -- the KPI set and mapping are the
-            # same for every phase -- so it is a configuration fault and fails the stage.
-            if stage == "kpi_analyze" and args.status == "ok" and args.map_value is None:
-                raise ValueError(
-                    "stage 'kpi_analyze' requires --map-value, the mAP summarize_kpi.py "
-                    "prints and writes to kpi_summary.json. A phase scored without one has "
-                    "not succeeded, and committing it ok would let the loop advance past a "
-                    "missing result. If kpi_analyze printed 'mAP: nan', a target class has no "
-                    "ground truth in the KPI set: commit this stage with --status error")
 
             # The weak-image count is gap_analysis's measurement and no other
             # stage's. `entry.update(extras)` writes it straight onto the phase

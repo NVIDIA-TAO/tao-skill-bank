@@ -675,8 +675,10 @@ assert_rc 0 "state records the failure without advancing stage_completed"
 section "B2. only loop_stop may follow a hard stop"
 
 freeze "$RUN_B"
+# A well-formed retry -- it carries its mAP -- so the hard-stop rule is what refuses
+# it, not an argument check.
 commit "$RUN_B" baseline kpi_analyze \
-  --kpi-csv "$RUN_B/baseline/kpi/kpi_calc.csv" \
+  --kpi-csv "$RUN_B/baseline/kpi/kpi_calc.csv" --map-value 0.4 \
   --summary "silent retry after the hard stop"
 assert_rc 1 "retrying the failed stage is rejected"
 case "$RUN_OUT" in
@@ -2317,10 +2319,32 @@ case "$RUN_OUT" in
 esac
 assert_unchanged "$G24_RUN" "[G24] the refused commit writes nothing"
 
+# It is an argument rule, so it fires before the lock is taken or any state is read:
+# pointed at a results dir that does not exist, the refusal is still this one.
+commit "$G24/results/no_such_run" baseline kpi_analyze \
+  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" --summary "scored" --duration-sec 1
+case "$RUN_OUT" in
+  *"requires --map-value"*) ok "[G24] the mAP rule is checked before any state is read" ;;
+  *) notok "[G24] the mAP rule is checked before any state is read" "output: $RUN_OUT" ;;
+esac
+
 commit "$G24_RUN" baseline kpi_analyze \
   --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 \
   --summary "kpi: mAP=0.5" --duration-sec 1
 assert_rc 0 "[G24] the baseline scored with its mAP commits"
+
+# Only kpi_analyze may record an mAP. It lives on the phase entry, so any other
+# stage's commit would overwrite the phase's measured score.
+commit "$G24_RUN" baseline loop_stop --map-value 0.99 --summary "stop" --duration-sec 1
+assert_rc 1 "[G24] --map-value on a stage other than kpi_analyze is refused"
+case "$RUN_OUT" in
+  *"--map-value belongs to kpi_analyze, not 'loop_stop'"*)
+    ok "[G24] the refusal names the stage it belongs to" ;;
+  *) notok "[G24] the refusal names the stage it belongs to" "output: $RUN_OUT" ;;
+esac
+assert_eq '0.5' "$("$PY" -c 'import json,sys
+print(json.load(open(sys.argv[1]))["iterations"]["baseline"]["map_value"])' "$G24_RUN/deft_state.json")" \
+  "[G24] the phase keeps the mAP its kpi_analyze measured"
 
 # An iteration scored without its mAP: the loop must not move on to iter2.
 make_iter_artifacts "$G24_RUN" iter1
