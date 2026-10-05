@@ -10,6 +10,7 @@
 # global settings and does NOT read or write credentials.
 # ============================================================================
 set -u
+[ -d "$HOME/.local/share/pi-node/current/bin" ] && export PATH="$HOME/.local/share/pi-node/current/bin:$PATH"
 SKILL=$(cd "$(dirname "$0")/.." && pwd)
 BANK=$(cd "$SKILL/../../.." && pwd)
 KIT_HOME=${KIT_HOME:-$HOME/.tao-kit}
@@ -26,16 +27,22 @@ say "bank: $BANK"
 say ""
 say "-- core prerequisites (drivers are plain bash) --"
 check "bash" bash
-check "jq (driver routing on loop_log.jsonl)" jq
+check "jq (driver routing on run state JSON)" jq
 check "python3 (usage accounting, skill helper scripts)" python3
 check "docker (shipped card packs launch TAO containers)" docker
 
 say ""
-say "-- agent harnesses (need at least one; adapters/ has the matching guard+recorder) --"
-HARNESS=""
-if have pi; then say "  OK:      pi ($(pi --version 2>/dev/null | head -1)) -> adapters/pi (extensions, used by the shipped pack drivers)"; HARNESS=pi; fi
-if have claude; then say "  OK:      claude -> adapters/claude-code (PreToolUse/PostToolUse hooks + templates/driver.template.sh)"; HARNESS=${HARNESS:-claude}; fi
-[ -z "$HARNESS" ] && { MISS=$((MISS+1)); say "  MISSING: no agent harness found (install pi or claude)"; }
+say "-- agent harnesses (adapters/ has the matching guard+recorder) --"
+if have pi; then
+  OK=$((OK+1)); say "  OK:      pi ($(pi --version 2>/dev/null | head -1)) -> adapters/pi (required by the shipped pack drivers)"
+else
+  MISS=$((MISS+1)); say "  MISSING: pi (required by the shipped pack drivers; install it or put it on PATH)"
+fi
+if have claude; then
+  say "  OK:      claude -> adapters/claude-code (hooks + templates/driver.template.sh only; cannot run the shipped packs)"
+else
+  say "  SKIP:    claude (optional; only for packs built from templates/driver.template.sh)"
+fi
 
 say ""
 say "-- config scaffold --"
@@ -60,7 +67,9 @@ done
 say ""
 say "== next steps =="
 say "  1. Edit $KIT_HOME/kit.env (set WS; VENV for the AutoML pack)"
-say "  2. Export the API key for your model provider (e.g. NVIDIA_INFERENCE_API_KEY)"
+say "  2. Export the API key for your MODEL's provider: NVIDIA_API_KEY for public"
+say "     build.nvidia.com (MODEL=nvidia/<id>), NVIDIA_INFERENCE_API_KEY for the"
+say "     NVIDIA-internal default (MODEL=nim/<id>); local servers: ~/.pi/agent/models.json"
 say "  3. Sanity-check the adapters without a GPU:"
 say "       bash $SKILL/scripts/smoke_test.sh"
 say "  4. Launch a pack: nohup bash <pack>/driver.sh & then tail ~/.tao-kit/<pack>/driver.log"

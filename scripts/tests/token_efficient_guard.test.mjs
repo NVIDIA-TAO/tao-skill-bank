@@ -45,6 +45,8 @@ for (const command of [
 	"true\nexport -p", "true; declare -p", "true; set",
 	"cat /example/.env", "cat .env", "cat .aws/credentials", "cat /example/.aws/credentials",
 	"cat /proc/self/environ", 'echo "$NVIDIA_INFERENCE_API_KEY"',
+	"cat ~/.ngc/config", "cp ~/.ngc/config /tmp/z", "cat /example/.ngc/config",
+	"cat ~/.docker/config.json", "cp /example/.docker/config.json /tmp/y",
 ]) {
 	test("blocks credential request: " + command, async () => {
 		assert.equal((await harness().call("bash", { command }))?.block, true);
@@ -67,12 +69,55 @@ for (const toolName of ["read", "edit", "write"]) {
 		const alias = path.join(scratch, "alias-" + toolName);
 		fs.symlinkSync(secret, alias);
 		const h = harness();
-		for (const target of [secret, alias, "/example/.ssh/id_ed25519", "/example/.pi/agent/auth.json"]) {
+		for (const target of [secret, alias, "/example/.ssh/id_ed25519", "/example/.pi/agent/auth.json",
+			"~/.ngc/config", "/example/.ngc/config", "~/.docker/config.json", "/example/.docker/config.json"]) {
 			assert.equal((await h.call(toolName, { path: target }))?.block, true);
 		}
 		assert.equal(await h.call(toolName, { path: path.join(scratch, "stage.md") }), undefined);
 	});
 }
+
+test("bash protects credential files reached through symlinks in the run dir", async () => {
+	const home = path.join(scratch, "home");
+	const rd = path.join(scratch, "rd");
+	for (const dir of [".docker", ".ngc"]) fs.mkdirSync(path.join(home, dir), { recursive: true });
+	fs.mkdirSync(rd, { recursive: true });
+	fs.writeFileSync(path.join(home, ".docker/config.json"), "{}");
+	fs.writeFileSync(path.join(home, ".ngc/config"), "fixture");
+	fs.writeFileSync(path.join(rd, "stage.md"), "fixture");
+	fs.symlinkSync(path.join(home, ".docker/config.json"), path.join(rd, "docker-link"));
+	fs.symlinkSync(path.join(home, ".ngc/config"), path.join(rd, "ngc-link"));
+	fs.symlinkSync(path.join(home, ".ngc"), path.join(rd, "ngc-dir"));
+	process.env.RD = rd;
+	try {
+		const h = harness();
+		for (const command of [
+			"cp $RD/docker-link /tmp/y", 'cat "${RD}/ngc-link"', "cat rd/ngc-link",
+			"tar cf /tmp/z.tar $RD/ngc-dir/config", "cp $RD/ngc-dir /tmp/z -r",
+		]) {
+			assert.equal((await h.call("bash", { command }))?.block, true, command);
+		}
+		assert.equal(await h.call("bash", { command: "cp $RD/stage.md /tmp/y" }), undefined);
+	} finally {
+		delete process.env.RD;
+	}
+});
+
+test("shipped card commands are not mistaken for credential access", async () => {
+	const apps = path.join(repo, "skills/applications");
+	for (const pack of ["tao-run-automl", "tao-run-deft-aoi"]) {
+		const cards = path.join(apps, pack, "cards");
+		for (const file of fs.readdirSync(cards).filter((f) => /^\d\d-.*\.md$/.test(f))) {
+			const text = fs.readFileSync(path.join(cards, file), "utf8");
+			for (const [, block] of text.matchAll(/```bash\n([\s\S]*?)```/g)) {
+				for (const command of block.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#"))) {
+					const reason = (await harness().call("bash", { command }))?.reason ?? "";
+					assert.ok(!reason.startsWith("GUARD(secrets)"), `${pack}/${file}: ${command.slice(0, 120)}`);
+				}
+			}
+		}
+	}
+});
 
 test("budget counts file tools and aborts rather than looping on blocked calls", async () => {
 	const h = harness(12);
