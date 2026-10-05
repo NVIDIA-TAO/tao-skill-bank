@@ -87,20 +87,28 @@ python3 skills/data/tao-generate-image-embeddings/scripts/verify_image_embedding
 
 DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
 
+RUNTIME_HOME="$RUN_ROOT/.tao-runtime/home"
+HF_CACHE="$HOME/.cache/huggingface"
+mkdir -p "$RUNTIME_HOME/.cache" "$HF_CACHE"
+IDENTITY_ARGS=(--user "$(id -u):$(id -g)"
+  -e USER="$(id -un)" -e LOGNAME="$(id -un)"
+  -e HOME="$RUNTIME_HOME" -e XDG_CACHE_HOME="$RUNTIME_HOME/.cache"
+  -e HF_HOME="$HF_CACHE" -v "$HF_CACHE:$HF_CACHE")
+
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
+  "${IDENTITY_ARGS[@]}" \
   -v "$RUN_ROOT:$RUN_ROOT" \
-  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
   -w "$RUN_ROOT" \
   "$DS_IMAGE" \
   embedding image_embeddings -e "$SPEC"
 ```
 
-Do not pass `--user $(id -u):$(id -g)` to the TAO data-services container; the image imports `transformers` at startup, which calls `getpass.getuser()` and fails when the UID is not present in `/etc/passwd`.
+Keep `--user` and the identity env block above. The image imports `transformers` at startup, which calls `getpass.getuser()`; without `USER`/`LOGNAME` it fails with `KeyError: 'getpwuid(): uid not found: <uid>'` because the UID has no `/etc/passwd` entry. Do not work around it by running the container as root; that leaves root-owned outputs. This follows the launch contract in `tao-run-on-docker`.
 
 To embed several parquets with one encoder, reuse the same spec and override the two paths per run:
 
 ```bash
-docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
+docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host "${IDENTITY_ARGS[@]}" \
   -v "$RUN_ROOT:$RUN_ROOT" -w "$RUN_ROOT" "$DS_IMAGE" \
   embedding image_embeddings -e "$SPEC" \
   input_parquet=/abs/path/other_input.parquet \
