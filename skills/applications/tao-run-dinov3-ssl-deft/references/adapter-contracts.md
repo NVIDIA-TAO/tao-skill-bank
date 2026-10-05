@@ -177,9 +177,74 @@ cadence, and freeze policy. The allocation and expected optimizer-step count are
 recorded per round so an intentional schedule change remains an explicit base
 spec revision.
 
+### Short-round schedule sizing
+
+Size the schedule for each candidate, not the sum of all rounds. Every candidate
+restarts from the original checkpoint and its optimizer step starts at zero.
+For `R` cumulative training-manifest rows, per-GPU batch size `B`, world size
+`W = num_nodes * gpus_per_node`, and `P = training.passes_per_round`, the expected budget is
+`N = ceil(ceil(R / W) / B) * P`, recorded as `total_optimizer_steps` in
+`training_contract.json`.
+
+Compare `N` with both `train.schedulers.learning_rate.warm_up_steps` and
+`train.schedulers.last_layer_learning_rate.warm_up_steps`, plus
+`train.schedulers.last_layer_learning_rate.freeze_steps`.
+Training uses steps `0` through `N - 1`: `N` must be strictly
+greater than a threshold to leave that phase. Data Services warns during native
+training-spec preparation when an LR warm-up or freeze covers the entire round.
+The warning identifies the round, budget and each phase's covered fraction; it
+does not reject intentional freezing or rewrite the schedule. The trigger is
+full coverage, not a quality threshold: a phase covering 96% alone does not
+trigger it.
+
+The **pre-launch check is manual**: apply the formula to the anticipated
+training-manifest size and allocation, then compare the resolved schedules.
+`validate` and `plan` do not emit this warning. During `run` (or resumed training
+preparation), the controller knows the actual materialized row count and writes
+a `stage: train`, `status: schedule_warning` event to `<run_dir>/events.jsonl`
+before submitting the training leaf. It also emits a Python warning on controller
+stderr, visible on Docker with `docker logs "$JOB_ID"`. This is not leaf output:
+do not expect it in `jobs/*.log` or `logs <run_dir> <client_job_id>`.
+Inspect the durable event and prepared `refinement_input.yaml` for each round.
+
+These diagnostics require an image containing the Data Services
+[schedule-warning fix](https://github.com/NVIDIA-TAO/tao-data-services/pull/56).
+Older images emit no warning; the manual sizing check is the only check there.
+Merge this guidance after that implementation, and retain the existing packaged
+release-readiness checks before offering a launch.
+
+For example, 768 rows, batch size 16, one GPU and two passes give 96 updates;
+1536 rows give 192. The shipped ViT-B spec's 10000-step LR warm-ups and
+1250-step last-layer freeze cover both rounds. The last-layer learning rate
+stays zero throughout; successfully sealed artifacts do not demonstrate useful
+adaptation.
+
+For a **96-step smoke test only**, explicitly edit a copy of the base training
+spec as follows, retaining its other settings, and point `training.base_spec`
+at that copy:
+
+```yaml
+train:
+  schedulers:
+    learning_rate:
+      warm_up_steps: 20
+    last_layer_learning_rate:
+      warm_up_steps: 20
+      freeze_steps: 0
+```
+
+These are not quality-tuned defaults. Choose production schedules explicitly,
+inspect other schedules such as teacher temperature, and validate held-out
+metrics. Longer passes are another explicit choice; review the resulting
+compute budget. Absence of this warning is not a quality guarantee. Schedule
+changes require a new approved base spec/run, not edits to sealed round outputs.
+
+### Native training execution
+
 Manifest-backed training uses a deterministic shard-aware distributed sampler.
 Each backing file or archive is assigned to ranks in bounded windows, every
-rank receives the same number of rows, and the final incomplete batch is kept.
+rank receives the same number of rows, and ranks are padded to full batches so
+all manifest rows are retained.
 Archive handles use an explicit bounded cache. Random access is limited to
 ordinary files, uncompressed tar, and zip archives.
 
