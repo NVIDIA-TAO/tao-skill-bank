@@ -26,7 +26,7 @@ All stages run inline in the parent context. For SKILL stages, read the matching
 
 ### Prep (`prep`) — once, before baseline
 
-Runs only when the source pool is not already labeled and embedded. Produces `source_pool/odvg/` and `source_pool/source_embeddings.parquet` — the two artifacts every iteration reads. Idempotent: each artifact is skipped when it already exists on disk.
+Runs only when the source pool is not already labeled and embedded. Produces `source_pool/odvg/` and `source_pool/source_embeddings.parquet` — the two artifacts every iteration reads. Skip any step whose output already exists on disk; the skip is the caller's to make, not automatic.
 
 Chain: Co-DETR pseudo-label the pool → fold predictions onto the user's target classes → KITTI→COCO → COCO→ODVG → embed the pool. Full detail, including the class-consistency contract and the hard-stop gates, is in `references/prep-source-pool.md`.
 
