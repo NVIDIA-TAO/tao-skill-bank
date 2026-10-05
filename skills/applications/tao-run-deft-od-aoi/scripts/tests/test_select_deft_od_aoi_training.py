@@ -87,3 +87,37 @@ def test_checkpoint_selection_emits_one_terminal_resume_extension(tmp_path: Path
     assert extension["train"]["num_epochs"] == 48
     assert extension["train"]["resume_training_checkpoint_path"].endswith("model_epoch_035.pth")
     assert "pretrained_model_path" not in extension["train"]
+
+
+def test_checkpoint_selection_counts_resumed_epochs_once(tmp_path: Path) -> None:
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(yaml.safe_dump({"training": {"late_best_window": 3,
+                                                    "extension_epochs": 12}}))
+    spec = tmp_path / "train.yaml"
+    spec.write_text(yaml.safe_dump({"train": {"num_epochs": 4}}))
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    for epoch in range(4):
+        (checkpoints / f"model_epoch_{epoch:03d}.pth").write_bytes(b"model")
+    rows = {0: 0.5, 1: 0.6, 2: 0.65, 3: 0.68}
+    phase_a = tmp_path / "status_phaseA.json"
+    phase_a.write_text("".join(json.dumps({"epoch": e, "kpi": {"val_mAP50": rows[e]}}) + "\n"
+                               for e in (0, 1)))
+    # The resumed run appends to the same status.json, so phase B repeats 0 and 1.
+    phase_b = tmp_path / "status_phaseB.json"
+    phase_b.write_text("".join(json.dumps({"epoch": e, "kpi": {"val_mAP50": rows[e]}}) + "\n"
+                               for e in range(4)))
+    assert MODULE._metrics([phase_a, phase_b]) == sorted(rows.items())
+    report = MODULE.checkpoint(policy, spec, [phase_a, phase_b], checkpoints, 4, True,
+                               tmp_path / "selection.json")
+    assert report["best_epoch"] == 3
+    assert report["epochs_covered"] == [0, 1, 2, 3]
+    assert report["duplicate_epochs"] == [0, 1]
+
+
+def test_metrics_keeps_latest_row_for_a_rerun_epoch(tmp_path: Path) -> None:
+    first = tmp_path / "before_crash.json"
+    first.write_text(json.dumps({"epoch": 2, "kpi": {"val_mAP50": 0.9}}) + "\n")
+    rerun = tmp_path / "after_resume.json"
+    rerun.write_text(json.dumps({"epoch": 2, "kpi": {"val_mAP50": 0.4}}) + "\n")
+    assert MODULE._metrics([first, rerun]) == [(2, 0.4)]
