@@ -34,7 +34,13 @@ Before launch:
 5. Confirm no KPI or test image identity appears in training sources.
 6. Confirm each planned action's required predecessor artifact exists and its
    owning job reached `COMPLETE`.
-7. For synthesis, resolve every route before iteration 0 and verify handoff
+7. For synthesis, require every boxed KPI annotation to resolve a real,
+   nonempty `dataset_id` from its image or annotation metadata. An ID absent
+   from `synthesis.routes` is valid and remains on the normal real-data path.
+8. Require every boxed KPI annotation in a configured route to
+   declare `texture_id`, `defect_class`, and an existing `fn_mask_source` path.
+   Mask-content eligibility remains a per-FN preparation decision.
+9. Resolve every synthesis route before iteration 0 and verify handoff
    hashes for newly trained adapters.
 
 ## Launch
