@@ -19,7 +19,7 @@ def _json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def _metrics(paths: list[Path]) -> list[tuple[int, float]]:
+def _metric_rows(paths: list[Path]) -> tuple[list[tuple[int, float]], list[int]]:
     result = []
     for path in paths:
         if not path.is_file():
@@ -71,7 +71,19 @@ def _metrics(paths: list[Path]) -> list[tuple[int, float]]:
             result.append(pending_untagged)
     if not result:
         raise ValueError("status contains no finite KPI val_mAP50 rows")
-    return result
+    # A resumed run appends to the same status.json, so passing every phase
+    # repeats pre-crash epochs. Count each epoch once; the latest row wins.
+    by_epoch: dict[int, float] = {}
+    duplicates = set()
+    for epoch, score_value in result:
+        if epoch in by_epoch:
+            duplicates.add(epoch)
+        by_epoch[epoch] = score_value
+    return list(by_epoch.items()), sorted(duplicates)
+
+
+def _metrics(paths: list[Path]) -> list[tuple[int, float]]:
+    return _metric_rows(paths)[0]
 
 
 def _set(value: dict[str, Any], dotted: str, replacement: Any) -> None:
@@ -126,7 +138,7 @@ def checkpoint(policy_path: Path, spec_path: Path, statuses: list[Path], checkpo
         raise ValueError("planned_epochs must be positive")
     output.parent.mkdir(parents=True, exist_ok=True)
     policy = yaml.safe_load(policy_path.read_text())
-    rows = _metrics(statuses)
+    rows, duplicate_epochs = _metric_rows(statuses)
     best_epoch, score = max(rows, key=lambda row: (row[1], -row[0]))
     selected = checkpoints / f"model_epoch_{best_epoch:03d}.pth"
     if not selected.is_file():
@@ -136,7 +148,9 @@ def checkpoint(policy_path: Path, spec_path: Path, statuses: list[Path], checkpo
     report = {"status": "COMPLETE", "action": "select", "best_epoch": best_epoch,
               "best_kpi_mAP50": score, "selected_checkpoint": str(selected.resolve()),
               "planned_epochs": planned_epochs, "extension_applied": extension_applied,
-              "status_files": [str(path.resolve()) for path in statuses]}
+              "status_files": [str(path.resolve()) for path in statuses],
+              "epochs_covered": sorted(epoch for epoch, _ in rows),
+              "duplicate_epochs": duplicate_epochs}
     if late and not extension_applied:
         terminal = checkpoints / f"model_epoch_{planned_epochs - 1:03d}.pth"
         if not terminal.is_file():
