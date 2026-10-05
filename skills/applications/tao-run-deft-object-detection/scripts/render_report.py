@@ -423,8 +423,42 @@ def _staging_gap(row: dict[str, Any]) -> int | None:
     return int(mined - staged)
 
 
+def _starved_classes(mining: dict[str, Any], targets: list[str]) -> list[dict[str, Any]]:
+    """Target classes the iteration's mined set holds no image of.
+
+    TAO's mining summary records what each class was allocated
+    (``allocation.per_class.desired_count``, rare classes under class_stratified) and
+    what the mined set actually contains (``resultant_dataset.per_class.image_count``).
+    A class that gets nothing has its slots backfilled from other classes, so the
+    totals stay healthy and the coverage reads 100% -- the starvation shows only here.
+    Without a per-class breakdown nothing can be said, so nothing is.
+    """
+    resultant = mining.get("resultant_dataset")
+    per_class = resultant.get("per_class") if isinstance(resultant, dict) else None
+    if not isinstance(per_class, dict) or not targets:
+        return []
+    allocation = mining.get("allocation")
+    allocated = allocation.get("per_class") if isinstance(allocation, dict) else None
+    allocated = allocated if isinstance(allocated, dict) else {}
+    starved = []
+    for name in targets:
+        got = per_class.get(name)
+        count = _num(got.get("image_count")) if isinstance(got, dict) else None
+        if not count:
+            want = allocated.get(name)
+            starved.append({"class": name,
+                            "desired": _num(want.get("desired_count"))
+                            if isinstance(want, dict) else None})
+    return starved
+
+
 def _growth_section(state: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
+    config = state.get("config")
+    targets = config.get("target_classes") if isinstance(config, dict) else None
+    if isinstance(targets, str):
+        targets = [c.strip() for c in targets.split(",") if c.strip()]
+    targets = [str(c) for c in targets] if isinstance(targets, list) else []
     for phase in _scored_phases(state):
         if iter_number(phase) is None:
             continue
@@ -446,8 +480,10 @@ def _growth_section(state: dict[str, Any]) -> tuple[list[str], list[dict[str, An
             "missing_annotations": (len(missing_annotations)
                                     if isinstance(missing_annotations, list) else None),
             "sources": _train_sources(entry),
+            "starved": _starved_classes(mining, targets),
         })
-    if not any(any(v is not None for k, v in row.items() if k != "phase") for row in rows):
+    if not any(any(v is not None for k, v in row.items() if k not in ("phase", "starved"))
+               for row in rows):
         return [], rows
 
     lines = [
@@ -564,6 +600,13 @@ def _observations_section(rows: list[dict[str, Any]], scored: dict[str, dict[str
         if gap and gap > 0:
             notes.append(f"`{row['phase']}` staging gap: {gap} mined images did not reach "
                          f"training (see Data Growth).")
+        for starved in row.get("starved") or []:
+            want = starved["desired"]
+            notes.append(
+                f"`{row['phase']}` mined no images of target class `{starved['class']}`"
+                + (f" (it was allocated {int(want):,})" if want else "")
+                + ". Its share of the budget went to other classes, so the totals and "
+                "the coverage do not show it.")
     for event in events:
         if event.get("status") == "error":
             notes.append(f"`{event.get('iter')}/{event.get('stage')}` committed "
