@@ -75,6 +75,8 @@ set -a; source /path/to/.env; set +a   # omit if already exported
 COSMOS_EMBED_IMAGE_DEFAULT=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed  # versions-key: images.tao_toolkit.cosmos_embed
 COSMOS_EMBED_IMAGE="${COSMOS_EMBED_IMAGE:-$COSMOS_EMBED_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
+COSMOS_EMBED_PRETRAINED_CACHE="${COSMOS_EMBED_PRETRAINED_CACHE:-$RUN_ROOT/pretrained_checkpoints}"
+mkdir -p "$COSMOS_EMBED_PRETRAINED_CACHE"
 DOCKER_COMMON=(
   --rm --gpus all --ipc=host --network=host
   --shm-size=64g
@@ -89,8 +91,19 @@ DOCKER_COMMON=(
   -v "$RUN_ROOT/specs:/specs:ro"
   -v "$RUN_ROOT/results:/results"
   -v "$RUN_ROOT/hf_cache:/hf_cache"
+  --mount "type=bind,source=$COSMOS_EMBED_PRETRAINED_CACHE,target=/usr/local/lib/python3.12/dist-packages/pretrained_checkpoints"
 )
 ```
+
+The pinned 7.1.0 image downloads the BERT Q-Former component under
+`/usr/local/lib/python3.12/dist-packages/pretrained_checkpoints`, even when
+Hugging Face cache variables point elsewhere. The dedicated bind mount above
+must be writable by the container UID selected by the platform skill; create
+it as the launching user before submission. Keep this mount when applying the
+platform's non-root UID/GID and writable HOME settings. It permits normal
+runtime downloads without modifying the image or making all of site-packages
+writable. For another image version, verify its cache location before reusing
+this image-specific destination.
 
 For Cosmos-Embed images that ship `protobuf==7.x`, run a small startup
 preamble before every action:
