@@ -315,6 +315,7 @@ That is the reason to keep it at `0.0`. The labels then carry the full curve, an
 # train
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "iter${N}" --stage train \
+  --execution-path skill \
   --checkpoint "${RESULTS_DIR}/iter${N}/train/gdino_model_latest.pth" \
   --training-spec "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
   --duration-sec "$(( SECONDS - started ))" \
@@ -332,6 +333,7 @@ accuracy metric comes from `kpi_analyze` alone.
 # inference
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "<phase>" --stage inference \
+  --execution-path skill \
   --inference-labels-dir "${RESULTS_DIR}/<phase>/inference/labels" \
   --duration-sec "$(( SECONDS - started ))" \
   --summary "inference: <N> label files"

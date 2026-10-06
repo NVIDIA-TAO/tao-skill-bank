@@ -205,6 +205,7 @@ stray row and a quietly wrong mean. Pass `--expect-classes` either way.
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "<phase>" --stage kpi_analyze \
+  --execution-path skill \
   --kpi-csv "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" \
   --kpi-log "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" \
   --map-value "$MAP_VALUE" \

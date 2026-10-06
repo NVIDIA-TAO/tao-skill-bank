@@ -75,6 +75,7 @@ must be derived from the run's classes, never pinned.
   --results-dir /abs/path/results/run_YYYYMMDD_HHMMSS \
   --iter-label iter1 \
   --stage mine \
+  --execution-path skill \
   --mining-output /abs/path/iter1/mining/final_unique_files.parquet \
   --mining-summary /abs/path/iter1/mining/summary.json \
   --summary "mined 500 unique images"
@@ -144,7 +145,9 @@ invokes the legacy agent by name; it shells out to the same script.
 
 ### Direct-container fallback
 
-Use only when the mapped Skill tool is unavailable and Docker plus the current overlay are present. Record `execution_path=direct-container` in the transcript, then run the overlay's documented `docker run` with the same arguments and absolute output paths. The fallback changes the invocation mechanism only: it must produce the same artifacts and commit them through `commit_stage.py`.
+Use only when the mapped Skill tool is unavailable and Docker plus the current overlay are present. Run the overlay's documented `docker run` with the same arguments and absolute output paths. The fallback changes the invocation mechanism only: it must produce the same artifacts and commit them through `commit_stage.py`.
+
+Commit a stage that ran this way with **`--execution-path direct-container`** in place of the `--execution-path skill` its documented commit carries. Every `ok` commit of a skill-mapped stage (`gap_analysis`, `embed`, `mine`, `train`, `inference`, `kpi_analyze`) must say which way it ran — the value is recorded, never assumed, so a forgotten fallback cannot be filed as a skill run. It lands at `state.iterations.<phase>.execution_paths.<stage>`, and `audit_deft_run.py` lists every fallback stage as `direct_container_stages`, so a finished run can be attributed to the code path that produced it.
 
 ## Invariants
 
