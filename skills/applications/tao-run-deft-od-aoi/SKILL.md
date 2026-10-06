@@ -291,8 +291,14 @@ budgeting.
 The planner derives the finalized yield as `2 * max_neighbors_per_fn`: the
 finalizer emits two fixed mask branches and requests one image from each branch
 for every retained neighbor. `candidate_topn` only supplies fallback neighbor
-candidates and does not enter this calculation. The derived value is recorded
-as `images_per_fn` in the frozen plan evidence; it is not a policy input.
+candidates and does not enter this calculation. It is synthesis-only and is
+independent of both max-similarity overfetch and round-robin refill. The derived
+value is recorded as `images_per_fn` in the frozen plan evidence; it is not a
+policy input. For backward compatibility, initialization copies an explicitly
+supplied legacy `retrieval.candidate_overfetch` into synthesis when
+`candidate_topn` is omitted, and already-frozen policies without the new field
+retain that fallback.
+Set both fields explicitly to configure them independently.
 
 Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
 mounting the complete checkpoint root for its `run_amp` action, then pass its

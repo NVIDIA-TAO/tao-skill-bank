@@ -207,6 +207,13 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         )
     policy = _merge(yaml.safe_load(DEFAULTS.read_text()), user)
     user_synthesis = user.get("synthesis", {})
+    user_retrieval = user.get("retrieval", {})
+    if (isinstance(user_synthesis, dict)
+            and "candidate_topn" not in user_synthesis
+            and isinstance(user_retrieval, dict)
+            and "candidate_overfetch" in user_retrieval):
+        # Map an explicit pre-split shared depth to the new synthesis field.
+        policy["synthesis"]["candidate_topn"] = user_retrieval["candidate_overfetch"]
     if (isinstance(user_synthesis, dict)
             and "cumulative_fraction_of_real_defects" in user_synthesis
             and "cumulative_fraction_of_total_defects" not in user_synthesis):

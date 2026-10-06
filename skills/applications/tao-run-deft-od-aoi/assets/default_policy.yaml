@@ -27,6 +27,7 @@ retrieval:
   # Used only by square_context; tight_context preserves native crop dimensions.
   output_size: 224
   minimum_similarity: -1.0
+  # Used only by max_similarity; round_robin_similarity uses the refill depths below.
   candidate_overfetch: 15
   round_robin_refill_overfetch: [5, 15, 50, 200, 100000]
   audit_top_k_per_query: 20
@@ -80,6 +81,8 @@ synthesis:
   pool_dataset_root: null
   defect_spec: null
   routes: {}
+  # Distinct clean candidates attempted per FN before retaining successful neighbors.
+  candidate_topn: 3
   max_neighbors_per_fn: 1
   min_similarity: 0.9
   cumulative_fraction_of_total_defects: 0.25

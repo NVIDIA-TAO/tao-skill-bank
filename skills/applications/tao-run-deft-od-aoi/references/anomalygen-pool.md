@@ -116,6 +116,7 @@ synthesis:
   cumulative_fraction_of_total_defects: 0.25
   fn_selection:
     mode: generated_per_type_plan
+  candidate_topn: 3
   max_neighbors_per_fn: 1
 ```
 
@@ -132,11 +133,13 @@ retained neighbors per FN × mask branches per neighbor × images per branch
 
 The accepted configuration uses one retained neighbor, two mask branches, and
 one generated image per branch, so the value is `1 × 2 × 1 = 2`. This derived
-value is recorded as `images_per_fn` in the frozen plan evidence. The retrieval
-`candidate_topn` may be larger (for example, three) because it supplies fallback
-neighbors before AMP finalization; it does not increase the expected yield once
-`max_neighbors_per_fn` retains only one neighbor. Increasing that setting
-automatically increases the bounded-plan yield by two images per added neighbor.
+value is recorded as `images_per_fn` in the frozen plan evidence. The
+synthesis-only `candidate_topn` defaults to three because it supplies fallback
+neighbors before AMP finalization; it is independent of both max-similarity
+candidate overfetch and round-robin refill. It does not increase the expected
+yield once `max_neighbors_per_fn` retains only one neighbor. Increasing
+`max_neighbors_per_fn` automatically increases the bounded-plan yield by two
+images per added neighbor.
 
 Set `synthesis.fn_selection.mode: all_eligible` explicitly only when every
 routed FN should proceed without pre-generation budgeting. That compatibility

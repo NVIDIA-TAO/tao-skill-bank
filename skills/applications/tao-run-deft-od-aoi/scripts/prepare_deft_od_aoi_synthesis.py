@@ -18,7 +18,10 @@ import pandas as pd
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from deft_od_aoi_synthesis_contract import validate_synthesis_contract
+from deft_od_aoi_synthesis_contract import (
+    resolve_candidate_topn,
+    validate_synthesis_contract,
+)
 
 
 FIELDS = ("dataset_id", "texture_id", "defect_class", "fn_mask_source")
@@ -155,6 +158,9 @@ def prepare(
     synthesis = policy["synthesis"]
     if not synthesis.get("enabled"):
         raise ValueError("synthesis is disabled in the frozen policy")
+    candidate_topn = resolve_candidate_topn(
+        synthesis, (policy.get("retrieval") or {}).get("candidate_overfetch")
+    )
     selection_mode, plan, plan_contract = _selection_contract(synthesis, iteration)
     routes = synthesis.get("routes") or {}
     pool, defect_spec = Path(str(synthesis["pool_dataset_root"])), Path(str(synthesis["defect_spec"]))
@@ -293,8 +299,7 @@ def prepare(
                             "mask_sample_seed": 42},
               "embedding": {"model": policy["retrieval"]["model"],
                             "model_path": policy["retrieval"]["model_path"], "batch_size": 64},
-              "retrieval": {"metric": "cosine", "candidate_topn":
-                            int(policy["retrieval"]["candidate_overfetch"]),
+              "retrieval": {"metric": "cosine", "candidate_topn": candidate_topn,
                             "max_neighbors_per_fn": int(synthesis["max_neighbors_per_fn"]),
                             "min_similarity": float(synthesis["min_similarity"]),
                             "prior_clean_exclusion_manifest": ""},

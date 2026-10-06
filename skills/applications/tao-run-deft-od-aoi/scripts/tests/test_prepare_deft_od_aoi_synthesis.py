@@ -50,7 +50,8 @@ def test_synthesis_normalizes_exact_kpi_false_negative(tmp_path: Path) -> None:
                                                     "defect_spec": str(defect_spec),
                                                     "routes": {"route": {"checkpoint": str(checkpoint),
                                                                            "recipe": str(recipe)}},
-                                                    "max_neighbors_per_fn": 5,
+                                                    "candidate_topn": 3,
+                                                    "max_neighbors_per_fn": 1,
                                                     "min_similarity": 0.9,
                                                     "amp_model_id": "nvidia/Cosmos3-Nano"}}))
     gaps = tmp_path / "strict.parquet"
@@ -64,6 +65,8 @@ def test_synthesis_normalizes_exact_kpi_false_negative(tmp_path: Path) -> None:
     assert normalized.anomaly_type == "texture+crack"
     config = yaml.safe_load((tmp_path / "out/anomalygen_filtering.yaml").read_text())
     assert config["datasets"]["route"]["checkpoint"] == str(checkpoint.resolve())
+    assert config["retrieval"]["candidate_topn"] == 3
+    assert config["retrieval"]["max_neighbors_per_fn"] == 1
 
 
 def test_synthesis_resolves_gap_filename_stem_to_coco_id(tmp_path: Path) -> None:
@@ -109,6 +112,8 @@ def test_synthesis_resolves_gap_filename_stem_to_coco_id(tmp_path: Path) -> None
     assert report["fn_count"] == 1
     normalized = pd.read_parquet(tmp_path / "out/normalized_fn_gaps.parquet").iloc[0]
     assert normalized.image_id == image.stem
+    config = yaml.safe_load((tmp_path / "out/anomalygen_filtering.yaml").read_text())
+    assert config["retrieval"]["candidate_topn"] == 15
 
 
 def test_synthesis_accepts_hardlinked_normalized_kpi_view(tmp_path: Path) -> None:
@@ -460,6 +465,11 @@ def test_default_policy_uses_generated_per_type_plan() -> None:
     assert policy["synthesis"]["fn_selection"] == {
         "mode": "generated_per_type_plan",
     }
+    assert policy["retrieval"]["candidate_overfetch"] == 15
+    assert policy["retrieval"]["round_robin_refill_overfetch"] == [
+        5, 15, 50, 200, 100000,
+    ]
+    assert policy["synthesis"]["candidate_topn"] == 3
     assert policy["synthesis"]["max_neighbors_per_fn"] == 1
     assert policy["synthesis"]["cumulative_fraction_of_total_defects"] == 0.25
     assert "cumulative_fraction_of_real_defects" not in policy["synthesis"]
