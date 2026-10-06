@@ -21,6 +21,17 @@ The complete checkpoint root is a separate required input mounted at
 `/workspace/paidf-anomalygen/checkpoints`; its fixed Hugging Face and DINOv2
 assets are verified before native generation starts.
 
+The wrapper exposes the native Boolean guardrail choice. Guardrails default on
+without changing the native invocation; disabling them appends
+`--no-guardrail` explicitly.
+`--no-guardrail` disables the text guardrail, image content-safety path, and
+face-blur postprocessor together. The validation summary records the selected
+mode.
+The pinned framework's default video preset has no active image safety model:
+its SigLIP-based `VideoContentSafetyFilter` is disabled because of excessive
+false positives. Enabling an enforcing image classifier requires a separately
+validated container preset rather than another argument to this wrapper.
+
 ## Native stages
 
 From the release source baked into the image, the wrapper invokes generation,
@@ -35,6 +46,8 @@ For every dataset:
 ```text
 generated + guardrail_blocked == requested
 ```
+
+With `--no-guardrail`, `generated == requested` and `guardrail_blocked == 0`.
 
 Every generated image must have exactly one pseudo-label image record and at
 least one valid in-bounds annotation. The native COCO retains the exact
