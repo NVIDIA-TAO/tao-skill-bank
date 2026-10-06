@@ -6,6 +6,48 @@ be referenced as `{parameter_name}`. Existing local parameter files are hashed
 into `data.lock.json`; secrets must be supplied through the execution platform,
 not the workflow configuration.
 
+## Prepare fixed mining embeddings
+
+Run preparation inside the allocated DS container, using its installed TAO
+packages. Mining uses a fixed encoder separate from the changing DINOv3 scoring
+checkpoint. The shipped image producer supports CLIP and SigLIP; C-RADIO is not
+required and no C-RADIO producer is shipped. Use the same immutable model and
+processor snapshot for source and target and keep their embeddings fixed across rounds.
+
+Prepare separate source and target Parquets with unique absolute `filepath`,
+globally unique `sample_id`, matching `path`, and `storage_type: file` columns.
+Targets also need `task` and `role` (`query` or `reference`), with reference rows
+for each query task. Preserve the intended source/query/reference splits.
+The producer preserves extra columns; duplicate filepaths must be removed before
+its metadata join. Archive members require an explicitly prepared file view.
+
+1. Run `python -m nvidia_tao_ds.mining.embedding.scripts.image_embeddings`
+   separately for source and target, supplying `input_parquet=...`,
+   `output_parquet=...`, `model=CLIP` (or `SigLIP`), and
+   `model_path=/models/fixed-snapshot`. Pre-stage both model and processor there.
+2. Run `python -m nvidia_tao_ds.mining.dinov3.internal.refinement register-store`
+   with `--store-root <source-shard-directory>`, `--output-dir <new-store-directory>`,
+   and `--source-payload-contract <immutable-payload-contract.json>`.
+3. Run the same refinement module's `write-target-contract` with
+   `--targets <target-embeddings.parquet>`,
+   `--source-store-manifest <new-store-directory>/embedding_store.json`,
+   and `--output-dir <new-target-contract-directory>`.
+
+Both registration commands require `--encoder-name`,
+`--encoder-checkpoint-digest`, `--input-resolution`, and `--normalization`.
+Declare the actual matching encoder/processor identity, not just matching vector
+dimensions; include processor/configuration identity in the normalization
+descriptor when needed. Use fresh output directories for publication.
+
+Set `data.target_manifest` to the target Parquet, `data.source_store_manifest`
+to the registered store, and `data.target_embedding_contract` to the generated
+`target_embedding_contract.json`, then validate the configured workflow.
+The writer validates target vectors and records input digests, but the recorded
+target digest is lineage only: workflow consumers enforce encoder, dimension and
+source-inventory compatibility, not equality to that recorded target digest.
+Regenerate the contract when targets change and approve a fresh run. Neither the
+writer nor matching dimensions certify encoder identity or task/split semantics.
+
 ## Source Data
 
 `data.source_payload_contract` is a small JSON document binding source locators
@@ -73,7 +115,7 @@ Required Parquet columns:
 | `sample_id` | Identity from the target manifest |
 | `task` | One configured `multi_task.tasks` value |
 | `weakness_score` | Finite scalar; larger always means weaker |
-| `embedding` | Fixed C-RADIO vector used only for source relevance |
+| `embedding` | Fixed mining-encoder vector used only for source relevance |
 
 Each `(sample_id, task)` pair must be unique. The adapter may use a frozen head
 or refit a head on a fixed training split, but that policy and its inputs must
@@ -83,7 +125,7 @@ The output identity set must exactly equal the target manifest identity set.
 For GRIT this means every row whose `role` is `query`; for multi-task scoring it
 means every declared `(sample_id, task)` pair. Partial score coverage is an
 error, not an implicit sampling policy. Every output embedding must also match
-the corresponding target-manifest C-RADIO vector exactly; scoring changes only
+the corresponding target-manifest mining vector exactly; scoring changes only
 the weakness value, never the mining geometry.
 
 `score_commit.json` must bind `input_sha256` for the target manifest,
@@ -135,9 +177,74 @@ cadence, and freeze policy. The allocation and expected optimizer-step count are
 recorded per round so an intentional schedule change remains an explicit base
 spec revision.
 
+### Short-round schedule sizing
+
+Size the schedule for each candidate, not the sum of all rounds. Every candidate
+restarts from the original checkpoint and its optimizer step starts at zero.
+For `R` cumulative training-manifest rows, per-GPU batch size `B`, world size
+`W = num_nodes * gpus_per_node`, and `P = training.passes_per_round`, the expected budget is
+`N = ceil(ceil(R / W) / B) * P`, recorded as `total_optimizer_steps` in
+`training_contract.json`.
+
+Compare `N` with both `train.schedulers.learning_rate.warm_up_steps` and
+`train.schedulers.last_layer_learning_rate.warm_up_steps`, plus
+`train.schedulers.last_layer_learning_rate.freeze_steps`.
+Training uses steps `0` through `N - 1`: `N` must be strictly
+greater than a threshold to leave that phase. Data Services warns during native
+training-spec preparation when an LR warm-up or freeze covers the entire round.
+The warning identifies the round, budget and each phase's covered fraction; it
+does not reject intentional freezing or rewrite the schedule. The trigger is
+full coverage, not a quality threshold: a phase covering 96% alone does not
+trigger it.
+
+The **pre-launch check is manual**: apply the formula to the anticipated
+training-manifest size and allocation, then compare the resolved schedules.
+`validate` and `plan` do not emit this warning. During `run` (or resumed training
+preparation), the controller knows the actual materialized row count and writes
+a `stage: train`, `status: schedule_warning` event to `<run_dir>/events.jsonl`
+before submitting the training leaf. It also emits a Python warning on controller
+stderr, visible on Docker with `docker logs "$JOB_ID"`. This is not leaf output:
+do not expect it in `jobs/*.log` or `logs <run_dir> <client_job_id>`.
+Inspect the durable event and prepared `refinement_input.yaml` for each round.
+
+These diagnostics require an image containing the Data Services
+[schedule-warning fix](https://github.com/NVIDIA-TAO/tao-data-services/pull/56).
+Older images emit no warning; the manual sizing check is the only check there.
+Merge this guidance after that implementation, and retain the existing packaged
+release-readiness checks before offering a launch.
+
+For example, 768 rows, batch size 16, one GPU and two passes give 96 updates;
+1536 rows give 192. The shipped ViT-B spec's 10000-step LR warm-ups and
+1250-step last-layer freeze cover both rounds. The last-layer learning rate
+stays zero throughout; successfully sealed artifacts do not demonstrate useful
+adaptation.
+
+For a **96-step smoke test only**, explicitly edit a copy of the base training
+spec as follows, retaining its other settings, and point `training.base_spec`
+at that copy:
+
+```yaml
+train:
+  schedulers:
+    learning_rate:
+      warm_up_steps: 20
+    last_layer_learning_rate:
+      warm_up_steps: 20
+      freeze_steps: 0
+```
+
+These are not quality-tuned defaults. Choose production schedules explicitly,
+inspect other schedules such as teacher temperature, and validate held-out
+metrics. Longer passes are another explicit choice; review the resulting
+compute budget. Absence of this warning is not a quality guarantee. Schedule
+changes require a new approved base spec/run, not edits to sealed round outputs.
+
+### Native training execution
+
 Manifest-backed training uses a deterministic shard-aware distributed sampler.
 Each backing file or archive is assigned to ranks in bounded windows, every
-rank receives the same number of rows, and the final incomplete batch is kept.
+rank receives the same number of rows, and ranks are padded to full batches so
+all manifest rows are retained.
 Archive handles use an explicit bounded cache. Random access is limited to
 ordinary files, uncompressed tar, and zip archives.
 
@@ -182,9 +289,14 @@ heads and evaluators use this same leaf contract.
 
 Registered source stores have two validation modes. `full_sha256` hashes every
 shard at approval and resume and works without a prior local seal.
-`sealed_inventory` requires a payload-binding artifact created by Data Services
-after one complete shard hash pass; subsequent checks compare the committed
+`sealed_inventory` uses the content seal emitted by `register-store` with
+`--source-payload-contract` after one complete shard hash pass; no separate
+`bind-store-payload` step is needed. Metadata-only `--no-hash-content`
+registration cannot supply this seal. Subsequent checks compare the committed
 digest inventory and POSIX device, inode, size, mtime, and ctime identities.
+The seal is mount-bound: copying shards or changing mounts may invalidate it
+despite identical bytes. Re-register into a fresh output directory on the target
+mount, or use `full_sha256` for portable content verification.
 
 GRIT actions declare node-local scratch through
 `resources.local_scratch.path_environment`. The runner maps that environment
@@ -268,7 +380,7 @@ are independent resumable jobs and may use different Python/CUDA runtimes.
 
 The recall audit must belong to the configured index and approve the exact
 probe count and candidate depth. cuVS output is never a final mining decision:
-the rerank runtime reads immutable float32 C-RADIO vectors and applies exact
+the rerank runtime reads immutable float32 mining vectors and applies exact
 cosine relevance, parent/round exclusion, adaptive radius, and global duplicate
 rejection. Relevance-radius expansion and duplicate rejection retain the same
 meaning as exact search.

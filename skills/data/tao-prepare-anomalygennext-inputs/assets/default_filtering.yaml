@@ -2,6 +2,9 @@
 # Optional opaque provenance label; no policy is inferred from this value.
 source_tag: user_provided
 gap_parquet: /path/to/box_gaps.parquet
+# User-level pool source. The platform stages or mounts this folder once, then
+# preparation replaces this value in the frozen config with the compute-visible
+# path supplied through --pool-dataset-root. Later containers reuse that binding.
 pool_dataset_root: /path/to/anomalygen_dataset
 # Required. Each text-routed defect must include a non-empty
 # roi_prompt_defect_location in this JSONL.

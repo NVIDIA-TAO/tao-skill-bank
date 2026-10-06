@@ -103,6 +103,7 @@ from deft_stages import (  # noqa: E402
     write_state_atomic,
 )
 from audit_deft_run import EXTRA_ARTIFACT_FIELDS  # noqa: E402
+from render_report import render as render_loop_report  # noqa: E402
 
 AUDIT_SCRIPT = Path(__file__).resolve().parent / "audit_deft_run.py"
 
@@ -511,9 +512,10 @@ def _build_parser() -> argparse.ArgumentParser:
                                  f"recorded as {_dest(flag)}.")
 
     parser.add_argument("--map-value", type=float, default=None,
-                        help="Aggregate mAP parsed from the kpi_analyze log; the trend cannot "
-                             "be reported without it. Must be finite — when the log prints "
-                             "'mAP: nan', omit this flag and say so in --summary.")
+                        help="[kpi_analyze] Aggregate mAP, as summarize_kpi.py prints it. "
+                             "Required on an ok kpi_analyze commit: the trend cannot be "
+                             "reported without it. Must be finite — when the log prints "
+                             "'mAP: nan', commit the stage with --status error.")
     parser.add_argument("--weak-image-count", type=int, default=None,
                         help="[gap_analysis only] rows in weak_images.parquet. Required on an "
                              "ok gap_analysis commit; 0 is the documented early stop.")
@@ -611,10 +613,33 @@ def main() -> int:
             # Python and is rejected by every other JSON parser that reads the run.
             raise ValueError(
                 f"--map-value must be a finite number, got {args.map_value}. kpi_analyze "
-                "prints 'mAP: nan' when a class has no ground truth in the KPI set — omit "
-                "--map-value and record that in --summary rather than writing a non-JSON "
-                "literal into deft_state.json"
+                "prints 'mAP: nan' when a class has no ground truth in the KPI set, which "
+                "no phase of this run can score -- commit the stage with --status error "
+                "rather than writing a non-JSON literal into deft_state.json"
             )
+        # The mAP is kpi_analyze's result, and the per-phase trend built from it is the
+        # only thing the loop produces. These are argument rules, so they sit with the
+        # others and reject a commit before the lock is taken or any state is read.
+        #
+        # Only kpi_analyze may record one. map_value lives on the phase entry, not the
+        # stage, so another stage's commit -- a loop_stop filed under that phase, say --
+        # would overwrite the phase's measured mAP with a number nobody scored.
+        if args.map_value is not None and stage != "kpi_analyze":
+            raise ValueError(
+                f"--map-value belongs to kpi_analyze, not {stage!r}; only kpi_analyze "
+                "scores a phase, and a value recorded by any other stage would overwrite "
+                "the phase's measured mAP")
+        # And a kpi_analyze recorded ok must carry it: a phase scored without one has not
+        # delivered, and accepting it lets the next iteration start on a trend with a
+        # hole in it. A real `mAP: nan` cannot be iteration-specific -- the KPI set and
+        # mapping are the same for every phase -- so it is a configuration fault.
+        if stage == "kpi_analyze" and args.status == "ok" and args.map_value is None:
+            raise ValueError(
+                "stage 'kpi_analyze' requires --map-value, the mAP summarize_kpi.py "
+                "prints and writes to kpi_summary.json. A phase scored without one has "
+                "not succeeded, and committing it ok would let the loop advance past a "
+                "missing result. If kpi_analyze printed 'mAP: nan', a target class has no "
+                "ground truth in the KPI set: commit this stage with --status error")
 
         results_dir = Path(args.results_dir).expanduser().resolve()
         if not results_dir.is_dir():
@@ -995,6 +1020,21 @@ def main() -> int:
                 _fsync_path(state_path(results_dir))
 
             _clear_journal(results_dir)
+
+            # Rendering is a post-commit hook. It runs only once the commit is
+            # complete and durable -- after the journal is cleared -- and its own
+            # handler keeps a presentation failure from reaching the rollback below: it
+            # must be visible, but it must not undo a GPU stage that ran for an hour.
+            #
+            # It stays under the run lock. Released, a following commit could rewrite
+            # state and log while this render reads them alongside this commit's audit
+            # verdict, producing a report that is neither commit's.
+            try:
+                render_loop_report(results_dir, report)
+            except Exception as render_exc:  # noqa: BLE001 - presentation is not transactional
+                print(f"WARNING: the commit succeeded but the loop report was not "
+                      f"re-rendered ({type(render_exc).__name__}: {render_exc}); re-run "
+                      f"render_report.py to refresh it", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001
         if dirty and snapshot is not None and not rolled_back:
             try:

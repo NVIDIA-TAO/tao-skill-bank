@@ -51,7 +51,8 @@ If the best epoch is within the final three epochs, the first selection emits a
 single 12-epoch `extension.yaml` that resumes from the terminal checkpoint,
 not necessarily the KPI-best checkpoint. Submit it once, then reselect with
 `--extension-applied`. Pass every status phase so selection covers the full
-history.
+history. Selection counts each epoch once, keeping the latest row, and records
+`epochs_covered` and `duplicate_epochs` in `checkpoint_selection.json`.
 
 An operational resume preserves data, optimizer settings, target epoch, and
 output identity. It is not the policy extension and never initializes the next

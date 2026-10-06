@@ -17,7 +17,7 @@ actions:
       validation_testcase: {type: file}
       base_checkpoint: {type: folder}
       vae_path: {type: file}
-      nn_backbone: {type: folder}
+      checkpoint_root: {type: folder}
       defect_spec: {type: file, optional: true}
       recipe_template: {type: file, optional: true}
     outputs:
@@ -31,7 +31,7 @@ actions:
       validation_testcase: --validation-testcase {validation_testcase}
       base_checkpoint: --base-checkpoint {base_checkpoint}
       vae_path: --vae-path {vae_path}
-      nn_backbone: --nn-backbone {nn_backbone}
+      checkpoint_root: --checkpoint-root {checkpoint_root}
       defect_spec: --defect-spec {defect_spec}
       recipe_template: --recipe-template {recipe_template}
       dataset_name: --dataset-name {dataset_name}
@@ -45,10 +45,9 @@ actions:
       validation_testcase: {type: file}
       base_checkpoint: {type: folder}
       vae_path: {type: file}
-      nn_backbone:
+      checkpoint_root:
         type: folder
-        container_path: /workspace/paidf-anomalygen/checkpoints/facebook/dinov2-large
-      hf_cache: {type: folder, optional: true}
+        container_path: /workspace/paidf-anomalygen/checkpoints
     outputs:
       results_dir: {type: folder}
       nn_improvement_summary: {type: file}
@@ -62,7 +61,7 @@ actions:
     args:
       recipe: --recipe {recipe}
       results_dir: --results-dir {results_dir}
-      hf_cache: --hf-cache {hf_cache}
+      checkpoint_root: --checkpoint-root {checkpoint_root}
       num_gpus: --num-gpus {num_gpus}
       min_nn_improvement: --min-nn-improvement {min_nn_improvement}
       parallelism: --parallelism {parallelism}

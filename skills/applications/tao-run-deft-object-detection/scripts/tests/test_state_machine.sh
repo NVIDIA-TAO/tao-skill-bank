@@ -252,6 +252,10 @@ print(json.dumps(json.load(open(sys.argv[1])).get(sys.argv[2])))' \
 make_pool() {  # make_pool WORKSPACE  (what the prep stage would emit)
   make_file "$1/source_pool/odvg/pool_odvg.jsonl" '{"filename": "a.png"}'
   make_parquet "$1/source_pool/source_embeddings.parquet"
+  # Prep emits pool_report.json too, and init requires it for an existing pool. It
+  # holds every class a test here targets, so it constrains nothing it is not asked to.
+  make_file "$1/source_pool/pool_report.json" \
+    '{"annotations_by_class": {"car": 900, "person": 400, "bicycle": 120, "road_sign": 80, "bus": 60, "truck": 50}}'
 }
 
 init_run() {  # init_run WORKSPACE RESULTS_DIR MAX_ITERATIONS [extra args...]
@@ -261,6 +265,13 @@ init_run() {  # init_run WORKSPACE RESULTS_DIR MAX_ITERATIONS [extra args...]
   # defaults. Every other caller keeps passing thresholds explicitly.
   local ap50=(--ap50-thresholds-json '{"car": 0.9, "person": 0.85}')
   [ "${OMIT_AP50:-0}" = 1 ] && ap50=()
+  # The pool's report, as prep left it, unless the test supplies its own, points at a
+  # pool directory (init finds the report there), or sets OMIT_POOL_REPORT=1 to
+  # exercise a pool that has none.
+  local report=(--pool-report "$ws/source_pool/pool_report.json")
+  case " $* " in *" --pool-report "*|*" --pool-dir "*) report=() ;; esac
+  [ "${OMIT_POOL_REPORT:-0}" = 1 ] && report=()
+  [ -f "$ws/source_pool/pool_report.json" ] || report=()
   run "$PY" "$INIT" \
     --results-dir "$results" \
     --workspace "$ws" \
@@ -276,6 +287,7 @@ init_run() {  # init_run WORKSPACE RESULTS_DIR MAX_ITERATIONS [extra args...]
     --ground-truth-labels-dir "$ws/kpi/labels" \
     --class-mapping "$ws/classes/classes_its.yaml" \
     ${ap50[@]+"${ap50[@]}"} \
+    ${report[@]+"${report[@]}"} \
     "$@"
 }
 
@@ -675,8 +687,10 @@ assert_rc 0 "state records the failure without advancing stage_completed"
 section "B2. only loop_stop may follow a hard stop"
 
 freeze "$RUN_B"
+# A well-formed retry -- it carries its mAP -- so the hard-stop rule is what refuses
+# it, not an argument check.
 commit "$RUN_B" baseline kpi_analyze \
-  --kpi-csv "$RUN_B/baseline/kpi/kpi_calc.csv" \
+  --kpi-csv "$RUN_B/baseline/kpi/kpi_calc.csv" --map-value 0.4 \
   --summary "silent retry after the hard stop"
 assert_rc 1 "retrying the failed stage is rejected"
 case "$RUN_OUT" in
@@ -2198,6 +2212,7 @@ run "$PY" "$INIT" \
   --kpi-images-dir "$G21_OUT/kpi/images" \
   --ground-truth-labels-dir "$G21_OUT/kpi/labels" \
   --class-mapping "$G21_WS/classes/classes_its.yaml" \
+  --pool-report "$G21_WS/source_pool/pool_report.json" \
   --ap50-thresholds-json '{"car": 0.9}'
 assert_rc 0 "[G21] inputs outside the workspace still initialize"
 case "$RUN_OUT" in
@@ -2291,37 +2306,123 @@ case "$RUN_OUT" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
-# G24 — a run with no baseline mAP has produced no trend
+# G24 — a phase that recorded no mAP has not succeeded, so the loop cannot pass it
 #
-# --map-value is optional, because a log printing "mAP: nan" has none to record.
-# Completion is not: the baseline mAP is what every iteration is compared against.
+# The per-phase mAP trend is the loop's only result. kpi_analyze committed ok without
+# one left a hole the loop then advanced past, and the run still ended "complete".
+# A real `mAP: nan` cannot be iteration-specific -- the KPI set and mapping are the
+# same for every phase -- so it is a configuration fault, recorded as status=error.
 # ═══════════════════════════════════════════════════════════════════════════
-CURRENT_SECTION="G24 completion needs a baseline mAP"
+CURRENT_SECTION="G24 every scored phase records its mAP"
 
 G24=$(new_workspace g24); make_pool "$G24"
 G24_RUN="$G24/results/run_g24"
-init_run "$G24" "$G24_RUN" 1
+init_run "$G24" "$G24_RUN" 2
 make_phase_artifacts "$G24_RUN" baseline
 commit "$G24_RUN" baseline inference \
   --inference-labels-dir "$G24_RUN/baseline/inference/labels" --summary s --duration-sec 1
+
+freeze "$G24_RUN"
 commit "$G24_RUN" baseline kpi_analyze \
-  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" \
-  --summary "mAP: nan — no value to record" --duration-sec 1
-assert_rc 0 "[G24] kpi_analyze may commit without a map_value"
-
-make_iter_artifacts "$G24_RUN" iter1
-commit "$G24_RUN" iter1 gap_analysis \
-  --weak-images "$G24_RUN/iter1/gaps/weak_images.parquet" \
-  --gap-report "$G24_RUN/iter1/gaps/gap_report.json" \
-  --weak-image-count 0 --summary "no weak images" --duration-sec 1
-commit "$G24_RUN" iter1 loop_stop --summary "early stop" --duration-sec 1
-assert_rc 0 "[G24] the documented early stop is committed"
-
-run "$PY" "$AUDIT" --results-dir "$G24_RUN" --require-complete
-assert_rc 1 "[G24] but with no baseline mAP the run is not complete"
+  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" --summary "scored" --duration-sec 1
+assert_rc 1 "[G24] kpi_analyze is refused as ok without --map-value"
 case "$RUN_OUT" in
-  *"no baseline mAP"*) ok "[G24] the reason names the missing baseline mAP" ;;
-  *) notok "[G24] the reason names the missing baseline mAP" "output: $RUN_OUT" ;;
+  *"requires --map-value"*) ok "[G24] the refusal names --map-value" ;;
+  *) notok "[G24] the refusal names --map-value" "output: $RUN_OUT" ;;
+esac
+assert_unchanged "$G24_RUN" "[G24] the refused commit writes nothing"
+
+# It is an argument rule, so it fires before the lock is taken or any state is read:
+# pointed at a results dir that does not exist, the refusal is still this one.
+commit "$G24/results/no_such_run" baseline kpi_analyze \
+  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" --summary "scored" --duration-sec 1
+case "$RUN_OUT" in
+  *"requires --map-value"*) ok "[G24] the mAP rule is checked before any state is read" ;;
+  *) notok "[G24] the mAP rule is checked before any state is read" "output: $RUN_OUT" ;;
+esac
+
+commit "$G24_RUN" baseline kpi_analyze \
+  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 \
+  --summary "kpi: mAP=0.5" --duration-sec 1
+assert_rc 0 "[G24] the baseline scored with its mAP commits"
+
+# Only kpi_analyze may record an mAP. It lives on the phase entry, so any other
+# stage's commit would overwrite the phase's measured score.
+commit "$G24_RUN" baseline loop_stop --map-value 0.99 --summary "stop" --duration-sec 1
+assert_rc 1 "[G24] --map-value on a stage other than kpi_analyze is refused"
+case "$RUN_OUT" in
+  *"--map-value belongs to kpi_analyze, not 'loop_stop'"*)
+    ok "[G24] the refusal names the stage it belongs to" ;;
+  *) notok "[G24] the refusal names the stage it belongs to" "output: $RUN_OUT" ;;
+esac
+assert_eq '0.5' "$("$PY" -c 'import json,sys
+print(json.load(open(sys.argv[1]))["iterations"]["baseline"]["map_value"])' "$G24_RUN/deft_state.json")" \
+  "[G24] the phase keeps the mAP its kpi_analyze measured"
+
+# An iteration scored without its mAP: the loop must not move on to iter2.
+make_iter_artifacts "$G24_RUN" iter1
+for st in gap_analysis embed mine stage train inference; do
+  case "$st" in
+    gap_analysis) commit "$G24_RUN" iter1 gap_analysis \
+        --weak-images "$G24_RUN/iter1/gaps/weak_images.parquet" \
+        --gap-report "$G24_RUN/iter1/gaps/gap_report.json" \
+        --weak-image-count 9 --summary s --duration-sec 1 ;;
+    embed) commit "$G24_RUN" iter1 embed \
+        --embeddings-parquet "$G24_RUN/iter1/embeddings/weak_images_embeddings.parquet" \
+        --summary s --duration-sec 1 ;;
+    mine) commit "$G24_RUN" iter1 mine \
+        --mining-output "$G24_RUN/iter1/mining/final_unique_files.parquet" \
+        --mining-summary "$G24_RUN/iter1/mining/summary.json" --summary s --duration-sec 1 ;;
+    stage) commit "$G24_RUN" iter1 stage \
+        --odvg "$G24_RUN/iter1/tmm/annotations/tmm_odvg.jsonl" \
+        --label-map "$G24_RUN/iter1/tmm/annotations/labelmap.json" \
+        --staged-images-dir "$G24_RUN/iter1/tmm/images" \
+        --exclude-parquet "$G24_RUN/iter1/mined_cumulative.parquet" --summary s --duration-sec 1 ;;
+    train) commit "$G24_RUN" iter1 train \
+        --checkpoint "$G24_RUN/iter1/train/gdino_model_latest.pth" \
+        --training-spec "$G24_RUN/iter1/train_grounding_dino.yaml" --summary s --duration-sec 1 ;;
+    inference) commit "$G24_RUN" iter1 inference \
+        --inference-labels-dir "$G24_RUN/iter1/inference/labels" --summary s --duration-sec 1 ;;
+  esac
+done
+commit "$G24_RUN" iter1 kpi_analyze \
+  --kpi-csv "$G24_RUN/iter1/kpi/kpi_calc.csv" --summary "scored" --duration-sec 1
+assert_rc 1 "[G24] an iteration's kpi_analyze is refused as ok without --map-value"
+assert_eq 'kpi_analyze' "$(report_field "$G24_RUN" next_action)" \
+  "[G24] so the loop stays on iter1's scoring rather than advancing to iter2"
+
+# `mAP: nan` is recorded as the failure it is, and the run stops there.
+commit "$G24_RUN" iter1 kpi_analyze --status error \
+  --summary "kpi_analyze printed mAP: nan" --duration-sec 1
+assert_rc 0 "[G24] a nan mAP is committed as status=error"
+assert_eq 'true' "$(report_field "$G24_RUN" run_failed)" \
+  "[G24] and the run is failed, not carried on to iter2"
+
+# A run recorded before the rule: an ok kpi_analyze with no map_value in state. The
+# audit refuses it, naming the phase, so it is repaired rather than built on.
+G24B=$(new_workspace g24b); make_pool "$G24B"
+G24B_RUN="$G24B/results/run_g24b"
+init_run "$G24B" "$G24B_RUN" 1
+make_phase_artifacts "$G24B_RUN" baseline
+commit "$G24B_RUN" baseline inference \
+  --inference-labels-dir "$G24B_RUN/baseline/inference/labels" --summary s --duration-sec 1
+commit "$G24B_RUN" baseline kpi_analyze \
+  --kpi-csv "$G24B_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 --summary s --duration-sec 1
+"$PY" - "$G24B_RUN/deft_state.json" <<'EOF'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p))
+del s["iterations"]["baseline"]["map_value"]     # as an older commit_stage allowed
+json.dump(s, open(p, "w"))
+EOF
+run "$PY" "$AUDIT" --results-dir "$G24B_RUN"
+assert_rc 1 "[G24] an older run with an ok kpi_analyze and no mAP fails the audit"
+case "$RUN_OUT" in
+  *"DEFT_RUN_STATUS=INVALID"*) ok "[G24] it audits INVALID, so it is repaired rather than built on" ;;
+  *) notok "[G24] it audits INVALID, so it is repaired rather than built on" "output: $RUN_OUT" ;;
+esac
+case "$RUN_OUT" in
+  *"baseline/kpi_analyze ok but"*"map_value"*) ok "[G24] the audit names the phase missing its mAP" ;;
+  *) notok "[G24] the audit names the phase missing its mAP" "output: $RUN_OUT" ;;
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2880,6 +2981,506 @@ PYEOF
 assert_rc 0 "[G31] a mid-transfer failure propagates"
 assert_eq '<empty>' "$RUN_OUT" \
   "[G31] a transfer that dies after the first chunk leaves nothing behind"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G32. the loop report is written by the scripts, not by an agent
+#
+# Reporting used to be reachable only by spawning a subagent, which a runtime
+# without that tool cannot do, and rendering inline was forbidden. It is now a
+# post-commit hook: init writes the report, every accepted commit refreshes it,
+# and no stage of the loop needs anything but Bash.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G32 the report renders itself"
+
+G32=$(new_workspace g32); make_pool "$G32"
+G32_RUN="$G32/results/run_g32"
+init_run "$G32" "$G32_RUN" 1
+[ -f "$G32_RUN/DEFT_Loop_Report.md" ] \
+  && ok "[G32] init writes the report before any stage has run" \
+  || notok "[G32] init writes the report before any stage has run"
+
+grep -q 'IN PROGRESS' "$G32_RUN/DEFT_Loop_Report.md" \
+  && ok "[G32] a run with no committed stage reports IN PROGRESS" \
+  || notok "[G32] a run with no committed stage reports IN PROGRESS"
+
+# A summary carrying the training container's validation metric. It scores
+# agreement with the Co-DETR pseudo-labels, not accuracy, and beside the KPI mAP
+# it reads as a competing accuracy figure -- so it must not reach the report.
+make_phase_artifacts "$G32_RUN" baseline
+commit "$G32_RUN" baseline inference \
+  --inference-labels-dir "$G32_RUN/baseline/inference/labels" \
+  --summary "baseline inference: 1 label file, val_mAP50 = 0.8266" --duration-sec 12
+assert_rc 0 "[G32] commit baseline/inference"
+
+grep -q 'val_mAP' "$G32_RUN/DEFT_Loop_Report.md" \
+  && notok "[G32] no val_ metric reaches the report" \
+  || ok "[G32] no val_ metric reaches the report"
+grep -q 'baseline inference: 1 label file' "$G32_RUN/DEFT_Loop_Report.md" \
+  && ok "[G32] the rest of the summary is reproduced verbatim" \
+  || notok "[G32] the rest of the summary is reproduced verbatim"
+grep -q 'val_mAP50 = 0.8266' "$G32_RUN/loop_log.jsonl" \
+  && ok "[G32] the metric is still in the log, only withheld from the report" \
+  || notok "[G32] the metric is still in the log, only withheld from the report"
+
+commit "$G32_RUN" baseline kpi_analyze \
+  --kpi-csv "$G32_RUN/baseline/kpi/kpi_calc.csv" \
+  --kpi-log "$G32_RUN/baseline/kpi/kpi_analyze.log" \
+  --map-value 0.42 \
+  --summary "kpi: mAP=0.42" --duration-sec 20
+assert_rc 0 "[G32] commit baseline/kpi_analyze"
+grep -q '0.4200' "$G32_RUN/DEFT_Loop_Report.md" \
+  && ok "[G32] each commit re-renders, so the KPI trend is current" \
+  || notok "[G32] each commit re-renders, so the KPI trend is current"
+
+# Presentation is not transactional. A render that cannot write must cost a
+# warning, never a GPU stage that already passed the audit.
+#
+# The failure is injected at the rename: a directory where the report goes makes
+# os.replace fail. Making the report unreadable would not do it -- os.replace swaps a
+# directory entry, so the old file's mode never blocks the new one -- and the temp
+# file's name is unique to each render, so it cannot be pre-empted either.
+mv "$G32_RUN/DEFT_Loop_Report.md" "$G32/report.before_failure"
+mkdir "$G32_RUN/DEFT_Loop_Report.md"
+make_iter_artifacts "$G32_RUN" iter1
+commit "$G32_RUN" iter1 gap_analysis \
+  --weak-images "$G32_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G32_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 120 \
+  --summary "gap_analysis: 120 weak images" --duration-sec 30
+assert_rc 0 "[G32] a render that cannot write does not fail the commit"
+case "$RUN_OUT" in
+  *"the loop report was not re-rendered"*)
+    ok "[G32] the commit says the report is stale" ;;
+  *) notok "[G32] the commit says the report is stale" "output: $RUN_OUT" ;;
+esac
+assert_eq 'iter1/gap_analysis' "$(report_field "$G32_RUN" last_committed)" \
+  "[G32] the commit it could not render still stands"
+assert_eq '0' "$(find "$G32_RUN" -maxdepth 1 -name '.DEFT_Loop_Report.md.*.tmp' | wc -l | tr -d ' ')" \
+  "[G32] a failed render leaves no temp file behind"
+rmdir "$G32_RUN/DEFT_Loop_Report.md"
+mv "$G32/report.before_failure" "$G32_RUN/DEFT_Loop_Report.md"
+
+# Each render writes its own temp file, so two overlapping ones -- a commit's hook and
+# a hand-run refresh -- cannot write into the same file or rename each other's
+# half-written copy into place.
+"$PY" - "$SCRIPTS_DIR" "$G32_RUN" <<'PYEOF' > "$G32/tmpnames.out"
+import sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import render_report
+seen = []
+real = tempfile.mkstemp
+def spy(*a, **k):
+    fd, name = real(*a, **k)
+    seen.append(name)
+    return fd, name
+render_report.tempfile.mkstemp = spy
+render_report.render(sys.argv[2])
+render_report.render(sys.argv[2])
+print(len(seen), len(set(seen)))
+PYEOF
+assert_eq '2 2' "$(cat "$G32/tmpnames.out")" \
+  "[G32] two renders write two distinct temp files"
+
+# The hook renders under the run lock. Released, a following commit could rewrite
+# state and log mid-render and the report would mix two commits. Probed by trying
+# the lock without blocking from inside the hook: flock conflicts across open file
+# descriptions even within one process, so a held lock makes the attempt fail.
+"$PY" - "$SCRIPTS_DIR" "$G32_RUN" <<'PYEOF' > "$G32/lockprobe.out"
+import fcntl, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import commit_stage
+run = sys.argv[2]
+held = []
+def probe(results_dir, report=None, out=None):
+    fd = os.open(str(Path(results_dir) / commit_stage.LOCK_NAME), os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held.append("free")
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        held.append("held")
+    finally:
+        os.close(fd)
+commit_stage.render_loop_report = probe
+sys.argv = ["commit_stage.py", "--results-dir", run, "--iter-label", "iter1",
+            "--stage", "embed",
+            "--embeddings-parquet", f"{run}/iter1/embeddings/weak_images_embeddings.parquet",
+            "--summary", "embedded 120 weak images", "--duration-sec", "5"]
+rc = commit_stage.main()
+print(rc, ",".join(held))
+PYEOF
+assert_eq '0 held' "$(tail -1 "$G32/lockprobe.out")" \
+  "[G32] the commit's render runs while the run lock is held"
+
+# --out replaces the destination rather than adding a second copy, and
+# --require-terminal leaves the existing report alone for a run still in flight.
+before=$(cat "$G32_RUN/DEFT_Loop_Report.md")
+run "$PY" "$SCRIPTS_DIR/render_report.py" --results-dir "$G32_RUN" --out "$G32/elsewhere.md"
+assert_rc 0 "[G32] --out renders"
+[ -f "$G32/elsewhere.md" ] && ok "[G32] --out writes where it is pointed" \
+  || notok "[G32] --out writes where it is pointed"
+assert_eq "$before" "$(cat "$G32_RUN/DEFT_Loop_Report.md")" \
+  "[G32] --out leaves the results-dir report untouched"
+run "$PY" "$SCRIPTS_DIR/render_report.py" --results-dir "$G32_RUN" --require-terminal
+assert_rc 1 "[G32] --require-terminal refuses a run that has not committed loop_stop"
+assert_eq "$before" "$(cat "$G32_RUN/DEFT_Loop_Report.md")" \
+  "[G32] a refused end-of-loop render leaves the existing report as it was"
+
+# The status paths are covered through compose() below; this checks the hook actually
+# produces one on a real terminal commit. loop_stop here, with iter1 unfinished, is a
+# stop short of the run's one iteration, so the status must say STOPPED and why.
+commit "$G32_RUN" iter1 loop_stop --summary "stopped by hand" --duration-sec 1
+assert_rc 0 "[G32] loop_stop commits"
+g32_status=$(grep -m1 '^\*\*Status:\*\*' "$G32_RUN/DEFT_Loop_Report.md")
+case "$g32_status" in
+  "**Status:** STOPPED (INCOMPLETE) ("*"only 0 of 1 iterations"*")")
+    ok "[G32] the terminal commit re-renders a STOPPED status carrying its reason" ;;
+  *) notok "[G32] the terminal commit re-renders a STOPPED status carrying its reason" \
+       "got: $g32_status" ;;
+esac
+run "$PY" "$SCRIPTS_DIR/render_report.py" --results-dir "$G32_RUN" --require-terminal
+assert_rc 0 "[G32] --require-terminal renders once loop_stop is committed"
+
+# Re-initialising over a finished run archives its report with its state and log.
+# The fresh render would otherwise overwrite it, and it cannot be rebuilt from the
+# archived pair.
+cp "$G32_RUN/DEFT_Loop_Report.md" "$G32/final_report.md"
+init_run "$G32" "$G32_RUN" 1 --force
+assert_rc 0 "[G32] init --force re-initialises the finished run"
+g32_bak=$(ls "$G32_RUN"/DEFT_Loop_Report.md.bak.* 2>/dev/null | head -1)
+[ -n "$g32_bak" ] && cmp -s "$g32_bak" "$G32/final_report.md" \
+  && ok "[G32] the previous run's report is archived, byte for byte" \
+  || notok "[G32] the previous run's report is archived, byte for byte" "bak: ${g32_bak:-none}"
+grep -q 'IN PROGRESS' "$G32_RUN/DEFT_Loop_Report.md" \
+  && ok "[G32] and a fresh report replaces it" \
+  || notok "[G32] and a fresh report replaces it"
+
+# How individual inputs render. compose() is driven directly with a hand-built state,
+# because each case is about one input, and a real run cannot produce most of them.
+# One line per case: "ok <label>" or "not ok <label> :: <detail>".
+while IFS= read -r line; do
+  case "$line" in
+    "ok "*) ok "[G32] ${line#ok }" ;;
+    "not ok "*) notok "[G32] ${line#not ok }" ;;
+  esac
+done < <("$PY" - "$SCRIPTS_DIR" "$G32/compose" <<'PYEOF'
+import json, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import render_report as rr
+
+root = pathlib.Path(sys.argv[2])
+root.mkdir(parents=True, exist_ok=True)
+
+def check(label, cond, detail=""):
+    print(f"ok {label}" if cond else f"not ok {label} :: {detail}")
+
+def write(rel, text):
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    return str(p)
+
+REPORT = {"status": "VALID", "iterations_completed": 1, "max_iterations": None,
+          "complete": False, "run_failed": False, "loop_stop_committed": False}
+
+# The staging gap counts from Mined: an image missing from the pool is never copied,
+# so a gap counted from the copies would not see it.
+stage_report = write("iter1/tmm/staging_report.json", json.dumps({
+    "mined_unique": 10, "images_copied": 9, "annotations_written": 7,
+    "missing_images": ["a.jpg"], "missing_annotations": ["b.jpg", "c.jpg"]}))
+# A mining summary that parses, but as a list: renders as unknown, never crashes.
+mining = write("iter1/mining/summary.json", "[1, 2, 3]")
+# A CSV row with more fields than the header, which csv.DictReader keys under None.
+csv_extra = write("iter1/kpi/kpi_calc.csv",
+                  "Sequence Name,class_name,AP\nkpi,car,0.8,surplus\nkpi,person,0.6\n")
+# One class scored in two sequences: a single AP for it would be a silent guess.
+csv_dup = write("baseline/kpi/kpi_calc.csv",
+                "Sequence Name,class_name,AP\ns1,car,0.9\ns2,car,0.1\n")
+# A summary whose mAP disagrees with the committed --map-value.
+write("iter1/kpi/kpi_summary.json", json.dumps({"map_value": 0.99}))
+
+state = {"config": {"max_iterations": 4, "rare_class_list": "a|b"},
+         "iterations": {
+    "baseline": {"kpi_csv": csv_dup, "map_value": 0.5},
+    "iter1": {"kpi_csv": csv_extra, "map_value": 0.7,
+              "mining_summary_json": mining,
+              "odvg_jsonl": str(root / "iter1/tmm/annotations/tmm_odvg.jsonl")}}}
+events = [
+    {"seq": 1, "iter": "iter1", "stage": "train", "status": "ok", "duration_sec": 0,
+     "summary": "trained iter1: 2 epochs, val mAP50 = 0.91 | 3 sources"},
+]
+
+try:
+    doc = rr.compose(root, state, events, REPORT, "2026-01-01T00:00:00Z")
+    check("malformed inputs render instead of crashing", True)
+except Exception as exc:  # noqa: BLE001
+    print(f"not ok malformed inputs render instead of crashing :: {type(exc).__name__}: {exc}")
+    sys.exit(0)
+
+check("the staging gap is counted from Mined", "lost 3 of 10 mined images" in doc, doc)
+check("the gap names both causes",
+      "1 missing from the pool" in doc and "2 with no annotation in the pool" in doc, doc)
+check("a class scored twice gets no single AP",
+      "| baseline | 0.5000 |" in doc and "0.9000" not in doc and "0.1000" not in doc, doc)
+check("the missing breakdown names its real cause",
+      "Per-class breakdown unavailable for baseline: a class is scored in more than one"
+      in doc, doc)
+
+# The same collision through kpi_summary.json, the path a real run takes:
+# summarize_kpi.py always writes one, and its per_class dict keeps only the last row.
+import subprocess
+dup = root / "dupsum/baseline/kpi"
+dup.mkdir(parents=True)
+(dup / "kpi_calc.csv").write_text("Sequence Name,class_name,AP\ns1,car,0.9\ns2,car,0.1\n")
+subprocess.run([sys.executable, f"{sys.argv[1]}/summarize_kpi.py",
+                "--kpi-csv", str(dup / "kpi_calc.csv")], capture_output=True, check=True)
+dup_doc = rr.compose(root, {"config": {}, "iterations": {"baseline": {
+    "kpi_csv": str(dup / "kpi_calc.csv"), "map_value": 0.5}}}, [], REPORT, "t")
+check("a class scored twice gets no single AP through kpi_summary.json either",
+      "| baseline | 0.5000 |" in dup_doc and "0.1000" not in dup_doc, dup_doc)
+
+# The summary file itself must not state one sequence's AP as the class's: anything
+# else that reads it would be misled the same way the report was.
+dup_sum = json.loads((dup / "kpi_summary.json").read_text())
+check("summarize_kpi withholds per_class when a class repeats",
+      dup_sum.get("per_class") is None and "car" in (dup_sum.get("per_class_withheld") or ""),
+      dup_sum)
+check("summarize_kpi keeps every row and counts classes, not rows",
+      dup_sum.get("per_class_ap") == [0.9, 0.1] and dup_sum.get("class_count") == 1
+      and dup_sum.get("row_count") == 2, dup_sum)
+one = root / "onesum/kpi"
+one.mkdir(parents=True)
+(one / "kpi_calc.csv").write_text("Sequence Name,class_name,AP\nkpi,car,0.9\nkpi,person,0.6\n")
+subprocess.run([sys.executable, f"{sys.argv[1]}/summarize_kpi.py",
+                "--kpi-csv", str(one / "kpi_calc.csv")], capture_output=True, check=True)
+one_sum = json.loads((one / "kpi_summary.json").read_text())
+check("summarize_kpi still resolves per_class when every class is scored once",
+      one_sum.get("per_class") == {"car": 0.9, "person": 0.6}
+      and one_sum.get("per_class_withheld") is None, one_sum)
+
+# The documented call passes --expect-classes. For a labelled CSV it counts distinct
+# class names, so a class in two sequences reaches the handling above instead of
+# being refused as if it were a stray row.
+multi = root / "multi/kpi"
+multi.mkdir(parents=True)
+(multi / "kpi_calc.csv").write_text(
+    "Sequence Name,class_name,AP\ns1,car,0.9\ns2,car,0.1\ns1,person,0.6\ns1,bicycle,0.7\n")
+proc = subprocess.run([sys.executable, f"{sys.argv[1]}/summarize_kpi.py",
+                       "--kpi-csv", str(multi / "kpi_calc.csv"), "--expect-classes", "3"],
+                      capture_output=True, text=True)
+multi_sum = json.loads((multi / "kpi_summary.json").read_text()) if proc.returncode == 0 else {}
+check("--expect-classes counts distinct classes in a labelled CSV",
+      proc.returncode == 0 and multi_sum.get("per_class") is None
+      and multi_sum.get("class_count") == 3 and multi_sum.get("row_count") == 4,
+      proc.stderr or multi_sum)
+proc = subprocess.run([sys.executable, f"{sys.argv[1]}/summarize_kpi.py",
+                       "--kpi-csv", str(multi / "kpi_calc.csv"), "--expect-classes", "2"],
+                      capture_output=True, text=True)
+check("--expect-classes still refuses a labelled CSV with the wrong class count",
+      proc.returncode == 1 and "3 distinct class(es)" in proc.stderr, proc.stderr)
+
+# Staging numbers come only from a committed stage. A report at the default path with
+# no stage commit -- a rejected commit, or an earlier run in the same results dir --
+# must not appear as this run's.
+(root / "stale/iter1/tmm").mkdir(parents=True)
+(root / "stale/iter1/tmm/staging_report.json").write_text(
+    json.dumps({"mined_unique": 99, "annotations_written": 50}))
+stale_doc = rr.compose(root / "stale", {"config": {}, "iterations": {
+    "iter1": {"weak_image_count": 7}}}, [], REPORT, "t")
+check("an uncommitted staging report is not read",
+      "| iter1 | 7 | — | — | — | — |" in stale_doc, stale_doc)
+
+# A phase that committed no CSV says so, rather than blaming a missing column.
+nocsv_doc = rr.compose(root, {"config": {}, "iterations": {"baseline": {"map_value": 0.4}}},
+                       [], REPORT, "t")
+check("a phase with no committed CSV says that is why",
+      "unavailable for baseline: no kpi_calc.csv was committed" in nocsv_doc, nocsv_doc)
+
+# A metric's value leaves no piece behind, however it is joined or written.
+got = rr.strip_val_metrics("trained iter1: 2 epochs, val_mAP50 of 0.82; val_loss=3.1e-02")
+check("a value joined by a word or in scientific notation goes with its metric",
+      got == "trained iter1: 2 epochs", got)
+check("the committed --map-value wins over a disagreeing summary",
+      "| iter1 | 0.7000 |" in doc and "0.9900" not in doc, doc)
+check("a val mAP spelled with a space is dropped too", "0.91" not in doc, doc)
+check("pipes in cells are escaped",
+      "\\| 3 sources" in doc and "a\\|b" in doc, doc)
+check("an unrecorded duration is not printed as 0s", "| 0s |" not in doc, doc)
+check("max_iterations falls back to the config when the audit carries None",
+      "**Iterations completed:** 1 / 4" in doc, doc)
+
+# Only metric names are stripped. A bare `val_` prefix also names things the report
+# must keep -- this skill's own val_coco.json among them.
+for kept in ["prep: carved val_split of 512; wrote val_coco.json", "wrote val_images=500 to prep/"]:
+    got = rr.strip_val_metrics(kept)
+    check(f"a val_ name that is not a metric is kept: {kept[:28]}", got == kept, got)
+got = rr.strip_val_metrics("trained: val_mAP_50_95 0.41, 2 epochs")
+check("a multi-part metric name is stripped whole", got == "trained: 2 epochs", got)
+
+# The log's header row is not a class, however its class column is spelled.
+hdr = root / "hdr.log"
+hdr.write_text("| Sequence Name | class_name | AP |\n| s | car | 0.8 |\n| s | person | 0.6 |\n")
+got = rr._class_names_from_log(hdr)
+check("a class_name header row is not read as a class", got == ["car", "person"], got)
+
+# The status line carries the completion reason wherever the word alone misleads.
+def status_of(report, state_reason=None):
+    st = {"config": {}, "iterations": {}}
+    if state_reason is not None:
+        st["completion_reason"] = state_reason
+    line = next(l for l in rr.compose(root, st, [], report, "t").splitlines()
+                if l.startswith("**Status:**"))
+    return line[len("**Status:** "):]
+
+early = "documented early stop: the source pool was exhausted at iter2 (pool_remaining=58)"
+got = status_of({"complete": True, "completion_reason": early})
+check("an early stop says so beside COMPLETE", got == f"COMPLETE ({early})", got)
+got = status_of({"complete": True, "completion_reason": "all 3 iterations completed every stage"})
+check("a run that finished every iteration is plain COMPLETE", got == "COMPLETE", got)
+stopped = "only 0 of 3 iterations finished kpi_analyze"
+got = status_of({"loop_stop_committed": True, "completion_reason": stopped})
+check("a stopped run says why it stopped short", got == f"STOPPED (INCOMPLETE) ({stopped})", got)
+got = status_of({"complete": True, "completion_reason": "from the audit"}, state_reason=early)
+check("the reason recorded in state wins over the audit's", got == f"COMPLETE ({early})", got)
+PYEOF
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G37. a target class that mines nothing is named in the report
+#
+# Under class_stratified each rare class is allocated a share of the mining budget.
+# A class that gets nothing has its slots backfilled from the others, so the totals
+# and the coverage stay healthy and neither existing rule fires. TAO's summary.json
+# records the achieved per-class counts; nothing read them.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G37 a starved class is reported"
+
+while IFS= read -r line; do
+  case "$line" in
+    "ok "*) ok "[G37] ${line#ok }" ;;
+    "not ok "*) notok "[G37] ${line#not ok }" ;;
+  esac
+done < <("$PY" - "$SCRIPTS_DIR" "$(new_workspace g37)" <<'PYEOF'
+import json, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import render_report as rr
+
+root = pathlib.Path(sys.argv[2])
+def check(label, cond, detail=""):
+    print(f"ok {label}" if cond else f"not ok {label} :: {detail}")
+
+def doc_for(summary):
+    path = root / f"summary_{abs(hash(json.dumps(summary, sort_keys=True)))}.json"
+    path.write_text(json.dumps(summary))
+    state = {"config": {"target_classes": ["bicycle", "car", "person"]},
+             "iterations": {"iter1": {"weak_image_count": 100,
+                                      "mining_summary_json": str(path)}}}
+    return rr.compose(root, state, [], {"status": "VALID"}, "t")
+
+base = {"retrieved_unique_count": 500, "desired_unique_count": 500, "coverage_pct": 100.0,
+        "allocation": {"per_class": {"bicycle": {"desired_count": 120},
+                                     "person": {"desired_count": 300}}}}
+
+starved = dict(base, resultant_dataset={"per_class": {
+    "car": {"image_count": 480}, "person": {"image_count": 310}}})
+doc = doc_for(starved)
+check("a target class absent from the mined set is named, with its allocation",
+      "`iter1` mined no images of target class `bicycle` (it was allocated 120)" in doc, doc)
+check("the classes that were fed are not named", "class `person`" not in doc
+      and "class `car`" not in doc, doc)
+
+zero = dict(base, resultant_dataset={"per_class": {
+    "car": {"image_count": 480}, "person": {"image_count": 310},
+    "bicycle": {"image_count": 0}}})
+check("a target class recorded with zero images is named too",
+      "target class `bicycle`" in doc_for(zero))
+
+fed = dict(base, resultant_dataset={"per_class": {
+    "car": {"image_count": 480}, "person": {"image_count": 310},
+    "bicycle": {"image_count": 90}}})
+check("an iteration that fed every target class flags nothing",
+      "mined no images" not in doc_for(fed))
+
+check("a summary with no per-class breakdown flags nothing rather than guessing",
+      "mined no images" not in doc_for(base))
+PYEOF
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G33. the train spec is not written against a checkpoint that is not there
+#
+# prepare_spec_for_train.py checked every input path but the checkpoint. A missing
+# one was written into train.pretrained_model_path, the script exited 0, and the
+# failure surfaced only after a training stage had been paid for.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G33 the checkpoint path is checked"
+
+G33=$(new_workspace g33)
+PREP_TRAIN="$SCRIPTS_DIR/prepare_spec_for_train.py"
+mkdir -p "$G33/tmm/images" "$G33/val/images" "$G33/ckpts/a_directory"
+make_file "$G33/tmm/images/000001.jpg" "jpg"
+make_file "$G33/tmm/tmm_odvg.jsonl" '{"file_name": "000001.jpg"}'
+make_file "$G33/tmm/labelmap.json" '{"0": "car", "1": "person"}'
+make_file "$G33/val/val_coco.json" '{"images": [], "annotations": [], "categories": []}'
+make_file "$G33/ckpts/gdino.pth" "weights"
+g33_train() {  # g33_train CHECKPOINT
+  run "$PY" "$PREP_TRAIN" --previous-spec "$SKILL_DIR/assets/train_grounding_dino.yaml" \
+    --output-spec "$G33/train.yaml" \
+    --tmm-image-dir "$G33/tmm/images" --tmm-odvg-file "$G33/tmm/tmm_odvg.jsonl" \
+    --tmm-label-map-file "$G33/tmm/labelmap.json" \
+    --val-image-dir "$G33/val/images" --val-json-file "$G33/val/val_coco.json" \
+    --pretrained-model-path "$1"
+}
+
+g33_train "$G33/ckpts/gdino.pth"
+assert_rc 0 "[G33] a spec is written for a checkpoint that exists"
+assert_eq "$G33/ckpts/gdino.pth" "$("$PY" -c 'import yaml,sys
+print(yaml.safe_load(open(sys.argv[1]))["train"]["pretrained_model_path"])' "$G33/train.yaml")" \
+  "[G33] the spec carries that checkpoint"
+
+rm -f "$G33/train.yaml"
+g33_train "$G33/ckpts/missing.pth"
+assert_rc 1 "[G33] a checkpoint that does not exist is refused"
+case "$RUN_OUT" in
+  *"--pretrained-model-path"*) ok "[G33] the refusal names the flag" ;;
+  *) notok "[G33] the refusal names the flag" "output: $RUN_OUT" ;;
+esac
+[ -f "$G33/train.yaml" ] && notok "[G33] no spec is written for it" \
+  || ok "[G33] no spec is written for it"
+
+g33_train "$G33/ckpts/a_directory"
+assert_rc 1 "[G33] a directory where the checkpoint should be is refused"
+
+g33_train "ckpts/gdino.pth"
+assert_rc 1 "[G33] a relative checkpoint path is refused"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G34. an existing pool needs its report under every allocation policy
+#
+# pool_report.json is the only check that a prepared pool holds the run's target
+# classes. It was required only under class_stratified, so under the default
+# global policy a pool with no report initialised silently, for any classes.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G34 the pool report is required"
+
+G34=$(new_workspace g34); make_pool "$G34"
+OMIT_POOL_REPORT=1 init_run "$G34" "$G34/results/run_a" 1 --allocation-policy global
+assert_rc 1 "[G34] an existing pool with no report is refused under the global policy"
+case "$RUN_OUT" in
+  *"--pool-report is required"*) ok "[G34] the refusal names --pool-report and why" ;;
+  *) notok "[G34] the refusal names --pool-report and why" "output: $RUN_OUT" ;;
+esac
+
+init_run "$G34" "$G34/results/run_b" 1 --allocation-policy global
+assert_rc 0 "[G34] the same pool with its report initialises"
+
+# The report's own guard now applies under the global policy too: a target class
+# the pool holds no annotations for is refused.
+make_file "$G34/thin_report.json" '{"annotations_by_class": {"car": 900}}'
+init_run "$G34" "$G34/results/run_c" 1 --allocation-policy global \
+  --pool-report "$G34/thin_report.json" --target-classes car,person
+assert_rc 1 "[G34] under the global policy, a target the pool does not hold is refused"
 
 # ═══════════════════════════════════════════════════════════════════════════
 

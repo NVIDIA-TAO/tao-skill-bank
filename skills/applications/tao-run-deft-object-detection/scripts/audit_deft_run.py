@@ -635,6 +635,19 @@ def audit(results_dir: Path) -> dict[str, Any]:
                         f"loop_log commits {phase}/{stage} but state.iterations.{phase}."
                         f"{field} ({flag}) was never recorded"
                     )
+        # A kpi_analyze recorded ok must carry its mAP: the per-phase trend is the
+        # loop's only result. commit_stage.py refuses such a commit now; this catches
+        # a run recorded before it did, so the run stops at the hole rather than
+        # advancing past it and ending "complete".
+        map_value = info.get("map_value")
+        if "kpi_analyze" in ok_stages_by_phase.get(phase, []) and (
+            isinstance(map_value, bool) or not isinstance(map_value, (int, float))
+        ):
+            errors.append(
+                f"loop_log commits {phase}/kpi_analyze ok but state.iterations.{phase}."
+                f"map_value (--map-value) was never recorded, so the trend has no {phase} "
+                f"point. Re-score the phase, or record it as --status error"
+            )
 
     highest_iteration = max(
         (

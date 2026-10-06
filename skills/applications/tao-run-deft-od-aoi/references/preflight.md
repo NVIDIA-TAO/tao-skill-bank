@@ -13,8 +13,9 @@ Complete this gate before creating a job record or submitting any action.
 - Confirm GPU shape, storage mappings, runtime estimate, and durable
   `results_dir`.
 - Confirm synthesis is disabled or has exact pixel masks, a defect
-  specification, reference pool, Cosmos3-Nano assets, and either existing task
-  weights or complete one-time fine-tuning routes.
+  specification, a reference pool with at least one supported image under
+  `TEXTURE/clean_image`, Cosmos3-Nano assets, and either existing task weights
+  or complete one-time fine-tuning routes.
 
 Do not create output directories that actions require to be absent. Existing
 DEFT results are resumed only through their committed
@@ -33,7 +34,13 @@ Before launch:
 5. Confirm no KPI or test image identity appears in training sources.
 6. Confirm each planned action's required predecessor artifact exists and its
    owning job reached `COMPLETE`.
-7. For synthesis, resolve every route before iteration 0 and verify handoff
+7. For synthesis, require every boxed KPI annotation to resolve a real,
+   nonempty `dataset_id` from its image or annotation metadata. An ID absent
+   from `synthesis.routes` is valid and remains on the normal real-data path.
+8. Require every boxed KPI annotation in a configured route to
+   declare `texture_id`, `defect_class`, and an existing `fn_mask_source` path.
+   Mask-content eligibility remains a per-FN preparation decision.
+9. Resolve every synthesis route before iteration 0 and verify handoff
    hashes for newly trained adapters.
 
 ## Launch

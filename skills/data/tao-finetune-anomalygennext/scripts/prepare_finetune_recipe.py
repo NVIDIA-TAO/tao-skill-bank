@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from PIL import Image
 
 
-IMAGES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+IMAGES = {".jpeg", ".jpg", ".png"}
+UNSUPPORTED_IMAGE_EXTS = {".bmp", ".tif", ".tiff", ".webp"}
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 DEFAULT_RECIPE = Path(__file__).resolve().parents[1] / "assets" / "default_recipe.yaml"
 
@@ -30,7 +32,36 @@ def _sha256(path: Path) -> str:
 
 
 def _images(path: Path) -> list[Path]:
-    return sorted(item for item in path.iterdir() if item.is_file() and item.suffix.lower() in IMAGES)
+    files = sorted(item for item in path.iterdir() if item.is_file())
+    unsupported = [item for item in files
+                   if item.suffix.lower() in UNSUPPORTED_IMAGE_EXTS]
+    if unsupported:
+        raise ValueError(
+            f"unsupported AnomalyGenNext image extension: {unsupported[0]}; "
+            "use .jpg, .jpeg, or .png"
+        )
+    return [item for item in files if item.suffix.lower() in IMAGES]
+
+
+def _validate_extension(path: Path, label: str) -> None:
+    if path.suffix.lower() not in IMAGES:
+        raise ValueError(
+            f"unsupported AnomalyGenNext {label} extension: {path}; "
+            "use .jpg, .jpeg, or .png"
+        )
+
+
+def _validate_mask(mask: Path) -> None:
+    try:
+        with Image.open(mask) as image:
+            values = {value for value, count in enumerate(image.convert("L").histogram()) if count}
+    except OSError as error:
+        raise ValueError(f"cannot read AnomalyGenNext mask: {mask}") from error
+    if values != {0, 255}:
+        raise ValueError(
+            f"mask must contain exactly binary pixel values 0 and 255: {mask}; "
+            f"found {sorted(values)}"
+        )
 
 
 def _pairs(root: Path) -> list[list[str]]:
@@ -51,8 +82,10 @@ def _pairs(root: Path) -> list[list[str]]:
             for image in anomalies:
                 choices = (mask_root / f"{image.stem}_mask{image.suffix}",
                            mask_root / f"{image.stem}_mask.png", mask_root / image.name)
-                if not any(path.is_file() for path in choices):
+                mask = next((path for path in choices if path.is_file()), None)
+                if mask is None:
                     raise ValueError(f"anomaly lacks matching mask: {image}")
+                _validate_mask(mask)
             result.append([texture.name, defect.name])
     if not result:
         raise ValueError(f"no TEXTURE/anomaly_image/DEFECT inputs under {root}")
@@ -98,7 +131,10 @@ def _validation(path: Path, dataset: Path, name: str) -> tuple[list[dict[str, An
         for key in ("image_filename", "mask_filename"):
             if not row.get(key):
                 raise ValueError(f"missing {key} at {path}:{number}")
-            row[key] = str(_validation_path(str(row[key]), path, dataset, name))
+            resolved = _validation_path(str(row[key]), path, dataset, name)
+            _validate_extension(resolved, "mask" if key == "mask_filename" else "image")
+            row[key] = str(resolved)
+        _validate_mask(Path(row["mask_filename"]))
         rows.append(row)
         counts[anomaly] += 1
     if not rows:
@@ -106,14 +142,46 @@ def _validation(path: Path, dataset: Path, name: str) -> tuple[list[dict[str, An
     return rows, counts
 
 
+def _validate_checkpoint_tree(root: Path) -> None:
+    root = root.expanduser().resolve()
+    qwen_assets = root / "hf"
+    dinov2 = root / "facebook" / "dinov2-large"
+    if not qwen_assets.is_dir():
+        raise ValueError(
+            f"checkpoint root lacks required Qwen tokenizer assets under hf/: {qwen_assets}"
+        )
+    if not (dinov2 / "config.json").is_file():
+        raise ValueError(f"checkpoint root lacks DINOv2 config: {dinov2}")
+    if not ((dinov2 / "model.safetensors").is_file()
+            or (dinov2 / "pytorch_model.bin").is_file()):
+        raise ValueError(f"checkpoint root lacks DINOv2 weights: {dinov2}")
+
+
+def _validate_base_checkpoint(root: Path) -> None:
+    root = root.expanduser().resolve()
+    model = root / "model"
+    if (not (root / "checkpoint.json").is_file()
+            or not (model / ".metadata").is_file()
+            or not any(path.is_file() for path in model.glob("*.distcp"))):
+        raise ValueError(
+            "Cosmos3-Nano base checkpoint must be a DCP directory containing "
+            f"checkpoint.json, model/.metadata, and model/*.distcp: {root}. "
+            "Convert it with cosmos_framework.scripts.convert_model_to_dcp in the pinned "
+            "AnomalyGenNext container; see references/container-runtime.md."
+        )
+
+
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     required = (("dataset root", args.dataset_root, True),
                 ("validation testcase", args.validation_testcase, False),
                 ("base checkpoint", args.base_checkpoint, True),
-                ("VAE", args.vae_path, False), ("NN backbone", args.nn_backbone, True))
+                ("VAE", args.vae_path, False),
+                ("checkpoint root", args.checkpoint_root, True))
     for label, path, directory in required:
         if not (path.is_dir() if directory else path.is_file()):
             raise ValueError(f"{label} is missing: {path}")
+    _validate_base_checkpoint(args.base_checkpoint)
+    _validate_checkpoint_tree(args.checkpoint_root)
     if not SAFE_NAME.fullmatch(args.dataset_name) or not SAFE_NAME.fullmatch(args.job_name):
         raise ValueError("dataset and job names may contain only letters, numbers, dot, dash, underscore")
     recipe = yaml.safe_load(DEFAULT_RECIPE.read_text())
@@ -174,7 +242,10 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     report = {"status": "COMPLETE", "recipe": str(args.output.resolve()),
               "recipe_sha256": _sha256(args.output), "validation_testcase": str(normalized.resolve()),
               "dataset_root": str(args.dataset_root.resolve()), "defect_spec": str(defect_spec),
-              "nn_backbone": str(args.nn_backbone.resolve()), "anomaly_types": types,
+              "base_checkpoint": str(args.base_checkpoint.resolve()),
+              "base_checkpoint_format": "dcp",
+              "checkpoint_root": str(args.checkpoint_root.resolve()),
+              "anomaly_types": types,
               "validation_counts": {name: counts[name] for name in types},
               "metric": "Average.nn_score", "direction": "max"}
     metadata.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
@@ -187,7 +258,7 @@ def main() -> int:
     parser.add_argument("--validation-testcase", type=Path, required=True)
     parser.add_argument("--base-checkpoint", type=Path, required=True)
     parser.add_argument("--vae-path", type=Path, required=True)
-    parser.add_argument("--nn-backbone", type=Path, required=True)
+    parser.add_argument("--checkpoint-root", type=Path, required=True)
     parser.add_argument("--dataset-name", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--defect-spec", type=Path)

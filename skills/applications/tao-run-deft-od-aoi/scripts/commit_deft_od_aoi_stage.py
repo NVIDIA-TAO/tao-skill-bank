@@ -10,12 +10,16 @@ import hashlib
 import json
 import math
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deft_od_aoi_round_robin_contract import ADMISSION_INDEX_WIDTH
 
 NEXT = {"synthesis_bootstrap": "candidate_cache", "candidate_cache": "baseline_measurement",
         "baseline_measurement": "baseline_gaps",
@@ -64,33 +68,241 @@ def _nonzero_counts(value: Any) -> dict[str, int]:
     return result
 
 
-def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) -> None:
+def _validate_admission_index(artifact: dict[str, Any]) -> None:
+    index = np.load(artifact["path"], mmap_mode="r")
+    if index.ndim != 2 or index.shape[1] != ADMISSION_INDEX_WIDTH:
+        raise ValueError(f"invalid round-robin admission index shape {index.shape}")
+
+
+def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     manifest = _read_json(artifacts, "query_manifest")
     if manifest.get("status") != "COMPLETE" or int(manifest.get("iteration", -1)) != iteration:
         raise ValueError("query manifest is incomplete or for another iteration")
     counts = _nonzero_counts(manifest.get("query_counts"))
-    if set(manifest.get("enabled_roles") or []) != set(counts):
+    enabled = set(manifest.get("enabled_roles") or [])
+    if not enabled.issubset(counts):
         raise ValueError("enabled retrieval roles disagree with nonzero query counts")
+    role_status = manifest.get("role_status")
+    if not isinstance(role_status, dict) or set(role_status) != {"real", "clean"}:
+        raise ValueError("retrieval manifest lacks per-role exhaustion evidence")
+    selected_counts = None
+    if manifest.get("selection_strategy") == "round_robin_similarity":
+        report = _read_json(artifacts, "selection_report")
+        if (report.get("status") != "COMPLETE"
+                or int(report.get("iteration", -1)) != iteration
+                or report.get("selection_strategy") != "round_robin_similarity"):
+            raise ValueError("round-robin selection report is incomplete or mismatched")
+        selected_counts = report.get("selected_counts")
+        if not isinstance(selected_counts, dict):
+            raise ValueError("round-robin selection report has no selected counts")
+        if "admission_index" not in artifacts:
+            raise ValueError("round-robin retrieval requires artifact admission_index")
+        _validate_admission_index(artifacts["admission_index"])
+        if Path(str(report.get("admission_index"))).resolve() != Path(
+                artifacts["admission_index"]["path"]).resolve():
+            raise ValueError("round-robin selection report has a mismatched admission index")
+        selection_role_status = report.get("role_status")
+        if not isinstance(selection_role_status, dict):
+            raise ValueError("round-robin selection report has no role outcomes")
     for role, count in counts.items():
-        for suffix in ("queries", "query_embeddings", "mined"):
+        evidence = role_status.get(role) or {}
+        if int(evidence.get("query_count", -1)) != count:
+            raise ValueError(f"{role} role evidence disagrees with query count")
+        if evidence.get("status") not in {"READY", "EXHAUSTED"}:
+            raise ValueError(f"{role} role has invalid retrieval status")
+        if int(evidence.get("candidate_count", -1)) != (
+                int(evidence.get("excluded_count", -1))
+                + int(evidence.get("remaining_candidate_count", -1))):
+            raise ValueError(f"{role} exclusion audit does not reconcile")
+        for suffix in (("queries", "exclusions", "query_embeddings", "mined")
+                       if role in enabled else ("queries", "exclusions")):
             name = f"{role}_{suffix}"
             if name not in artifacts:
                 raise ValueError(f"iteration retrieval requires artifact {name}")
         if len(pd.read_parquet(artifacts[f"{role}_queries"]["path"])) != count:
             raise ValueError(f"{role} query count disagrees with its manifest")
-        if len(pd.read_parquet(artifacts[f"{role}_query_embeddings"]["path"])) != count:
+        exclusions = pd.read_parquet(artifacts[f"{role}_exclusions"]["path"])
+        if "filepath" not in exclusions or exclusions.filepath.nunique() != int(
+                evidence["excluded_count"]):
+            raise ValueError(f"{role} exclusion manifest disagrees with its audit")
+        if role in enabled and len(pd.read_parquet(
+                artifacts[f"{role}_query_embeddings"]["path"])) != count:
             raise ValueError(f"{role} embedding count disagrees with its manifest")
-        if pd.read_parquet(artifacts[f"{role}_mined"]["path"]).empty:
-            raise ValueError(f"{role} mining produced no selected candidates")
+        if role not in enabled:
+            continue
+        mined = pd.read_parquet(artifacts[f"{role}_mined"]["path"])
+        if selected_counts is not None and selected_counts.get(role) != len(mined):
+            raise ValueError(f"{role} selection count disagrees with its report")
+        if selected_counts is not None:
+            evidence = selection_role_status.get(role) or {}
+            expected = "SELECTED" if len(mined) else "NO_MATCHES"
+            if (evidence.get("status") != expected
+                    or evidence.get("selected_count") != len(mined)):
+                raise ValueError(f"{role} selection outcome disagrees with its artifact")
+        elif "filepath" not in mined:
+            raise ValueError(f"{role} mining output lacks filepath")
+    if bool(manifest.get("converged")) != (not enabled and not manifest.get("synthesis_pending")):
+        raise ValueError("retrieval convergence evidence is inconsistent")
+    return manifest
 
 
-def _validate_admission(iteration: int, artifacts: dict[str, dict[str, Any]]) -> None:
+def _validate_admission(iteration: int,
+                        artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     report = _read_json(artifacts, "admission_report")
     if report.get("status") != "COMPLETE" or int(report.get("iteration", -1)) != iteration:
         raise ValueError("admission report is incomplete or for another iteration")
+    if report.get("selection_strategy") == "round_robin_similarity":
+        if "admission_index" not in artifacts:
+            raise ValueError("round-robin admission requires artifact admission_index")
+        _validate_admission_index(artifacts["admission_index"])
+        if Path(str(report.get("admission_index"))).resolve() != Path(
+                artifacts["admission_index"]["path"]).resolve():
+            raise ValueError("round-robin admission report has a mismatched admission index")
+    admitted = report.get("admitted")
+    if not isinstance(admitted, dict):
+        raise ValueError("admission report has no admitted counts")
+    for role in ("real", "clean", "synthetic"):
+        count = admitted.get(role, 0)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError("admission report has invalid admitted counts")
+    outcomes = report.get("role_status")
+    valid_outcomes = isinstance(outcomes, dict)
+    for value in outcomes.values() if valid_outcomes else []:
+        count = value.get("selected_count") if isinstance(value, dict) else None
+        valid_outcomes = (
+            isinstance(count, int) and not isinstance(count, bool) and count >= 0
+            and value.get("status") == ("SELECTED" if count else "NO_MATCHES")
+        )
+        if not valid_outcomes:
+            break
+    if not valid_outcomes:
+        raise ValueError("admission report has invalid role outcomes")
+    admitted = report.get("admitted") or {}
+    expected_new = sum(int(admitted.get(role, -1)) for role in ("real", "clean", "synthetic"))
+    if expected_new < 0 or report.get("new_training_images") != expected_new:
+        raise ValueError("admission report new-image count does not reconcile")
+    return report
 
 
-def _validate_synthesis(iteration: int, artifacts: dict[str, dict[str, Any]]) -> None:
+def _synthetic_room(admission: dict[str, Any]) -> int:
+    evidence = admission.get("synthetic_admission")
+    room = evidence.get("available_room_before_admission") if isinstance(evidence, dict) else None
+    if isinstance(room, bool) or not isinstance(room, int) or room < 0:
+        raise ValueError("admission report lacks valid synthetic capacity")
+    return room
+
+
+def _committed_admission(state: dict[str, Any], iteration: int) -> dict[str, Any]:
+    previous = next((event for event in reversed(state.get("events", []))
+                     if event.get("stage") == "iteration_admission"
+                     and event.get("iteration") == iteration), {})
+    artifacts = previous.get("artifacts") or {}
+    if "admission_report" not in artifacts:
+        raise ValueError("synthesis requires committed initial admission evidence")
+    for artifact in artifacts.values():
+        path = Path(artifact["path"])
+        if not path.is_file() or _sha(path) != artifact["sha256"]:
+            raise ValueError("committed initial admission evidence changed")
+    return _validate_admission(iteration, artifacts)
+
+
+def _validate_budget_skip(state: dict[str, Any], iteration: int,
+                          artifacts: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], str]:
+    request = _read_json(artifacts, "synthesis_request")
+    admission = _validate_admission(iteration, artifacts)
+    if set(artifacts) - {"synthesis_request", "admission_report", "admission_index"}:
+        raise ValueError("a budget skip must not include generation artifacts")
+    previous = next((event for event in reversed(state.get("events", []))
+                     if event.get("stage") == "iteration_admission"
+                     and event.get("iteration") == iteration), {})
+    committed = (previous.get("artifacts") or {}).get("admission_report") or {}
+    supplied = artifacts["admission_report"]
+    if (committed.get("path") != supplied["path"]
+            or committed.get("sha256") != supplied["sha256"]):
+        raise ValueError("budget skip requires the committed admission report")
+    if (request.get("status") != "SKIPPED"
+            or request.get("reason") != "no_synthetic_budget"):
+        raise ValueError("budget skip must declare SKIPPED/no_synthetic_budget")
+    if request.get("selection_mode") != "generated_per_type_plan":
+        raise ValueError(
+            "no_synthetic_budget requires selection_mode=generated_per_type_plan; "
+            "all_eligible does not use pre-generation budgeting"
+        )
+    planning = request.get("planning")
+    names = ("new_image_budget", "images_per_fn", "eligible_fn_count",
+             "selected_fn_count", "planned_images", "unplanned_budget")
+    if (not isinstance(planning, dict)
+            or any(isinstance(planning.get(name), bool)
+                   or not isinstance(planning.get(name), int)
+                   or planning[name] < 0 for name in names)):
+        raise ValueError("budget skip has invalid planning counts")
+    if (request.get("fn_count") != 0
+            or request.get("eligible_fn_count") != planning["eligible_fn_count"]
+            or planning["eligible_fn_count"] < 1
+            or planning["new_image_budget"] != _synthetic_room(admission)
+            or not planning["new_image_budget"] < planning["images_per_fn"]
+            or planning["selected_fn_count"] != 0
+            or planning["planned_images"] != 0
+            or planning["unplanned_budget"] != planning["new_image_budget"]):
+        raise ValueError("budget skip has inconsistent whole-FN planning evidence")
+    return admission, "no_synthetic_budget"
+
+
+def _validate_synthesis(iteration: int, artifacts: dict[str, dict[str, Any]],
+                        state: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    if "synthesis_request" in artifacts:
+        request = _read_json(artifacts, "synthesis_request")
+        if request.get("reason") == "no_synthetic_budget":
+            return _validate_budget_skip(state, iteration, artifacts)
+    skip_contracts = {
+        "synthesis_request": "no_routed_false_negatives",
+        "synthesis_preparation": "no_eligible_false_negatives",
+    }
+    for name, reason in skip_contracts.items():
+        if name not in artifacts:
+            continue
+        report = _read_json(artifacts, name)
+        if set(artifacts) != {name}:
+            raise ValueError("a skipped synthesis stage accepts only its skip contract")
+        if report.get("status") != "SKIPPED" or report.get("reason") != reason:
+            raise ValueError(f"{name} is not a recognized synthesis skip contract")
+        if name == "synthesis_request":
+            by_dataset = report.get("skipped_unrouted_by_dataset")
+            skipped = int(report.get("skipped_unrouted_fn_count", -1))
+            observed = report.get("observed_dataset_ids")
+            routes = report.get("configured_route_keys")
+            if (int(report.get("fn_count", -1)) != 0 or not isinstance(by_dataset, dict)
+                    or sum(map(int, by_dataset.values())) != skipped
+                    or not isinstance(observed, list) or not isinstance(routes, list)
+                    or set(by_dataset) != set(observed) or set(observed) & set(routes)
+                    or not str(report.get("message") or "").strip()):
+                raise ValueError("skipped synthesis request has invalid FN counts")
+        else:
+            skipped = int(report.get("skipped_fn_count", -1))
+            skipped_fns, skip_counts = report.get("skipped_fns"), report.get("skip_counts")
+            if (int(report.get("eligible_fn_count", -1)) != 0 or skipped < 1
+                    or int(report.get("selection_candidate_fn_count", -1)) != skipped
+                    or not isinstance(skipped_fns, list) or len(skipped_fns) != skipped
+                    or not isinstance(skip_counts, dict)
+                    or sum(map(int, skip_counts.values())) != skipped):
+                raise ValueError("skipped synthesis preparation has invalid FN counts")
+            clean_reference_skips = int(skip_counts.get("no_clean_reference_images", 0))
+            if clean_reference_skips:
+                warnings = report.get("warnings")
+                clean_reference_rows = [
+                    row for row in skipped_fns
+                    if isinstance(row, dict)
+                    and row.get("reason") == "no_clean_reference_images"
+                ]
+                if (len(clean_reference_rows) != clean_reference_skips
+                        or not isinstance(warnings, list)
+                        or not any(warning.get("code") == "no_clean_reference_images"
+                                   and int(warning.get("fn_count", -1))
+                                   == clean_reference_skips
+                                   and str(warning.get("message") or "").strip()
+                                   for warning in warnings if isinstance(warning, dict))):
+                    raise ValueError("no-clean-reference skip lacks typed warning evidence")
+        return report, None
     generation = _read_json(artifacts, "generation_report")
     admission = _read_json(artifacts, "admission_report")
     if generation.get("status") != "COMPLETE":
@@ -112,10 +324,29 @@ def _validate_synthesis(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
         blocked += group_blocked
     if int(generation.get("generated", -1)) != generated or generated + blocked != requested:
         raise ValueError("generation totals disagree with dataset groups")
-    _validate_admission(iteration, artifacts)
+    report = _validate_admission(iteration, artifacts)
     admitted = int((admission.get("admitted") or {}).get("synthetic", -1))
     if admitted < 0 or admitted > generated:
         raise ValueError("synthetic admission count exceeds generated images")
+    return report, None
+
+
+def _retrieval_had_output(state: dict[str, Any], iteration: int) -> bool | None:
+    for event in reversed(state.get("events", [])):
+        if event.get("stage") != "iteration_retrieval" or event.get("iteration") != iteration:
+            continue
+        artifact = (event.get("artifacts") or {}).get("query_manifest")
+        if not artifact:
+            raise ValueError("synthesis cannot verify retrieval availability")
+        path = Path(str(artifact.get("path") or ""))
+        if not path.is_file() or _sha(path) != artifact.get("sha256"):
+            raise ValueError("committed retrieval manifest failed integrity validation")
+        manifest = json.loads(path.read_text())
+        enabled = manifest.get("enabled_roles")
+        if not isinstance(enabled, list):
+            raise ValueError("committed retrieval manifest lacks enabled roles")
+        return bool(enabled)
+    return None
 
 
 def _validate_training(artifacts: dict[str, dict[str, Any]]) -> None:
@@ -228,12 +459,20 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         artifacts[name] = {"path": str(path), "sha256": _sha(path), "bytes": path.stat().st_size}
     if not artifacts:
         raise ValueError("at least one completion artifact is required")
+    retrieval = None
+    synthesis = None
+    admission = None
+    synthesis_skip_reason = None
     if stage == "iteration_retrieval":
-        _validate_retrieval(iteration, artifacts)
+        retrieval = _validate_retrieval(iteration, artifacts)
     elif stage == "iteration_admission":
-        _validate_admission(iteration, artifacts)
+        admission = _validate_admission(iteration, artifacts)
     elif stage == "iteration_synthesis":
-        _validate_synthesis(iteration, artifacts)
+        synthesis, synthesis_skip_reason = _validate_synthesis(
+            iteration, artifacts, state
+        )
+        if synthesis.get("status") == "COMPLETE":
+            admission = synthesis
     elif stage == "iteration_training":
         _validate_training(artifacts)
     elif stage == "iteration_measurement":
@@ -241,8 +480,37 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
     elif stage == "iteration_gaps":
         _validate_gaps(artifacts)
     next_stage, status = NEXT.get(stage), "RUNNING"
+    synthesis_decision = None
+    if stage == "iteration_retrieval" and retrieval and retrieval.get("converged"):
+        next_stage, status = None, "COMPLETE"
+        state["completion_reason"] = "mining_exhausted"
+    if (stage == "iteration_synthesis" and synthesis
+            and synthesis.get("status") == "SKIPPED"
+            and _retrieval_had_output(state, iteration) is False):
+        next_stage, status = None, "COMPLETE"
+        state["completion_reason"] = "all_producers_exhausted"
     if stage == "iteration_admission" and state.get("synthesis_enabled"):
-        next_stage = "iteration_synthesis"
+        room = _synthetic_room(admission)
+        if room:
+            next_stage = "iteration_synthesis"
+        else:
+            synthesis_decision = {"status": "SKIPPED", "reason": "no_synthetic_budget",
+                                  "available_room_before_admission": room}
+    if synthesis_skip_reason:
+        synthesis_decision = {"status": "SKIPPED", "reason": synthesis_skip_reason,
+                              "available_room_before_admission": _synthetic_room(admission)}
+    if stage == "iteration_synthesis" and admission and not admission["new_training_images"]:
+        admission = _committed_admission(state, iteration)
+    if (next_stage != "iteration_synthesis"
+            and stage in {"iteration_admission", "iteration_synthesis"} and admission and not int(
+                admission["new_training_images"])):
+        next_stage, status = None, "COMPLETE"
+        outcomes = list(admission["role_status"].values())
+        state["completion_reason"] = (
+            "retrieval_no_matches"
+            if outcomes and all(row["status"] == "NO_MATCHES" for row in outcomes)
+            else "retrieval_no_new_data"
+        )
     if stage == "iteration_gaps":
         if iteration >= int(state["max_iterations"]):
             next_stage, status = None, "COMPLETE"
@@ -252,6 +520,8 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
                  next_stage=next_stage)
     event = {"stage": stage, "iteration": iteration, "artifacts": artifacts,
              "committed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    if synthesis_decision:
+        event["synthesis_decision"] = synthesis_decision
     state.setdefault("events", []).append(event)
     temporary = state_path.with_suffix(state_path.suffix + ".tmp")
     temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
@@ -269,7 +539,10 @@ def main() -> int:
     parser.add_argument("--artifact", action="append", default=[])
     args = parser.parse_args()
     result = commit(args.state.resolve(), args.stage, args.iteration, args.artifact)
-    print(json.dumps({"status": result["status"], "next_stage": result["next_stage"]}))
+    summary = {"status": result["status"], "next_stage": result["next_stage"]}
+    if result.get("completion_reason"):
+        summary["completion_reason"] = result["completion_reason"]
+    print(json.dumps(summary))
     return 0
 
 

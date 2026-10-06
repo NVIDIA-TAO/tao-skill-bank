@@ -15,7 +15,7 @@ compatibility: Requires docker + nvidia-container-toolkit and one or more CUDA G
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
-allowed-tools: Read Skill Task Bash Write
+allowed-tools: Read Skill Bash Write
 tags:
 - application
 - workflow
@@ -127,13 +127,13 @@ Never ask for or read credential values. Check only whether the required environ
 Full detail in `references/pipeline-and-state.md`.
 
 1. **Pre-Flight.** Run every check in `references/preflight.md`. Resolve workspace, specs, annotations, the zero-shot checkpoint, the source-pool embedding parquet, and container images. Hard stop only on missing input you cannot resolve yourself.
-2. **Prep (once, before baseline).** If the source pool is not already labeled and embedded, pseudo-label it with Co-DETR, fold the predictions onto the user's target classes, convert KITTI→COCO→ODVG, and embed the pool. Idempotent — each artifact is skipped when it already exists. See `references/prep-source-pool.md`.
+2. **Prep (once, before baseline).** If the source pool is not already labeled and embedded, pseudo-label it with Co-DETR, fold the predictions onto the user's target classes, convert KITTI→COCO→ODVG, and embed the pool. Skip any step whose output already exists — no script does this for you, so check before each step. See `references/prep-source-pool.md`.
 3. **Baseline (iter_0) — no training.** Run `inference` with the supplied zero-shot / pretrained checkpoint, then `kpi_analyze`. Seed `train_grounding_dino.yaml` from the user's template for later iterations to extend.
 4. **Iterate.** For each iteration 1..`max_iterations`, run the seven stages in order:
    `gap_analysis` → `embed` → `mine` → `stage` → `train` → `inference` → `kpi_analyze`.
    Each iteration's `gap_analysis` consumes the **previous** phase's inference labels. Between stages run the audit and follow its one-line disk-backed next action.
 5. **Stop** when `max_iterations` is reached or a hard-stop gate fires. mAP is reported, not gated — the loop does not early-exit on a metric target.
-6. **Render** `results/DEFT_Loop_Report.md` after each completed iteration and once more at loop end by spawning the `reporter` subagent (`agents/reporter.md`). Never render inline.
+6. **The report renders itself.** `results/DEFT_Loop_Report.md` is written by `init_deft_state.py` and re-rendered by every accepted `commit_stage.py` call. Do not spawn a subagent for it and do not compose it by hand; to refresh it out of band, run `scripts/render_report.py --results-dir "${RESULTS_DIR}"`.
 
 All stages run inline in the parent context. Prefer invoking the underlying `tao-skill-bank:*` skills via the Skill tool, layering loop conventions on top via the matching `references/*.md` overlay.
 
@@ -169,7 +169,7 @@ If an *overlay* is missing, stop and ask the user to reinstall the plugin — th
 | One-time source-pool prep (pseudo-label, remap, convert, embed) | `references/prep-source-pool.md` |
 | Pre-Flight checks, defaults, Summary template | `references/preflight.md` |
 | Pipeline stages, state schema, loop-end sequence | `references/pipeline-and-state.md` |
-| Bundled scripts, glue, reporter agent, stage table | `references/scripts-and-agents.md` |
+| Bundled scripts, glue, the report renderer, stage table | `references/scripts-and-agents.md` |
 
 **`max_iterations` defaults to `1`** — one mine, train and score pass, the smallest run that yields a comparison against the baseline. Confirm it with the user when they have not said how many iterations they want; an unattended run takes the default rather than stopping to ask.
 

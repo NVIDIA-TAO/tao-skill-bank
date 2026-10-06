@@ -5,9 +5,6 @@ execution_environment: container
 gpu_spec_key: num_gpus
 required_credentials: []
 optional_credentials:
-- name: HF_TOKEN
-  source: env_var
-  only_when: a required Hugging Face asset is not already cached
 - name: NGC_KEY
   source: env_var
   only_when: the selected platform requires authenticated access to nvcr.io
@@ -21,14 +18,17 @@ actions:
       checkpoint: {type: file, optional: true}
       recipe: {type: file, optional: true}
       base_checkpoint: {type: folder}
-      hf_cache: {type: folder, optional: true}
+      checkpoint_root:
+        type: folder
+        container_path: /workspace/paidf-anomalygen/checkpoints
       published_root: {type: folder, optional: true}
+      guardrail: {type: bool}
     outputs:
       results_dir: {type: folder}
-      validation_summary: {type: file}
-      native_coco: {type: file}
-      binary_coco: {type: file}
-      status: {type: file}
+      validation_summary: {type: file, relative_path: validation_summary.json}
+      native_coco: {type: file, relative_path: pseudo_labels/coco_annotations.json}
+      binary_coco: {type: file, relative_path: pseudo_labels/coco_annotations_od_defect.json}
+      status: {type: file, relative_path: status.json}
     upload_excludes:
     - inputs/
     args:
@@ -41,6 +41,8 @@ actions:
       published_root: --published-root {published_root}
       datasets: --datasets {datasets}
       num_gpus: --num-gpus {num_gpus}
-      hf_cache: --hf-cache {hf_cache}
+      checkpoint_root: --checkpoint-root {checkpoint_root}
+      guardrail: --guardrail/--no-guardrail {guardrail}
     defaults:
       num_gpus: 1
+      guardrail: true

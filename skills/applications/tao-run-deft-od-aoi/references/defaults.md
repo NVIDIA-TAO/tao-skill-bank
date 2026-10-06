@@ -33,9 +33,15 @@ defaults are:
 - match IoU `0.5`;
 - background-like FP boundary below `0.05`;
 - SigLIP `google/siglip-base-patch16-224`;
+- square-context preprocessing, with `tight_context` available for the
+  aspect-ratio-preserving crop behavior;
 - defect context scale `1.5`;
+- square-context output size `224`;
 - clean grids `[1, 2]`;
 - initial minimum similarity `-1.0`;
+- retrieval selection strategy `round_robin_similarity`, with
+  `max_similarity` available for global maximum-similarity ranking;
+- round-robin audit shortlist floor `20` candidates per query;
 - real mining factor range `1..6`;
 - clean dose `2` per routed FP and cumulative cap `1.0` per admitted real;
 - RT-DETR train shape of four GPUs, batch size eight, base LR `1e-4`, and

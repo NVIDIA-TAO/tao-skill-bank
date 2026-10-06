@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,81 @@ from PIL import Image
 
 
 BRANCHES = {"fn_mask", "same_type_sampled_mask"}
+AMP_HF_REPOS = ("Qwen/Qwen3-VL-8B-Instruct",)
+
+
+def _hf_hub(root: Path) -> Path:
+    return root / "hub" if (root / "hub").is_dir() else root
+
+
+def _complete_transformers_model(directory: Path) -> bool:
+    if not (directory / "config.json").is_file():
+        return False
+    for index_name in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+        index = directory / index_name
+        if not index.is_file():
+            continue
+        try:
+            weight_map = json.loads(index.read_text()).get("weight_map", {})
+        except (OSError, json.JSONDecodeError):
+            return False
+        return bool(weight_map) and all(
+            (directory / filename).is_file() for filename in set(weight_map.values())
+        )
+    return any(directory.glob("*.safetensors")) or any(
+        directory.glob("pytorch_model*.bin")
+    )
+
+
+def _configured_model_available(root: Path, hub: Path, model_id: str) -> bool:
+    configured = Path(model_id).expanduser()
+    local = configured.resolve() if configured.is_absolute() else root / configured
+    try:
+        local.resolve().relative_to(root)
+    except ValueError:
+        local = root / "__outside_checkpoint_root__"
+    if _complete_transformers_model(local):
+        return True
+    snapshots = hub / f"models--{model_id.replace('/', '--')}" / "snapshots"
+    return snapshots.is_dir() and any(
+        child.is_dir() and _complete_transformers_model(child)
+        for child in snapshots.iterdir()
+    )
+
+
+def _validate_checkpoint_root(
+    root: Path, repo: Path, model_id: str = "nvidia/Cosmos3-Nano"
+) -> Path:
+    resolved = root.expanduser().resolve()
+    image_root = (repo / "checkpoints").resolve()
+    if resolved != image_root:
+        raise ValueError(
+            f"checkpoint root must be mounted at {repo}/checkpoints: {resolved}"
+        )
+    hf_home = resolved / "hf"
+    hub = _hf_hub(hf_home)
+    missing = []
+    if not model_id.strip():
+        raise ValueError("AMP model_id must be nonempty")
+    for name in AMP_HF_REPOS:
+        directory = hub / f"models--{name.replace('/', '--')}"
+        if not (directory / "blobs").is_dir() or not (directory / "snapshots").is_dir():
+            missing.append(name)
+    if not _configured_model_available(resolved, hub, model_id):
+        missing.append(
+            f"{model_id} (complete checkpoints/{model_id} or Hugging Face snapshot)"
+        )
+    if missing:
+        raise FileNotFoundError(
+            "checkpoint root lacks required AMP model assets: "
+            + ", ".join(missing)
+        )
+    sam2 = (
+        resolved / "facebook" / "sam2.1-hiera-large" / "sam2.1_hiera_large.pt"
+    )
+    if not sam2.is_file():
+        raise FileNotFoundError(f"checkpoint root lacks SAM2.1 checkpoint: {sam2}")
+    return hf_home
 
 
 def _matrix(values: pd.Series) -> np.ndarray:
@@ -35,6 +111,35 @@ def _matrix(values: pd.Series) -> np.ndarray:
 
 def _pair_id(fn_id: str, clean: str) -> str:
     return "pair-" + hashlib.sha256(f"{fn_id}\0{clean}".encode()).hexdigest()[:16]
+
+
+def _rank_clean_images(
+    clean: pd.DataFrame,
+    clean_vectors: np.ndarray,
+    query: pd.Series,
+    query_vector: np.ndarray,
+    topn: int,
+) -> list[tuple[str, float]]:
+    eligible = clean.pool_key.astype(str) == str(query.pool_key)
+    if "anomaly_type_eligibility" in clean.columns:
+        eligible &= (
+            clean.anomaly_type_eligibility.astype(str) == str(query.anomaly_type)
+        )
+    pool = clean.index[eligible].to_numpy()
+    if not len(pool):
+        raise ValueError(
+            "no clean embeddings for "
+            f"pool_key={query.pool_key}, anomaly_type={query.anomaly_type}"
+        )
+
+    scores = clean_vectors[pool] @ query_vector
+    best_by_filepath: dict[str, float] = {}
+    for index, score in zip(pool, scores, strict=True):
+        filepath = str(clean.loc[int(index), "filepath"])
+        value = float(score)
+        if filepath not in best_by_filepath or value > best_by_filepath[filepath]:
+            best_by_filepath[filepath] = value
+    return sorted(best_by_filepath.items(), key=lambda item: (-item[1], item[0]))[:topn]
 
 
 def _validate_amp_mask(path: Path) -> None:
@@ -84,16 +189,13 @@ def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
 
     candidates, requests = [], []
     for position, query in queries.reset_index(drop=True).iterrows():
-        pool = clean.index[clean.pool_key.astype(str) == str(query.pool_key)].to_numpy()
-        if not len(pool):
-            raise ValueError(f"no clean embeddings for pool_key={query.pool_key}")
-        scores = clean_vectors[pool] @ query_vectors[position]
+        ranked = _rank_clean_images(
+            clean, clean_vectors, query, query_vectors[position], topn
+        )
         mask_rows = masks[masks.fn_id == query.fn_id]
         if set(mask_rows.branch.astype(str)) != BRANCHES or len(mask_rows) != 2:
             raise ValueError(f"FN {query.fn_id} needs exactly two mask branches")
-        for rank, local in enumerate(np.argsort(-scores, kind="stable")[:topn], start=1):
-            clean_path = str(clean.loc[int(pool[local]), "filepath"])
-            score = float(scores[local])
+        for rank, (clean_path, score) in enumerate(ranked, start=1):
             reason = "below_similarity_floor" if score < floor else (
                 "prior_iteration_exclusion" if clean_path in excluded else ""
             )
@@ -136,30 +238,32 @@ def _publish_paths(amp_dir: Path, runtime_root: Path, published_root: Path) -> N
             path.write_text(value.replace(source, destination), encoding="utf-8")
 
 
-def run(config_path: Path, root: Path, sam2_checkpoint: Path,
-        published_root: Path | None = None) -> dict[str, Any]:
-    if not sam2_checkpoint.is_file():
-        raise FileNotFoundError(f"SAM2.1 checkpoint is missing: {sam2_checkpoint}")
+def run(root: Path, checkpoint_root: Path, pool_dataset_root: Path,
+        published_root: Path | None = None,
+        repo: Path = Path("/workspace/paidf-anomalygen")) -> dict[str, Any]:
     frozen = root / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
-    if config_path.read_bytes() != frozen.read_bytes():
-        raise ValueError("config differs from the frozen preparation snapshot")
     config = yaml.safe_load(frozen.read_text())
+    pool = pool_dataset_root.expanduser().resolve()
+    expected_pool = Path(config["pool_dataset_root"]).expanduser().resolve()
+    if not pool.is_dir() or expected_pool != pool:
+        raise ValueError(
+            "pool must be remounted at the compute path frozen during preparation: "
+            f"expected {expected_pool}, received {pool}"
+        )
     report = plan(root, config)
     amp = config.get("amp") or {}
-    bootstrap = (
-        "import runpy,sys; "
-        "from anomalygen.auto_mask_placement.roi_generation import model; "
-        "model._SAM2_CKPT=sys.argv.pop(1); "
-        "runpy.run_module('anomalygen.scripts.auto_mask_placement.roi_place', "
-        "run_name='__main__')"
-    )
-    command = [sys.executable, "-c", bootstrap, str(sam2_checkpoint.resolve()),
+    model_id = str(amp.get("model_id", "nvidia/Cosmos3-Nano"))
+    hf_home = _validate_checkpoint_root(checkpoint_root, repo, model_id)
+    command = [sys.executable, "-m", "anomalygen.scripts.auto_mask_placement.roi_place",
                "--input_pair_path", str(root / "amp" / "amp_samples.json"),
                "--defect_desc", str(Path(config["defect_spec"]).resolve()),
                "--output_dir", str(root / "amp"), "--n_seeds", "1",
                "--seed", str(int(amp.get("seed", 43))),
-               "--model_id", str(amp.get("model_id", "nvidia/Cosmos3-Nano"))]
-    subprocess.run(command, check=True, stdout=sys.stderr)
+               "--model_id", model_id]
+    env = os.environ.copy()
+    env.update(HF_HOME=str(hf_home), HF_HUB_CACHE=str(_hf_hub(hf_home)),
+               HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
+    subprocess.run(command, check=True, stdout=sys.stderr, env=env)
     published_root = (published_root or root).resolve()
     _publish_paths(root / "amp", root, published_root)
     testcase = root / "amp" / "testcase.jsonl"
@@ -171,13 +275,15 @@ def run(config_path: Path, root: Path, sam2_checkpoint: Path,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True)
     parser.add_argument("--prepared-root", required=True)
     parser.add_argument("--published-root", type=Path)
-    parser.add_argument("--sam2-checkpoint", type=Path, required=True)
+    parser.add_argument("--pool-dataset-root", type=Path, required=True)
+    parser.add_argument("--checkpoint-root", type=Path, required=True)
+    parser.add_argument("--repo", type=Path, default=Path("/workspace/paidf-anomalygen"))
     args = parser.parse_args()
-    result = run(Path(args.config).resolve(), Path(args.prepared_root).resolve(),
-                 args.sam2_checkpoint.resolve(), args.published_root)
+    result = run(Path(args.prepared_root).resolve(), args.checkpoint_root.resolve(),
+                 args.pool_dataset_root.resolve(), args.published_root,
+                 args.repo.resolve())
     print(json.dumps(result, sort_keys=True))
     return 0
 

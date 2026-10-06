@@ -27,6 +27,15 @@ Each validation row must contain `image_filename`, `mask_filename`, and
 resolves supported relative paths, verifies every file, and emits a normalized
 validation JSONL with absolute paths.
 
+All dataset and validation images and masks must use `.jpg`, `.jpeg`, or
+`.png`, matching the AnomalyGenNext 1.1 runtime loader. The builder rejects
+`.bmp`, `.tif`, `.tiff`, and `.webp` instead of allowing preparation to pass
+and failing later in `ValidationKPI`.
+
+Masks must contain exactly the binary pixel values `0` and `255`.
+Empty/all-zero masks, full/all-255 masks, values such as `1`, and soft
+grayscale edges are invalid.
+
 ## Type and recipe identity
 
 The recipe's `anomaly_types` order defines model class IDs. Resolve the order
@@ -40,7 +49,15 @@ the verified values. Preserve the emitted canonical recipe beside the selected
 adapter; generation must use that pair unchanged.
 
 The dataset root, defect specification, validation testcase, optional template,
-Cosmos3-Nano checkpoint, VAE, and DINOv2 backbone may live at separate absolute
-paths. The selected platform must expose all of them to the container. The
-DINOv2 directory needs a Transformers-compatible `config.json` and model
-weights.
+Cosmos3-Nano checkpoint, VAE, and checkpoint root may live at separate absolute
+paths. The Cosmos3-Nano checkpoint must be a DCP directory with
+`checkpoint.json`, `model/.metadata`, and one or more `model/*.distcp` shards.
+If the official checkpoint is staged in Hugging Face format, use the pinned
+image's `cosmos_framework.scripts.convert_model_to_dcp` command documented in
+`container-runtime.md`, then pass its persistent output directory as
+`--base-checkpoint`.
+The selected platform must expose all of them to the container. The
+checkpoint root must be mounted over the image's complete `checkpoints/` tree
+and contain the required Qwen tokenizer model assets under `hf/` plus a
+Transformers-compatible
+`facebook/dinov2-large/config.json` and model weights.

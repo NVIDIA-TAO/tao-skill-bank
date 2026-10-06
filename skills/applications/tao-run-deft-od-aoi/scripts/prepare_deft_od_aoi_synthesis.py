@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -14,8 +17,91 @@ from typing import Any
 import pandas as pd
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deft_od_aoi_synthesis_contract import validate_synthesis_contract
+
 
 FIELDS = ("dataset_id", "texture_id", "defect_class", "fn_mask_source")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _selection_contract(
+    synthesis: dict[str, Any], iteration: int | None
+) -> tuple[str, dict[str, int] | None, dict[str, Any] | None]:
+    mode, _ = validate_synthesis_contract(synthesis)
+    if mode == "all_eligible":
+        return mode, None, None
+    if mode == "generated_per_type_plan":
+        if iteration is None or iteration < 1:
+            raise ValueError("generated_per_type_plan requires a positive --iteration")
+        return mode, None, None
+    raise AssertionError(f"unvalidated synthesis.fn_selection.mode: {mode}")
+
+
+def _generated_plan(
+    synthesis: dict[str, Any], rows: list[dict[str, Any]], real_coco: Path,
+    output: Path, iteration: int,
+) -> tuple[dict[str, int] | None, dict[str, Any] | None, dict[str, Any]]:
+    if not real_coco.is_file():
+        raise ValueError(f"generated_per_type_plan needs an admitted real COCO: {real_coco}")
+    document = json.loads(real_coco.read_text())
+    by_kind = Counter(str(row.get("deft_kind") or "") for row in document.get("images", []))
+    real_count = by_kind["real_defect"]
+    prior_synthetic = by_kind["synthetic_defect"]
+    _, images_per_fn = validate_synthesis_contract(synthesis)
+    fraction = float(synthesis["cumulative_fraction_of_total_defects"])
+    cumulative_limit = int(fraction / (1.0 - fraction) * real_count)
+    image_budget = max(0, cumulative_limit - prior_synthetic)
+    fn_budget = image_budget // images_per_fn
+    available = Counter(str(row["anomaly_type"]) for row in rows)
+    selected_total = min(fn_budget, sum(available.values()))
+    allocation = {name: 0 for name in available}
+    if selected_total:
+        total_available = sum(available.values())
+        exact = {
+            name: selected_total * count / total_available
+            for name, count in available.items()
+        }
+        allocation = {name: min(available[name], math.floor(value))
+                      for name, value in exact.items()}
+        remaining = selected_total - sum(allocation.values())
+        for name in sorted(available, key=lambda item: (-(exact[item] % 1), item)):
+            if not remaining:
+                break
+            if allocation[name] < available[name]:
+                allocation[name] += 1
+                remaining -= 1
+    plan = {name: allocation[name] * images_per_fn for name in sorted(allocation)}
+    plan = {name: count for name, count in plan.items() if count}
+    evidence = {
+        "basis": "fraction_of_total", "fraction": fraction,
+        "cumulative_real_images": real_count,
+        "prior_synthetic_images": prior_synthetic,
+        "cumulative_synthetic_limit": cumulative_limit,
+        "new_image_budget": image_budget,
+        "images_per_fn": images_per_fn,
+        "eligible_fn_count": sum(available.values()),
+        "selected_fn_count": sum(allocation.values()),
+        "planned_images": sum(plan.values()),
+        "unplanned_budget": image_budget - sum(plan.values()),
+    }
+    if not plan:
+        return None, None, evidence
+    path = output / "synthetic_plan.json"
+    path.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n")
+    contract = {
+        "iteration": iteration, "path": str(path.resolve()), "sha256": _sha256(path),
+        "counts": plan, "images_per_fn": images_per_fn, "generated": True,
+        "budget": evidence,
+    }
+    return plan, contract, evidence
 
 
 def _source(images: Path, row: dict[str, Any]) -> Path:
@@ -59,13 +145,17 @@ def _iou(left: tuple[float, ...], annotation: dict[str, Any]) -> float:
     return intersection / union if union else 0.0
 
 
-def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any]:
+def prepare(
+    policy_path: Path, strict_gaps: Path, output: Path, iteration: int | None = None,
+    real_coco: Path | None = None,
+) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
     synthesis = policy["synthesis"]
     if not synthesis.get("enabled"):
         raise ValueError("synthesis is disabled in the frozen policy")
+    selection_mode, plan, plan_contract = _selection_contract(synthesis, iteration)
     routes = synthesis.get("routes") or {}
     pool, defect_spec = Path(str(synthesis["pool_dataset_root"])), Path(str(synthesis["defect_spec"]))
     if not pool.is_dir() or not defect_spec.is_file() or not routes:
@@ -86,6 +176,7 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
         raise ValueError(f"strict gaps lack {sorted(required - set(gaps))}")
     rows = []
     skipped_unrouted: Counter[str] = Counter()
+    observed_datasets: set[str] = set()
     for gap in gaps[gaps.gap_type.astype(str).str.upper().eq("FN")].to_dict("records"):
         image_id, box = str(gap["image_id"]), _xyxy(gap["bbox"])
         if image_id not in images:
@@ -104,7 +195,12 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
             metadata.update({key: source[key] for key in FIELDS if key in source})
         dataset = str(metadata.get("dataset_id") or "").strip()
         if not dataset:
-            raise ValueError(f"FN metadata is incomplete for {image_id}: ['dataset_id']")
+            raise ValueError(
+                f"KPI FN {image_id} has no dataset_id; every KPI sample must retain its "
+                "real nonempty dataset_id. synthesis.routes is an allowlist, and a missing "
+                "dataset_id is malformed metadata, not a synthesis opt-out"
+            )
+        observed_datasets.add(dataset)
         if dataset not in routes:
             skipped_unrouted[dataset] += 1
             continue
@@ -125,9 +221,67 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
             raise ValueError(f"gap filepath does not match frozen KPI image: {image_id}")
         rows.append({**gap, "filepath": str(source_path), "split": "kpi", **metadata,
                      "anomaly_type": f"{metadata['texture_id']}+{metadata['defect_class']}"})
-    if not rows:
-        raise ValueError("strict gaps contain no synthesis-eligible false negatives")
     output.mkdir(parents=True)
+    if not rows:
+        configured_routes = sorted(map(str, routes))
+        skipped_count = sum(skipped_unrouted.values())
+        report = {
+            "status": "SKIPPED", "reason": "no_routed_false_negatives", "fn_count": 0,
+            "skipped_unrouted_fn_count": skipped_count,
+            "skipped_unrouted_by_dataset": dict(sorted(skipped_unrouted.items())),
+            "observed_dataset_ids": sorted(observed_datasets),
+            "configured_route_keys": configured_routes,
+            "message": (
+                f"Skipped synthesis: all {skipped_count} strict false negatives use "
+                f"unrouted dataset IDs {sorted(observed_datasets)}; configured synthesis "
+                f"routes are {configured_routes}."
+            ),
+            "config": "",
+        }
+        (output / "synthesis_request.json").write_text(json.dumps(report, indent=2) + "\n")
+        return report
+    eligible_count = len(rows)
+    per_type: dict[str, dict[str, int]] = {}
+    planning = None
+    if selection_mode == "generated_per_type_plan":
+        if real_coco is None or iteration is None:
+            raise ValueError("generated_per_type_plan requires --real-coco and --iteration")
+        plan, plan_contract, planning = _generated_plan(
+            synthesis, rows, real_coco, output, iteration
+        )
+        if plan is None:
+            report = {
+                "status": "SKIPPED", "reason": "no_synthetic_budget", "fn_count": 0,
+                "eligible_fn_count": eligible_count, "selection_mode": selection_mode,
+                "planning": planning, "config": "",
+            }
+            (output / "synthesis_request.json").write_text(json.dumps(report, indent=2) + "\n")
+            return report
+    if plan is not None and plan_contract is not None:
+        frame = pd.DataFrame(rows)
+        frame["_image_sort"] = frame["image_id"].map(str)
+        frame["_bbox_sort"] = frame["bbox"].map(
+            lambda value: json.dumps([float(item) for item in value], separators=(",", ":"))
+        )
+        selected: list[pd.DataFrame] = []
+        images_per_fn = int(plan_contract["images_per_fn"])
+        for anomaly_type, requested in plan.items():
+            available = frame[frame.anomaly_type.astype(str).eq(anomaly_type)].sort_values(
+                ["_image_sort", "filepath", "_bbox_sort"], kind="stable"
+            )
+            selected_count = min(len(available), requested // images_per_fn)
+            if selected_count:
+                selected.append(available.head(selected_count))
+            frozen_rows = selected_count * images_per_fn
+            per_type[anomaly_type] = {
+                "eligible_fn_count": int(len(available)),
+                "selected_fn_count": selected_count,
+                "requested_images": requested,
+                "frozen_generator_rows": frozen_rows,
+            }
+        rows = pd.concat(selected, ignore_index=True).drop(
+            columns=["_image_sort", "_bbox_sort"]
+        ).to_dict("records")
     normalized = output / "normalized_fn_gaps.parquet"
     pd.DataFrame(rows).to_parquet(normalized, index=False)
     config = {"source_tag": "deft_od_aoi", "gap_parquet": str(normalized),
@@ -145,15 +299,36 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
                             "min_similarity": float(synthesis["min_similarity"]),
                             "prior_clean_exclusion_manifest": ""},
               "amp": {"model_id": synthesis["amp_model_id"], "seed": 43}}
+    if plan_contract is not None:
+        config["synthetic_plan"] = plan_contract
     config_path = output / "anomalygen_filtering.yaml"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
     report = {
         "status": "COMPLETE",
         "fn_count": len(rows),
+        "eligible_fn_count": eligible_count,
+        "selection_mode": selection_mode,
         "skipped_unrouted_fn_count": sum(skipped_unrouted.values()),
         "skipped_unrouted_by_dataset": dict(sorted(skipped_unrouted.items())),
+        "observed_dataset_ids": sorted(observed_datasets),
+        "configured_route_keys": sorted(map(str, routes)),
         "config": str(config_path.resolve()),
     }
+    if plan_contract is not None:
+        requested_images = sum(plan.values()) if plan is not None else 0
+        frozen_generator_rows = sum(
+            row["frozen_generator_rows"] for row in per_type.values()
+        )
+        if frozen_generator_rows != requested_images:
+            raise ValueError("frozen generator rows disagree with the synthetic plan")
+        report.update({
+            "requested_images": requested_images,
+            "frozen_generator_rows": frozen_generator_rows,
+            "synthetic_plan": plan_contract,
+            "per_type": per_type,
+        })
+    if planning is not None:
+        report["planning"] = planning
     (output / "synthesis_request.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
@@ -162,9 +337,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--strict-gaps", type=Path, required=True)
+    parser.add_argument("--iteration", type=int)
+    parser.add_argument("--real-coco", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    result = prepare(args.policy.resolve(), args.strict_gaps.resolve(), args.output_dir.resolve())
+    result = prepare(
+        args.policy.resolve(), args.strict_gaps.resolve(), args.output_dir.resolve(),
+        args.iteration, args.real_coco.resolve() if args.real_coco else None,
+    )
     print(json.dumps(result, sort_keys=True))
     return 0
 

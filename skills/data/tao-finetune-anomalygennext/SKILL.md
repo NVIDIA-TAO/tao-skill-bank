@@ -5,7 +5,7 @@ description: >-
   and prepare a canonical texture fine-tuning recipe. Use when AnomalyGenNext
   task weights do not yet exist. Do not use for ordinary defect generation.
 license: Apache-2.0
-compatibility: Requires the AnomalyGenNext 1.1 container and its model checkpoints.
+compatibility: Requires the AnomalyGenNext 1.1 container, Pillow, and its model checkpoints.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -33,11 +33,37 @@ DATASET/
 VALIDATION/testcase.jsonl
 ```
 
-Also supply the Cosmos3-Nano base checkpoint directory, `Wan2.2_VAE.pth`, and
-a local `facebook/dinov2-large` checkpoint directory. The validation JSONL must
-contain `image_filename`, `mask_filename`, and `anomaly_type`; each trained
+Also supply a DCP-format Cosmos3-Nano base checkpoint directory containing
+`checkpoint.json`, `model/.metadata`, and at least one `model/*.distcp` shard,
+`Wan2.2_VAE.pth`, and
+a complete checkpoint root containing the required Qwen tokenizer model assets
+under `hf/` plus `facebook/dinov2-large/` for validation. The `hf/` directory
+name is part of the upstream image's fixed checkpoint layout. The validation
+JSONL must contain `image_filename`, `mask_filename`, and `anomaly_type`; each trained
 `TEXTURE+DEFECT` needs at least three rows. A separately stored defect spec is
 accepted with `--defect-spec`.
+
+If the official Cosmos3-Nano checkpoint is not already staged in DCP format,
+run the converter shipped in the pinned AnomalyGenNext image and write its
+output to a mounted, persistent directory:
+
+```bash
+python -m cosmos_framework.scripts.convert_model_to_dcp \
+  -o /models/Cosmos3-Nano-dcp \
+  --checkpoint-path Cosmos3-Nano
+```
+
+The registered `Cosmos3-Nano` name resolves the official checkpoint. To
+convert an already-staged Hugging Face checkpoint instead, replace it with
+that directory's absolute container path. Use the converter output as
+`--base-checkpoint`; preparation verifies `checkpoint.json`,
+`model/.metadata`, and the generated `model/*.distcp` shards before GPU work.
+
+Dataset and validation images and masks must use `.jpg`, `.jpeg`, or `.png`,
+matching the extensions supported by the AnomalyGenNext 1.1 runtime loader.
+Every mask pixel must be binary `0` or `255`; palette or grayscale masks with
+intermediate values are rejected before training. Each mask must contain both
+values, so empty/all-zero and full/all-255 masks are also rejected.
 
 An optional user `recipe.yaml` is a template. Custom training settings remain,
 while dataset, checkpoint, validation, type order, and iteration-zero validation
@@ -54,29 +80,34 @@ scripts/prepare_finetune_recipe.py \
   --validation-testcase /data/validation/testcase.jsonl \
   --base-checkpoint /models/Cosmos3-Nano \
   --vae-path /models/Wan2.2_VAE.pth \
-  --nn-backbone /models/facebook/dinov2-large \
+  --checkpoint-root /models/anomalygen-checkpoints \
   --dataset-name my_dataset \
   --recipe-template /data/recipe.yaml \
   --output /results/canonical_recipe.yaml
 ```
 
-The action freezes absolute validation paths, validates anomaly images and
-masks, checks type agreement with `defect_spec.jsonl`, refuses output reuse,
-and emits a recipe plus metadata. `validation_iter` must be a multiple of
-`save_iter`; `max_iter` must reach a post-baseline validation.
+The action freezes absolute validation paths, validates the DCP base-checkpoint
+shape, rejects image extensions the runtime cannot decode, validates
+anomaly/mask pairing and binary masks, checks type agreement with
+`defect_spec.jsonl`, refuses output reuse, and emits a recipe plus metadata.
+`validation_iter` must be a multiple of `save_iter`; `max_iter` must reach a
+post-baseline validation.
 
 ## Train and accept
 
 Invoke `tao-launch-workflow`, review the platform, image, mounts, GPU shape,
-runtime, and exact recipe, then submit the `train` action. Bind the selected
-DINOv2 directory read-only at the fixed container path declared in
-`skill_info.yaml`; the public image does not bundle it. An optional Hugging Face
-cache supplies the Qwen tokenizer for offline execution.
+runtime, and exact recipe, then submit the `train` action. Bind the entire
+checkpoint root read-only at the fixed container path declared in
+`skill_info.yaml`; the upstream trainer resolves the Qwen tokenizer model
+assets at `checkpoints/hf` and DINOv2 at
+`checkpoints/facebook/dinov2-large` beneath its image repository. Mounting only
+the DINOv2 directory or setting `HF_HOME` does not satisfy that contract.
 
 ```bash
 scripts/finetune_anomalygennext.sh \
   --recipe /results/canonical_recipe.yaml \
   --results-dir /new/training_results \
+  --checkpoint-root /workspace/paidf-anomalygen/checkpoints \
   --num-gpus 1
 ```
 

@@ -30,9 +30,14 @@ def _source(root: Path, name: str, *, boxed: bool, category: int = 7,
     annotations = ([{"id": 9, "image_id": 4, "category_id": category,
                      "bbox": [1, 2, 3, 4], "label": "scratch"}] if boxed else [])
     coco = root / name / "source.json"
+    image_row = {"id": 4, "file_name": image.name, "width": 12, "height": 10,
+                 "customer_field": name}
+    if name == "kpi" and boxed:
+        image_row["deft_od_aoi"] = {
+            "dataset_id": "route", "texture_id": "texture", "defect_class": "scratch"
+        }
     coco.write_text(json.dumps({
-        "images": [{"id": 4, "file_name": image.name, "width": 12, "height": 10,
-                    "customer_field": name}],
+        "images": [image_row],
         "annotations": annotations,
         "categories": [{"id": category, "name": "customer-defect"}],
     }))
@@ -82,6 +87,7 @@ def test_prepares_binary_roles_and_customer_handoff(tmp_path: Path) -> None:
     assert documents["real"][0]["categories"] == [{"id": 1, "name": "defect"}]
     assert documents["real"][0]["annotations"][0]["category_id"] == 1
     assert documents["real"][0]["images"][0]["customer_field"] == "mine"
+    assert documents["kpi"][0]["images"][0]["deft_od_aoi"]["dataset_id"] == "route"
     assert not documents["clean"][0]["annotations"]
     assert report["roles"]["real"] == {"images": 1, "annotations": 1}
     assert report["sources"][0]["input"] == "benchmark"
@@ -108,6 +114,65 @@ def test_prepares_binary_roles_and_customer_handoff(tmp_path: Path) -> None:
     state = INIT_MODULE.initialize(policy, tmp_path / "contract")
     assert state["roles"]["real"]["annotation_count"] == 1
     assert state["roles"]["clean"]["annotation_count"] == 0
+
+
+def test_empty_clean_role_is_typed_and_materialized(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    value = json.loads(manifest.read_text())
+    value["inputs"]["clean"] = []
+    manifest.write_text(json.dumps(value))
+
+    documents, report = MODULE.prepare(manifest)
+
+    role = "clean"
+    assert documents[role] == []
+    assert report["roles"][role] == {"images": 0, "annotations": 0}
+    assert report["capabilities"]["retrieval"][role] == {
+        "status": "UNAVAILABLE", "reason": "empty_source_role", "source_image_count": 0}
+    assert report["warnings"][0]["code"] == "empty_retrieval_source_role"
+
+    output = tmp_path / "normalized"
+    handoff = MODULE.materialize(
+        manifest, documents, report, output, "copy", _data_services_merge)
+    coco = json.loads(Path(handoff["sources"][role]["coco"]).read_text())
+    assert coco == {"images": [], "annotations": [],
+                    "categories": [{"id": 1, "name": "defect"}]}
+    evidence = json.loads((output / "source_preparation_report.json").read_text())
+    assert evidence["merger"]["roles"][role]["status"] == "SKIPPED"
+
+    checkpoint = tmp_path / "base.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(yaml.safe_dump({"platform": "slurm", "max_iterations": 1,
+                                      "base_checkpoint": str(checkpoint),
+                                      "sources": handoff["sources"]}))
+    state = INIT_MODULE.initialize(policy, tmp_path / "contract")
+    assert state["roles"][role]["image_count"] == 0
+    assert state["capabilities"]["retrieval"][role]["status"] == "UNAVAILABLE"
+    assert any(warning["role"] == role for warning in state["warnings"])
+
+
+def test_rejects_empty_mining_role(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    value = json.loads(manifest.read_text())
+    value["inputs"]["mining"] = []
+    manifest.write_text(json.dumps(value))
+
+    with pytest.raises(ValueError, match=r"inputs\.mining must be a non-empty array"):
+        MODULE.prepare(manifest)
+
+
+def test_rejects_empty_mining_coco(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    value = json.loads(manifest.read_text())
+    coco = Path(value["inputs"]["mining"][0]["coco"])
+    document = json.loads(coco.read_text())
+    document["images"] = []
+    document["annotations"] = []
+    coco.write_text(json.dumps(document))
+
+    with pytest.raises(ValueError, match="has no images"):
+        MODULE.prepare(manifest)
 
 
 def test_rejects_internal_kpi_name_at_user_manifest_boundary(tmp_path: Path) -> None:
@@ -167,6 +232,19 @@ def test_accepts_coco_list_with_one_shared_image_root(tmp_path: Path) -> None:
 
     assert len(documents["real"]) == 2
     assert report["roles"]["real"] == {"images": 2, "annotations": 2}
+
+
+@pytest.mark.parametrize("bbox", [[10, 2, 3, 4], [1, 8, 3, 4]])
+def test_rejects_source_bbox_beyond_image_bounds(tmp_path: Path, bbox: list[int]) -> None:
+    manifest = _manifest(tmp_path)
+    value = json.loads(manifest.read_text())
+    source = Path(value["inputs"]["benchmark"][0]["coco"])
+    coco = json.loads(source.read_text())
+    coco["annotations"][0]["bbox"] = bbox
+    source.write_text(json.dumps(coco))
+
+    with pytest.raises(ValueError, match="exceeds normalized COCO image bounds"):
+        MODULE.prepare(manifest)
 
 
 def test_rejects_boxless_mining_until_it_is_explicitly_routed(tmp_path: Path) -> None:
