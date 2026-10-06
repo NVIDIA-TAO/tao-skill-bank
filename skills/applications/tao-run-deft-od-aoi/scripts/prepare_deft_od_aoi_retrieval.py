@@ -608,10 +608,10 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         else:
             targets[role] = {"background_fp": len(rows) * int(routing["clean_factor"])}
         desired = sum(targets[role].values())
-        requested[role] = min(
-            remaining, desired * int(policy["retrieval"]["candidate_overfetch"])
-        )
         if strategy == "max_similarity":
+            requested[role] = min(
+                remaining, desired * int(policy["retrieval"]["candidate_overfetch"])
+            )
             mining = {
                 "source_path": str(candidate_root / f"{role}_candidate_embeddings.parquet"),
                 "target_path": str(embedded), "output_dir": str(output / f"mine_{role}"),
@@ -624,6 +624,9 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             (output / f"mine_{role}.yaml").write_text(
                 yaml.safe_dump(mining, sort_keys=False)
             )
+        else:
+            # Round-robin depth is governed by round_robin_refill_overfetch.
+            requested[role] = min(remaining, desired)
     enabled = [role for role, evidence in role_status.items() if evidence["status"] == "READY"]
     synthesis_pending = bool(policy.get("synthesis", {}).get("enabled")) and any(
         strict.gap_type.astype(str).str.upper().eq("FN")

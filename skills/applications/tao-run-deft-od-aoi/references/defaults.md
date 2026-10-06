@@ -41,6 +41,8 @@ defaults are:
 - initial minimum similarity `-1.0`;
 - retrieval selection strategy `round_robin_similarity`, with
   `max_similarity` available for global maximum-similarity ranking;
+- max-similarity candidate overfetch `15` and independent round-robin refill
+  depths `[5, 15, 50, 200, 100000]`;
 - round-robin audit shortlist floor `20` candidates per query;
 - real mining factor range `1..6`;
 - clean dose `2` per routed FP and cumulative cap `1.0` per admitted real;
@@ -52,7 +54,15 @@ defaults are:
 - adaptive main budget of 24–48 epochs;
 - one 12-epoch late-best extension;
 - synthesis disabled;
+- synthesis top-3 distinct clean candidates with one successful neighbor
+  retained per FN;
 - synthetic cumulative cap `0.25` relative to admitted real defects.
+
+For compatibility with pre-split inputs, an explicit
+`retrieval.candidate_overfetch` is copied to `synthesis.candidate_topn` when the
+latter is omitted. Already-frozen policies without `candidate_topn` also use
+the retrieval value during synthesis preparation. Set both values explicitly
+to opt into independent non-default values.
 
 A value frozen in the policy is no longer a default. Changing it starts a new
 contract rather than silently mutating an existing run.
