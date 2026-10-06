@@ -50,7 +50,13 @@ adapter; generation must use that pair unchanged.
 
 The dataset root, defect specification, validation testcase, optional template,
 Cosmos3-Nano checkpoint, VAE, and checkpoint root may live at separate absolute
-paths. The selected platform must expose all of them to the container. The
+paths. The Cosmos3-Nano checkpoint must be a DCP directory with
+`checkpoint.json`, `model/.metadata`, and one or more `model/*.distcp` shards.
+If the official checkpoint is staged in Hugging Face format, use the pinned
+image's `cosmos_framework.scripts.convert_model_to_dcp` command documented in
+`container-runtime.md`, then pass its persistent output directory as
+`--base-checkpoint`.
+The selected platform must expose all of them to the container. The
 checkpoint root must be mounted over the image's complete `checkpoints/` tree
 and contain the required Qwen tokenizer model assets under `hf/` plus a
 Transformers-compatible
