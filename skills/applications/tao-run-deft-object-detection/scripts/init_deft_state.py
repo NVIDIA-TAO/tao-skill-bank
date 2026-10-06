@@ -139,7 +139,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Source-pool ODVG directory (*.jsonl keyed by file_name).")
     parser.add_argument("--pool-report", default=None,
                         help="validate_pool_coco.py's report from the prep run. Cross-checks that "
-                             "the pool was prepared for these target classes.")
+                             "the pool was prepared for these target classes. Required for a "
+                             "pool that already exists, under every allocation policy; omit "
+                             "it only when prep will build the pool.")
 
     # Only consulted when the pool above does not exist yet, in which case `prep`
     # builds it before the baseline and all three are required.
@@ -486,6 +488,23 @@ def main() -> int:
             "--source-detection-file": args.source_detection_file,
             "--target-detection-file": args.target_detection_file,
         }
+        if not args.pool_report:
+            # pool_report.json is the only artifact that cross-checks the prepared pool
+            # against the requested classes, and the guards above that use it apply
+            # under every allocation policy -- a pool holding none of a target class
+            # mines real neighbours of the wrong ones whichever way the budget is split.
+            # It is also prep's own output, so demanding it on a run that still has to
+            # prep would make init and prep each other's precondition -- the same
+            # deadlock --source-detection-file had. Required once the pool exists.
+            message = (
+                "--pool-report is required: it is the only check that the prepared pool "
+                "holds this run's target classes (validate_pool_coco.py writes it in "
+                "seconds from the pool's coco.json; --pool-dir picks it up automatically "
+                "when it sits beside the pool)")
+            if missing_pool and not absent_inputs:
+                warnings.append(f"{message} — `prep` runs first and produces it")
+            else:
+                errors.append(message)
         if args.allocation_policy == "class_stratified":
             if not rare_classes:
                 # Which classes are rare is a property of the pool's annotation
@@ -501,20 +520,6 @@ def main() -> int:
                         f"{message} — left unset; `commit_stage.py --stage prep` derives it "
                         "from the pool's own class counts once prep has produced "
                         "pool_report.json")
-                else:
-                    errors.append(message)
-            if not args.pool_report:
-                # pool_report.json is the only artifact that cross-checks the prepared
-                # pool against the requested classes. It is also prep's own output, so
-                # demanding it on a run that still has to prep would make init and prep
-                # each other's precondition — the same deadlock --source-detection-file
-                # had. Required only when the pool already exists.
-                message = (
-                    "--allocation-policy class_stratified needs --pool-report "
-                    "(validate_pool_coco.py writes it; --pool-dir picks it up "
-                    "automatically when it sits beside the pool)")
-                if missing_pool and not absent_inputs:
-                    warnings.append(f"{message} — `prep` runs first and produces it")
                 else:
                     errors.append(message)
             for flag, raw in detection_files.items():
