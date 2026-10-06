@@ -43,7 +43,7 @@ In a Claude Code session, add the marketplace at the release tag and install the
 /plugin install tao-skills@tao-skill-bank
 ```
 
-That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundles all skills (every model, data, platform, and application). The plugin's [`SessionStart`](hooks/session_start.sh) hook loads the [`AGENTS.md`](AGENTS.md) identity at the start of every session.
+That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundles all skills (every model, data, platform, application, and core helper skill). The plugin's [`SessionStart`](hooks/session_start.sh) hook loads the [`AGENTS.md`](AGENTS.md) identity at the start of every session.
 
 ### Codex
 
@@ -246,7 +246,7 @@ image before long-running jobs start.
 
 Each skill is a directory with `SKILL.md` (agent-readable instructions). Optional `references/skill_info.yaml` provides structured metadata (container image, per-action command/mode/inputs/outputs) the agent uses to construct the container command; optional `scripts/` bundles supporting code.
 
-The `skills/core/` directory is not a second copy of the skill bank. It is the Codex plugin surface for small helper/router skills, such as capability discovery and launch intake. Canonical model, data, platform, and application skills live once in the layer directories above; do not add symlinks or copies under `skills/core/`.
+The `skills/core/` directory is not a second copy of the skill bank. It holds the small helper/router skills — capability discovery, launch intake, artifact handling — that ship to every runtime alongside the layer skills. Canonical model, data, platform, and application skills live once in the layer directories above; do not add symlinks or copies under `skills/core/`.
 
 ## Execution: no SDK required
 
@@ -291,7 +291,7 @@ In brief:
 3. Fill in frontmatter and SKILL.md body. Body must contain a `## Quick Start` section, a `docker run` block, or a link to `references/skill_info.yaml`.
 4. Add `evals/evals.json` (required for Tier-3 signing — see [`docs/skill-requirements.md`](docs/skill-requirements.md) § 2.3). `eval.config` is optional and only needed if you want live-execution coverage.
 5. Add the skill path to [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) under the relevant plugin(s).
-6. Do not add a mirror entry under `skills/core/`; Codex helper skills route to the canonical layer directories.
+6. Do not add a mirror entry under `skills/core/`; the core helper skills route to the canonical layer directories.
 7. Validate with `scripts/validate-skills.sh` before submitting a PR.
 
 ## Repository structure
@@ -321,11 +321,11 @@ tao-skill-bank/
 │   ├── install-codex-agents.sh       # one-shot Codex install: marketplace + plugin + AGENTS.md
 │   └── migrate-to-version-keys.py    # one-shot: literal nvcr.io paths → versions.yaml keys
 └── skills/
-    ├── applications/                 # 13 end-to-end workflow skills
-    ├── data/                         # 10 data preparation/analysis skills
-    ├── models/                       # 53 network-centric skills
-    ├── platform/                     # 7 compute backend / runtime skills
-    └── core/                         # 2 Codex helper/router skills; no mirrored skill symlinks
+    ├── applications/                 # end-to-end workflow skills
+    ├── data/                         # data preparation/analysis skills
+    ├── models/                       # network-centric skills
+    ├── platform/                     # compute backend / runtime skills
+    └── core/                         # helper/router skills (discovery, launch intake, artifacts); no mirrored skill symlinks
 ```
 
 ## CI
@@ -344,5 +344,5 @@ PRs must pass all three before merge.
 - **Generic docker conventions live once** in `skills/platform/tao-run-on-docker`. Other skills defer to it for `--gpus`, NGC auth, mount patterns, data-root relocation, etc.
 - **No SDK in the bank.** `tao_sdk`-specific imports and `sdk.create_job`/`build_entrypoint` calls are allowed only under `skills/applications/tao-run-automl` (it keeps the `nvidia-tao-automl` wheel + its transitive SDK). `scripts/validate-skills.sh` enforces this.
 - **Minimum-viable skill is `SKILL.md` only.** Add `references/skill_info.yaml` only when multi-action structured metadata earns its keep.
-- **One canonical location per skill.** Model, data, platform, and application skills live only in their layer directories; `skills/core/` is for Codex helper/router skills, not mirrored copies.
+- **One canonical location per skill.** Model, data, platform, and application skills live only in their layer directories; `skills/core/` is for helper/router skills, not mirrored copies.
 - **Prefer portability over cleverness.** A skill that works across three coding agents is more valuable than a skill that works perfectly in one.

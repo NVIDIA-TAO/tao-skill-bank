@@ -165,7 +165,7 @@ should run it. Discover the choices from the **platform skills installed in this
 session** — you already see them by name and description (`tao-run-on-docker`,
 `-slurm`, `-kubernetes`, `-brev`, `-virtualenv`, plus any externally installed one such as the
 official `brev-cli` skill). There is no central platform registry to read. If
-your runtime surfaces only the core router skills (e.g. Codex), list the bank's
+your runtime surfaces only the core router skills, list the bank's
 platform skills by reading `skills/platform/tao-run-on-*/SKILL.md` frontmatter
 (name + one-line description) under `${TAO_SKILL_BANK_PATH}`.
 
