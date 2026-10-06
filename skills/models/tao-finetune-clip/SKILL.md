@@ -93,6 +93,9 @@ the same checkpoint and validation subset, set
 
 Radio-CLIP requires `model.adaptor_name` to be set to `siglip` or `clip`.
 
+Under the tower `mode` contract, OpenCLIP supports `full` / `frozen`, but
+rejects `lora`. See [backbone support](references/clip-peft.md).
+
 ### LoRA and preservation regularization
 
 Before constructing a LoRA spec or PEFT AutoML search space, read
@@ -196,6 +199,11 @@ Inference writes `image_embeddings.h5` and/or `text_embeddings.h5` under `result
 Set `export.encoder_type: separate` when deployment should use independent vision and text encoders. Separate export writes `_vision.onnx` and `_text.onnx` variants derived from the base `export.onnx_file`.
 
 For checkpoint-dependent actions, use the model-specific checkpoint resolver output from the parent train job. CLIP training writes checkpoints such as `model_epoch_000_step_00020.pth` and a `clip_latest.pth` symlink. Use the exact resolved checkpoint for `evaluate.checkpoint`, `inference.checkpoint`, `export.checkpoint`, and `train.resume_training_checkpoint_path`; use `clip_latest.pth` only when the user explicitly asks for latest.
+
+For LoRA checkpoints, preserve the training model settings and complete
+top-level `peft` block in PyTorch `evaluate`, `inference`, and `export` specs.
+Read [checkpoint configuration](references/clip-peft.md#checkpoint-actions)
+before constructing those specs; action defaults alone omit PEFT.
 
 When the resolved checkpoint is trusted TAO output, checkpoint-backed PyTorch `evaluate`, `inference`, `export`, and resume training should run with `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`. PyTorch 2.6 otherwise defaults checkpoint loading to weights-only mode and can reject CLIP Lightning checkpoints containing NumPy scalar metadata.
 

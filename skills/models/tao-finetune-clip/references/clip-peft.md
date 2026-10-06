@@ -9,9 +9,14 @@ leaving them at their defaults preserves full fine-tuning. Each enabled tower
 has `target_modules`, `num_last_blocks` (3; 0 means all blocks), `rank` (8),
 `alpha` (16; scale is alpha/rank), and `dropout` (0.05). Set target modules
 for the selected backbone: SigLIP2 uses `q_proj`, `k_proj`, `v_proj`,
-`out_proj`; RADIO and OpenCLIP use `qkv`, `proj`. The default target list is
-the SigLIP2 list, so override it for RADIO or OpenCLIP. The default OpenCLIP
-backbone is not excluded by this config contract.
+`out_proj`; RADIO uses `qkv`, `proj`, so override the SigLIP2 target defaults
+for RADIO. Legacy config metadata also lists `qkv`, `proj` for OpenCLIP;
+that metadata alone does not establish working LoRA injection.
+
+Under the tower `mode` contract, OpenCLIP's `nn.MultiheadAttention` towers
+reject `mode: lora`. Use `full` or `frozen` for OpenCLIP, or select a
+supported SigLIP2/RADIO configuration for LoRA. Changing target-module names
+does not remove this restriction; verify the selected runtime's support.
 
 For each LoRA tower, use an integer `rank >= 1`, an integer `alpha >= 1`,
 and finite `0 <= dropout < 1`. Defaults are rank 8, alpha 16, and dropout
@@ -42,6 +47,26 @@ image. Verify the selected image exposes the required fields and injection
 path before launching LoRA; keep PEFT disabled if it does not. Use the schema
 of the selected runtime and apply the migration below when it uses tower
 `mode` fields.
+
+#### Checkpoint actions
+
+For a LoRA checkpoint, recover the training spec from the parent job and
+preserve its model settings and complete top-level `peft` block in PyTorch
+`evaluate`, `inference`, and `export` specs. Keep the per-tower `enabled` or
+`mode` settings, `target_modules`, `num_last_blocks`, `rank`, `alpha`, and
+`dropout`, plus `method` and `train_logit_calibration` when present. Use the
+selected runtime's contract; apply the migration below if it requires modes.
+
+Packaged action templates and evaluation/export schemas omit PEFT, so merge
+the recovered block explicitly into the nested action spec. The checkpoint
+loader constructs the model using that spec; disabling PEFT or changing the
+adapter layout can cause missing or unexpected state-dict keys. If the
+training configuration is unavailable, recover it or request the training
+spec before proceeding rather than guessing adapter settings.
+
+ONNX export loads the adapters before merging them into the base weights.
+Subsequent TensorRT engine generation and TensorRT evaluation/inference use
+the exported model and do not need a training `peft` block.
 
 #### Migrating PEFT specs from 7.2 to 7.3
 
