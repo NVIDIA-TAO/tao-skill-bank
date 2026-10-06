@@ -20,7 +20,7 @@ tags:
 
 # CLIP
 
-> **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
+> **Standalone install?** Read [CLIP standalone setup](references/standalone-setup.md) and verify the bank checkout before running `tao-setup` or launching a CLIP action.
 
 Contrastive Language-Image Pre-training model for zero-shot and fine-tuned image classification, image-text retrieval, and embedding extraction. Fine-tuning adapts CLIP's shared image-text embedding space to domain-specific image-caption data.
 
