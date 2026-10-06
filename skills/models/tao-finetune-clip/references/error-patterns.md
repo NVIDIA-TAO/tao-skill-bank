@@ -18,7 +18,7 @@ reports `Key 'enabled' not in 'CLIPLoRATargetConfig'` at
 `peft.enabled` and `peft.method` and the tower's adapter settings. The new
 `peft.train_logit_calibration` defaults to `true`; set it to `false` to freeze
 logit calibration parameters. This error occurs before model construction;
-see the migration example in `SKILL.md`.
+see the [migration example](clip-peft.md#migrating-peft-specs-from-72-to-73).
 
 **CUDA out of memory**: Reduce `dataset.train.batch_size`, `dataset.val.batch_size`, or the TensorRT opt/max batch sizes. For export/deploy, check `export.input_height` and `export.input_width` against the selected fixed-resolution backbone.
 
