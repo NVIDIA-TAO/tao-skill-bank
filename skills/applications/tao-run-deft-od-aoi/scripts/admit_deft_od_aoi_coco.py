@@ -64,8 +64,13 @@ def _selected(role: str, reason: str, desired: int, excluded: set[str],
     if not mined.is_file():
         raise FileNotFoundError(f"enabled {role} mining output is missing: {mined}")
     chosen = pd.read_parquet(mined)
-    if chosen.empty or "filepath" not in chosen:
-        raise ValueError(f"enabled {role} mining output is empty")
+    if "filepath" not in chosen:
+        raise ValueError(f"enabled {role} mining output lacks filepath")
+    if chosen.empty:
+        return [], {"desired_parents": desired, "mined_crops": 0,
+                    "unique_parents": 0, "novel_parents": 0,
+                    "selected_parents": 0, "shortfall_parents": desired,
+                    "quota_met": desired == 0}
     if desired == 0:
         return [], {"desired_parents": 0, "mined_crops": len(chosen),
                     "unique_parents": 0, "novel_parents": 0,
@@ -109,8 +114,10 @@ def _round_robin_selected(role: str, retrieval_root: Path) -> list[dict[str, Any
         raise FileNotFoundError(f"enabled {role} selection output is missing: {mined}")
     chosen = pd.read_parquet(mined)
     required = {"filepath", "source_filepath", "similarity", "query_id"}
-    if chosen.empty or not required.issubset(chosen):
+    if not required.issubset(chosen):
         raise ValueError(f"enabled {role} round-robin selection output is invalid")
+    if chosen.empty:
+        return []
     return chosen.drop_duplicates("source_filepath").to_dict("records")
 
 
@@ -237,11 +244,15 @@ def _stratified_synthetic(candidates: list[dict[str, Any]], limit: int
 
 
 def _synthetic_limit(real_total: int, synthesis: dict[str, Any]) -> tuple[int, str, float]:
+    if not synthesis or synthesis.get("enabled") is False:
+        return 0, "disabled", 0.0
     if "cumulative_fraction_of_total_defects" in synthesis:
         fraction = float(synthesis["cumulative_fraction_of_total_defects"])
         if not math.isfinite(fraction) or not 0 <= fraction < 1:
             raise ValueError("cumulative_fraction_of_total_defects must be in [0, 1)")
         return int(fraction / (1.0 - fraction) * real_total), "fraction_of_total", fraction
+    if "cumulative_fraction_of_real_defects" not in synthesis:
+        return 0, "unconfigured", 0.0
     fraction = float(synthesis["cumulative_fraction_of_real_defects"])
     if not math.isfinite(fraction) or fraction < 0:
         raise ValueError("cumulative_fraction_of_real_defects must be finite and nonnegative")
@@ -366,9 +377,11 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             for row in rows
         )
         preview["roles"].setdefault(role, {})["per_dataset"] = dict(sorted(counts.items()))
-    if enabled and not any(additions.get(role) for role in enabled) and not previous.get("images"):
-        raise ValueError("mining admitted no source images")
-
+    role_status = {
+        role: {"status": "SELECTED" if rows else "NO_MATCHES",
+               "selected_count": len(rows)}
+        for role, rows in additions.items()
+    }
     output.mkdir(parents=True)
     _json(output / "admission_preview.json", preview)
     images_root = output / "images"
@@ -421,6 +434,23 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     synthetic_quality: dict[str, int] = {}
     synthetic_requested = 0
     admitted_by_stratum: dict[str, int] = {}
+    synthetic_limit, fraction_basis, synthetic_fraction = _synthetic_limit(
+        real_total, policy.get("synthesis") or {}
+    )
+    synthetic_room = max(0, synthetic_limit - by_kind["synthetic_defect"])
+    warnings = []
+    if (policy.get("synthesis") or {}).get("enabled") and synthetic_room == 0:
+        warnings.append({
+            "code": "SYNTHETIC_ADMISSION_CAP_ZERO",
+            "message": (
+                "synthetic admission currently has zero room; generation may complete "
+                "without admitting any synthetic images"
+            ),
+            "cumulative_real_images": real_total,
+            "configured_fraction": synthetic_fraction,
+            "cumulative_synthetic_limit": synthetic_limit,
+            "synthetic_images_before_admission": by_kind["synthetic_defect"],
+        })
     if bool(synthetic_coco) != bool(synthetic_images):
         raise ValueError("pass both synthetic COCO and synthetic images, or neither")
     if synthetic_coco and synthetic_images:
@@ -440,11 +470,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                 raise ValueError(f"conflicting duplicate synthetic source: {key}")
             unique.setdefault(key, candidate)
         synthetic_requested = len(unique)
-        limit, fraction_basis, configured_fraction = _synthetic_limit(
-            real_total, policy["synthesis"]
-        )
-        room = max(0, limit - by_kind["synthetic_defect"])
-        admitted = _stratified_synthetic(list(unique.values()), room)
+        admitted = _stratified_synthetic(list(unique.values()), synthetic_room)
         admitted_by_stratum = dict(sorted(collections.Counter(
             row["stratum"] for row in admitted
         ).items()))
@@ -455,6 +481,19 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             synthetic_admitted += 1
             admitted_rows.append({"source_filepath": str(source),
                                   "kind": "synthetic_defect", "similarity": None})
+        excluded_by_cap = synthetic_requested - synthetic_admitted
+        if excluded_by_cap:
+            warnings.append({
+                "code": "SYNTHETIC_ADMISSION_CAPPED",
+                "message": (
+                    f"{excluded_by_cap} eligible generated synthetic images were excluded "
+                    "by the configured cumulative synthetic-admission cap"
+                ),
+                "cumulative_real_images": real_total,
+                "configured_fraction": synthetic_fraction,
+                "cumulative_synthetic_limit": synthetic_limit,
+                "synthetic_images_before_admission": by_kind["synthetic_defect"],
+            })
     coco = {"images": images, "annotations": annotations,
             "categories": [{"id": 1, "name": "defect"}]}
     _json(output / "train.json", coco)
@@ -474,6 +513,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                   str(output / "admission_index.npy")
                   if strategy == "round_robin_similarity" else None
               ),
+              "role_status": role_status,
               "retained_previous_images": len(previous.get("images", [])),
               "admitted": {"real": len(additions.get("real", [])),
                            "clean": len(additions.get("clean", [])),
@@ -483,15 +523,20 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                           for kind in ("real_defect", "clean_negative", "synthetic_defect")},
               "retrieval_admission": retrieval_admission,
               "synthetic_admission": {
-                  "fraction_basis": fraction_basis if synthetic_coco else None,
-                  "configured_fraction": configured_fraction if synthetic_coco else None,
-                  "cumulative_limit": limit if synthetic_coco else None,
+                  "fraction_basis": fraction_basis,
+                  "cumulative_limit": synthetic_limit,
                   "requested_new": synthetic_requested,
                   "admitted_new": synthetic_admitted,
                   "excluded_by_cap": synthetic_requested - synthetic_admitted,
+                  "configured_fraction": synthetic_fraction,
+                  "cumulative_real_images": real_total,
+                  "cumulative_synthetic_limit": synthetic_limit,
+                  "available_room_before_admission": synthetic_room,
                   "admitted_by_stratum": admitted_by_stratum,
                   "quality_filter": synthetic_quality,
               },
+              "warnings": warnings,
+              "new_training_images": len(admitted_rows),
               "training_pool_mutated": False}
     _json(output / "admission_report.json", report)
     return report
