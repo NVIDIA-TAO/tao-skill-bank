@@ -137,7 +137,10 @@ value is recorded as `images_per_fn` in the frozen plan evidence. The
 synthesis-only `candidate_topn` defaults to three because it supplies fallback
 neighbors before AMP finalization; it is independent of both max-similarity
 candidate overfetch and round-robin refill. It does not increase the expected
-yield once `max_neighbors_per_fn` retains only one neighbor. Increasing
+yield once `max_neighbors_per_fn` retains only one neighbor. It is the AMP
+compute knob: each eligible candidate produces two AMP requests, so one FN
+costs up to `2 * candidate_topn` placement attempts to retain
+`2 * max_neighbors_per_fn` finalized images. Increasing
 `max_neighbors_per_fn` automatically increases the bounded-plan yield by two
 images per added neighbor.
 

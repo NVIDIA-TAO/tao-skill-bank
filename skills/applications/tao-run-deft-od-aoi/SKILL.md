@@ -294,7 +294,11 @@ for every retained neighbor. `candidate_topn` only supplies fallback neighbor
 candidates and does not enter this calculation. It is synthesis-only and is
 independent of both max-similarity overfetch and round-robin refill. The derived
 value is recorded as `images_per_fn` in the frozen plan evidence; it is not a
-policy input. For backward compatibility, initialization copies an explicitly
+policy input. `candidate_topn` is the AMP compute knob: preparation emits two
+AMP requests per eligible candidate, so one FN costs up to
+`2 * candidate_topn` placement attempts to retain
+`2 * max_neighbors_per_fn` finalized images. For backward compatibility,
+initialization copies an explicitly
 supplied legacy `retrieval.candidate_overfetch` into synthesis when
 `candidate_topn` is omitted, and already-frozen policies without the new field
 retain that fallback.

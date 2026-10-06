@@ -158,9 +158,27 @@ def prepare(
     synthesis = policy["synthesis"]
     if not synthesis.get("enabled"):
         raise ValueError("synthesis is disabled in the frozen policy")
-    candidate_topn = resolve_candidate_topn(
-        synthesis, (policy.get("retrieval") or {}).get("candidate_overfetch")
+    retrieval = policy.get("retrieval") or {}
+    candidate_topn_source = (
+        "synthesis.candidate_topn"
+        if "candidate_topn" in synthesis
+        else "retrieval.candidate_overfetch"
     )
+    try:
+        candidate_topn = resolve_candidate_topn(
+            synthesis, retrieval.get("candidate_overfetch")
+        )
+    except ValueError as error:
+        if candidate_topn_source == "retrieval.candidate_overfetch":
+            raise ValueError(
+                "retrieval.candidate_overfetch fallback for missing "
+                f"synthesis.candidate_topn is invalid; {error}"
+            ) from error
+        raise
+    candidate_depth = {
+        "candidate_topn": candidate_topn,
+        "candidate_topn_source": candidate_topn_source,
+    }
     selection_mode, plan, plan_contract = _selection_contract(synthesis, iteration)
     routes = synthesis.get("routes") or {}
     pool, defect_spec = Path(str(synthesis["pool_dataset_root"])), Path(str(synthesis["defect_spec"]))
@@ -233,6 +251,7 @@ def prepare(
         skipped_count = sum(skipped_unrouted.values())
         report = {
             "status": "SKIPPED", "reason": "no_routed_false_negatives", "fn_count": 0,
+            **candidate_depth,
             "skipped_unrouted_fn_count": skipped_count,
             "skipped_unrouted_by_dataset": dict(sorted(skipped_unrouted.items())),
             "observed_dataset_ids": sorted(observed_datasets),
@@ -258,6 +277,7 @@ def prepare(
         if plan is None:
             report = {
                 "status": "SKIPPED", "reason": "no_synthetic_budget", "fn_count": 0,
+                **candidate_depth,
                 "eligible_fn_count": eligible_count, "selection_mode": selection_mode,
                 "planning": planning, "config": "",
             }
@@ -310,6 +330,7 @@ def prepare(
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
     report = {
         "status": "COMPLETE",
+        **candidate_depth,
         "fn_count": len(rows),
         "eligible_fn_count": eligible_count,
         "selection_mode": selection_mode,

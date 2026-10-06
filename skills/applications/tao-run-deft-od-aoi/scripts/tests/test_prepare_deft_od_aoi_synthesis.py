@@ -61,6 +61,8 @@ def test_synthesis_normalizes_exact_kpi_false_negative(tmp_path: Path) -> None:
     assert report["fn_count"] == 1
     assert report["eligible_fn_count"] == 1
     assert report["selection_mode"] == "all_eligible"
+    assert report["candidate_topn"] == 3
+    assert report["candidate_topn_source"] == "synthesis.candidate_topn"
     normalized = pd.read_parquet(tmp_path / "out/normalized_fn_gaps.parquet").iloc[0]
     assert normalized.anomaly_type == "texture+crack"
     config = yaml.safe_load((tmp_path / "out/anomalygen_filtering.yaml").read_text())
@@ -110,6 +112,8 @@ def test_synthesis_resolves_gap_filename_stem_to_coco_id(tmp_path: Path) -> None
     report = MODULE.prepare(policy, gaps, tmp_path / "out")
 
     assert report["fn_count"] == 1
+    assert report["candidate_topn"] == 15
+    assert report["candidate_topn_source"] == "retrieval.candidate_overfetch"
     normalized = pd.read_parquet(tmp_path / "out/normalized_fn_gaps.parquet").iloc[0]
     assert normalized.image_id == image.stem
     config = yaml.safe_load((tmp_path / "out/anomalygen_filtering.yaml").read_text())
@@ -255,6 +259,8 @@ def test_synthesis_skips_unrouted_dataset_without_weakening_routed_masks(
     skipped = MODULE.prepare(policy, gaps, tmp_path / "out-all-unrouted")
     assert skipped == {
         "status": "SKIPPED", "reason": "no_routed_false_negatives", "fn_count": 0,
+        "candidate_topn": 15,
+        "candidate_topn_source": "retrieval.candidate_overfetch",
         "skipped_unrouted_fn_count": 2,
         "skipped_unrouted_by_dataset": {"boxes_only": 2},
         "observed_dataset_ids": ["boxes_only"], "configured_route_keys": ["route"],

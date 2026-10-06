@@ -284,6 +284,10 @@ def test_initialize_keeps_synthesis_topn_independent_from_retrieval(
 
     assert policy["retrieval"]["candidate_overfetch"] == 9
     assert policy["synthesis"]["candidate_topn"] == 3
+    assert not any(
+        warning["code"] == "inherited_synthesis_candidate_topn"
+        for warning in state["warnings"]
+    )
 
 
 def test_initialize_migrates_legacy_shared_candidate_overfetch(tmp_path: Path) -> None:
@@ -299,6 +303,28 @@ def test_initialize_migrates_legacy_shared_candidate_overfetch(tmp_path: Path) -
 
     assert policy["retrieval"]["candidate_overfetch"] == 7
     assert policy["synthesis"]["candidate_topn"] == 7
+    assert state["warnings"][-1] == {
+        "code": "inherited_synthesis_candidate_topn",
+        "source": "retrieval.candidate_overfetch",
+        "target": "synthesis.candidate_topn",
+        "value": 7,
+        "message": (
+            "synthesis.candidate_topn was omitted; inherited the explicit "
+            "retrieval.candidate_overfetch value for backward compatibility"
+        ),
+    }
+
+
+def test_initialize_names_invalid_legacy_candidate_overfetch(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    _enable_synthesis(tmp_path, value)
+    _set_valid_routed_metadata(tmp_path, value)
+    value["retrieval"] = {"candidate_overfetch": 0}
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="retrieval.candidate_overfetch.*inherited"):
+        MODULE.initialize(config, tmp_path / "results")
 
 
 @pytest.mark.parametrize(

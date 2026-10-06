@@ -208,12 +208,14 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     policy = _merge(yaml.safe_load(DEFAULTS.read_text()), user)
     user_synthesis = user.get("synthesis", {})
     user_retrieval = user.get("retrieval", {})
+    inherited_synthesis_candidate_topn = False
     if (isinstance(user_synthesis, dict)
             and "candidate_topn" not in user_synthesis
             and isinstance(user_retrieval, dict)
             and "candidate_overfetch" in user_retrieval):
         # Map an explicit pre-split shared depth to the new synthesis field.
         policy["synthesis"]["candidate_topn"] = user_retrieval["candidate_overfetch"]
+        inherited_synthesis_candidate_topn = True
     if (isinstance(user_synthesis, dict)
             and "cumulative_fraction_of_real_defects" in user_synthesis
             and "cumulative_fraction_of_total_defects" not in user_synthesis):
@@ -282,7 +284,16 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
                 "round-robin real factor default must be within the frozen bounds"
             )
     if synthesis_enabled:
-        validate_synthesis_contract(synthesis)
+        try:
+            validate_synthesis_contract(synthesis)
+        except ValueError as error:
+            if (inherited_synthesis_candidate_topn
+                    and "candidate_topn" in str(error)):
+                raise ValueError(
+                    "retrieval.candidate_overfetch was inherited as "
+                    f"synthesis.candidate_topn; {error}"
+                ) from error
+            raise
         pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
         if not pool.is_dir():
             raise ValueError("enabled synthesis needs pool_dataset_root")
@@ -327,6 +338,17 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         "message": f"{role} retrieval source role is empty; that producer starts exhausted",
     } for role, evidence in retrieval_capabilities.items()
         if evidence["status"] == "UNAVAILABLE"]
+    if inherited_synthesis_candidate_topn and synthesis_enabled:
+        warnings.append({
+            "code": "inherited_synthesis_candidate_topn",
+            "source": "retrieval.candidate_overfetch",
+            "target": "synthesis.candidate_topn",
+            "value": policy["synthesis"]["candidate_topn"],
+            "message": (
+                "synthesis.candidate_topn was omitted; inherited the explicit "
+                "retrieval.candidate_overfetch value for backward compatibility"
+            ),
+        })
     state = {"schema_version": 1, "status": "READY",
              "mode": "rtdetr_with_synthesis" if synthesis_enabled else "rtdetr_real_only",
              "baseline_mode": baseline_mode,
