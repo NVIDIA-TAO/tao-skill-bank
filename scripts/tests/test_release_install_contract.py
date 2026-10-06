@@ -69,11 +69,10 @@ def test_pas_resolves_published_versions_without_embedding_image_uris():
 def test_codex_manifest_skills_root_covers_every_skill_on_disk():
     """The README promises Codex parity with Claude Code; the manifest must deliver it.
 
-    Claude Code loads every skill directory because ``.claude-plugin/plugin.json``
-    declares no ``skills`` key. Codex loads only what sits under the single
-    ``skills`` root in ``.codex-plugin/plugin.json`` — it recurses, so one root
-    is enough, but that root has to contain every ``SKILL.md`` in the bank.
-    Pointing it at ``./skills/core/`` exposed 4 skills of 76 (NVBug 6777460).
+    Codex loads only what sits under the single ``skills`` root in
+    ``.codex-plugin/plugin.json`` — it recurses, so one root is enough, but that
+    root has to contain every ``SKILL.md`` in the bank. Pointing it at
+    ``./skills/core/`` exposed 4 skills of 76 (NVBug 6777460).
     """
     codex_manifest = json.loads(
         (REPO_ROOT / ".codex-plugin/plugin.json").read_text()
@@ -89,6 +88,26 @@ def test_codex_manifest_skills_root_covers_every_skill_on_disk():
         f"{len(outside)} skills sit outside the Codex manifest root {codex_manifest['skills']!r} "
         f"and are invisible to Codex: {outside[:5]}{' ...' if len(outside) > 5 else ''}"
     )
+
+
+def test_documented_claude_plugin_lists_every_skill_on_disk():
+    """The README installs ``tao-skills``; it must list every skill, core included.
+
+    Claude Code loads exactly the paths a marketplace entry lists. ``tao-skills``
+    listed the 77 layer skills and omitted ``skills/core/``, so the documented
+    Claude install and the fixed Codex install disagreed by five skills
+    (NVBug 6777460 review).
+    """
+    marketplace = json.loads(
+        (REPO_ROOT / ".claude-plugin/marketplace.json").read_text()
+    )
+    entry = next(p for p in marketplace["plugins"] if p["name"] == "tao-skills")
+    listed = {(REPO_ROOT / s).resolve() for s in entry["skills"]}
+    on_disk = {p.parent.resolve() for p in (REPO_ROOT / "skills").rglob("SKILL.md")}
+    missing = sorted(str(p.relative_to(REPO_ROOT)) for p in on_disk - listed)
+    stale = sorted(str(p.relative_to(REPO_ROOT)) for p in listed - on_disk)
+    assert not missing, f"skills on disk but not installed by tao-skills: {missing}"
+    assert not stale, f"tao-skills lists skills that do not exist: {stale}"
 
 
 def test_readme_does_not_hardcode_stale_skill_counts():

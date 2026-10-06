@@ -43,7 +43,7 @@ In a Claude Code session, add the marketplace at the release tag and install the
 /plugin install tao-skills@tao-skill-bank
 ```
 
-That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundles all skills (every model, data, platform, and application). The plugin's [`SessionStart`](hooks/session_start.sh) hook loads the [`AGENTS.md`](AGENTS.md) identity at the start of every session.
+That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundles all skills (every model, data, platform, application, and core helper skill). The plugin's [`SessionStart`](hooks/session_start.sh) hook loads the [`AGENTS.md`](AGENTS.md) identity at the start of every session.
 
 ### Codex
 
