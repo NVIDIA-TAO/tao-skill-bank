@@ -157,6 +157,20 @@ def _validate_checkpoint_tree(root: Path) -> None:
         raise ValueError(f"checkpoint root lacks DINOv2 weights: {dinov2}")
 
 
+def _validate_base_checkpoint(root: Path) -> None:
+    root = root.expanduser().resolve()
+    model = root / "model"
+    if (not (root / "checkpoint.json").is_file()
+            or not (model / ".metadata").is_file()
+            or not any(path.is_file() for path in model.glob("*.distcp"))):
+        raise ValueError(
+            "Cosmos3-Nano base checkpoint must be a DCP directory containing "
+            f"checkpoint.json, model/.metadata, and model/*.distcp: {root}. "
+            "Convert it with cosmos_framework.scripts.convert_model_to_dcp in the pinned "
+            "AnomalyGenNext container; see references/container-runtime.md."
+        )
+
+
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     required = (("dataset root", args.dataset_root, True),
                 ("validation testcase", args.validation_testcase, False),
@@ -166,6 +180,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     for label, path, directory in required:
         if not (path.is_dir() if directory else path.is_file()):
             raise ValueError(f"{label} is missing: {path}")
+    _validate_base_checkpoint(args.base_checkpoint)
     _validate_checkpoint_tree(args.checkpoint_root)
     if not SAFE_NAME.fullmatch(args.dataset_name) or not SAFE_NAME.fullmatch(args.job_name):
         raise ValueError("dataset and job names may contain only letters, numbers, dot, dash, underscore")
@@ -227,6 +242,8 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     report = {"status": "COMPLETE", "recipe": str(args.output.resolve()),
               "recipe_sha256": _sha256(args.output), "validation_testcase": str(normalized.resolve()),
               "dataset_root": str(args.dataset_root.resolve()), "defect_spec": str(defect_spec),
+              "base_checkpoint": str(args.base_checkpoint.resolve()),
+              "base_checkpoint_format": "dcp",
               "checkpoint_root": str(args.checkpoint_root.resolve()),
               "anomaly_types": types,
               "validation_counts": {name: counts[name] for name in types},

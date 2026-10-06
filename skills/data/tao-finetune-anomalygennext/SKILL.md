@@ -33,13 +33,31 @@ DATASET/
 VALIDATION/testcase.jsonl
 ```
 
-Also supply the Cosmos3-Nano base checkpoint directory, `Wan2.2_VAE.pth`, and
+Also supply a DCP-format Cosmos3-Nano base checkpoint directory containing
+`checkpoint.json`, `model/.metadata`, and at least one `model/*.distcp` shard,
+`Wan2.2_VAE.pth`, and
 a complete checkpoint root containing the required Qwen tokenizer model assets
 under `hf/` plus `facebook/dinov2-large/` for validation. The `hf/` directory
 name is part of the upstream image's fixed checkpoint layout. The validation
 JSONL must contain `image_filename`, `mask_filename`, and `anomaly_type`; each trained
 `TEXTURE+DEFECT` needs at least three rows. A separately stored defect spec is
 accepted with `--defect-spec`.
+
+If the official Cosmos3-Nano checkpoint is not already staged in DCP format,
+run the converter shipped in the pinned AnomalyGenNext image and write its
+output to a mounted, persistent directory:
+
+```bash
+python -m cosmos_framework.scripts.convert_model_to_dcp \
+  -o /models/Cosmos3-Nano-dcp \
+  --checkpoint-path Cosmos3-Nano
+```
+
+The registered `Cosmos3-Nano` name resolves the official checkpoint. To
+convert an already-staged Hugging Face checkpoint instead, replace it with
+that directory's absolute container path. Use the converter output as
+`--base-checkpoint`; preparation verifies `checkpoint.json`,
+`model/.metadata`, and the generated `model/*.distcp` shards before GPU work.
 
 Dataset and validation images and masks must use `.jpg`, `.jpeg`, or `.png`,
 matching the extensions supported by the AnomalyGenNext 1.1 runtime loader.
@@ -68,11 +86,12 @@ scripts/prepare_finetune_recipe.py \
   --output /results/canonical_recipe.yaml
 ```
 
-The action freezes absolute validation paths, rejects image extensions the
-runtime cannot decode, validates anomaly/mask pairing and binary masks, checks
-type agreement with `defect_spec.jsonl`, refuses output reuse, and emits a
-recipe plus metadata. `validation_iter` must be a multiple of `save_iter`;
-`max_iter` must reach a post-baseline validation.
+The action freezes absolute validation paths, validates the DCP base-checkpoint
+shape, rejects image extensions the runtime cannot decode, validates
+anomaly/mask pairing and binary masks, checks type agreement with
+`defect_spec.jsonl`, refuses output reuse, and emits a recipe plus metadata.
+`validation_iter` must be a multiple of `save_iter`; `max_iter` must reach a
+post-baseline validation.
 
 ## Train and accept
 

@@ -51,7 +51,10 @@ def _fixture(root: Path) -> list[str]:
     base = root / "Cosmos3-Nano"
     checkpoints = root / "checkpoints"
     nn = checkpoints / "facebook" / "dinov2-large"
-    base.mkdir()
+    (base / "model").mkdir(parents=True)
+    (base / "checkpoint.json").write_text("{}")
+    (base / "model" / ".metadata").write_bytes(b"metadata")
+    (base / "model" / "__0_0.distcp").write_bytes(b"weights")
     (checkpoints / "hf").mkdir(parents=True)
     nn.mkdir(parents=True)
     (nn / "config.json").write_text("{}")
@@ -84,6 +87,7 @@ def test_prepare_preserves_custom_knobs_and_freezes_identities(tmp_path: Path) -
     assert all(Path(row["image_filename"]).is_absolute() for row in rows)
     metadata = json.loads((tmp_path / "out" / "recipe.metadata.json").read_text())
     assert metadata["anomaly_types"] == ["texture+defect"]
+    assert metadata["base_checkpoint_format"] == "dcp"
     assert metadata["checkpoint_root"] == str((tmp_path / "checkpoints").resolve())
 
 
@@ -105,6 +109,37 @@ def test_prepare_rejects_incomplete_checkpoint_root(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "lacks required Qwen tokenizer assets under hf/" in result.stderr
+
+
+@pytest.mark.parametrize("missing", ["checkpoint.json", "model/.metadata", "model/__0_0.distcp"])
+def test_prepare_rejects_incomplete_dcp_base_checkpoint(tmp_path: Path, missing: str) -> None:
+    args = _fixture(tmp_path)
+    base = Path(args[args.index("--base-checkpoint") + 1])
+    (base / missing).unlink()
+
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "base checkpoint must be a DCP directory" in result.stderr
+    assert "cosmos_framework.scripts.convert_model_to_dcp" in result.stderr
+    assert "references/container-runtime.md" in result.stderr
+
+
+@pytest.mark.parametrize("invalid_shard", ["directory", "broken_symlink"])
+def test_prepare_rejects_non_file_dcp_shard(tmp_path: Path, invalid_shard: str) -> None:
+    args = _fixture(tmp_path)
+    base = Path(args[args.index("--base-checkpoint") + 1])
+    shard = base / "model" / "__0_0.distcp"
+    shard.unlink()
+    if invalid_shard == "directory":
+        shard.mkdir()
+    else:
+        shard.symlink_to(base / "missing.distcp")
+
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "base checkpoint must be a DCP directory" in result.stderr
 
 
 @pytest.mark.parametrize("suffix", [".bmp", ".tif", ".tiff", ".webp"])
