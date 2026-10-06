@@ -63,6 +63,8 @@ Populate these six items from preflight and the plan, not from assumptions:
   radius/floor and duplicate thresholds; index, audit, probes/depth for ANN.
 - Training: passes, resolution, resources/update floor and immutable original
   checkpoint. Every candidate starts from that checkpoint, never its predecessor.
+  Check the per-round update budget against LR warm-up and last-layer freeze;
+  follow [short-round schedule sizing](references/adapter-contracts.md#short-round-schedule-sizing).
 - Cache/output: read-only images/embeddings, any platform cache, cumulative
   locator manifests, checkpoint retention, and durable results directory.
 - Monitoring: cadence, stage/round updates, retry/failure handling and final reason.
