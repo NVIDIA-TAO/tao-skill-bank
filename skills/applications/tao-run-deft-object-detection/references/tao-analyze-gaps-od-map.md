@@ -149,6 +149,7 @@ Count the rows of `weak_images.parquet` and pass that number. It is required on 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "iter${N}" --stage gap_analysis \
+  --execution-path skill \
   --weak-images "${RESULTS_DIR}/iter${N}/gaps/weak_images.parquet" \
   --gap-report "${RESULTS_DIR}/iter${N}/gaps/gap_report.json" \
   --weak-image-count <row count of weak_images.parquet> \

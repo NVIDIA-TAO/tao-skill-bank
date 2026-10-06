@@ -123,6 +123,7 @@ Read `summary.json`:
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "iter${N}" --stage mine \
+  --execution-path skill \
   --mining-output "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
   --mining-summary "${RESULTS_DIR}/iter${N}/mining/summary.json" \
   --duration-sec "$(( SECONDS - started ))" \

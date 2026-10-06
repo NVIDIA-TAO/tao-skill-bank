@@ -55,6 +55,7 @@ CLI:
 
     python3 scripts/commit_stage.py \\
         --results-dir /abs/results/run_X --iter-label iter1 --stage mine \\
+        --execution-path skill \\
         --mining-output /abs/.../final_unique_files.parquet \\
         --mining-summary /abs/.../summary.json \\
         --summary "mined 500 unique images" --duration-sec 612
@@ -122,8 +123,16 @@ RESERVED_RECORD_FIELDS = {
     "zero_weak_images": "--zero-weak-images",
     "pool_remaining": "--pool-remaining",
     "pool_exhausted": "--pool-exhausted",
+    "execution_paths": "--execution-path",
 }
 STATE_BOOKKEEPING_FIELDS = {"stage_completed", "status", "failed_stage"}
+
+# Stages that run a mapped tao-skill-bank skill, and so can run two ways: through
+# that skill, or through the overlay's documented docker run when the skill is
+# unavailable. `stage` runs bundled scripts and `loop_stop` runs nothing, so neither
+# has a path to record. prep runs several skills and may record one, but is not
+# required to.
+SKILL_STAGES = ("gap_analysis", "embed", "mine", "train", "inference", "kpi_analyze")
 
 
 def _dest(flag: str) -> str:
@@ -482,10 +491,24 @@ def _completed_by_phase(events: list[dict[str, Any]]) -> dict[str, str]:
     return completed
 
 
+class _CommitArgumentParser(argparse.ArgumentParser):
+    """argparse with this script's exit codes.
+
+    argparse exits 2 on a usage error -- a missing required flag, a value outside a
+    flag's choices. Here 2 means "written, then rolled back", and a usage error is
+    caught before anything is written, so reporting it as 2 would tell the caller the
+    opposite of what happened. It is a rejection before any write: exit 1.
+    """
+
+    def error(self, message: str):  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     # allow_abbrev=False: an unrecognized flag must reach the extras parser
     # verbatim instead of being silently expanded into a declared one.
-    parser = argparse.ArgumentParser(
+    parser = _CommitArgumentParser(
         description=__doc__.splitlines()[0], allow_abbrev=False
     )
     parser.add_argument("--results-dir", required=True,
@@ -498,6 +521,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="One-line outcome recorded in loop_log.jsonl.")
     parser.add_argument("--status", choices=("ok", "error"), default="ok",
                         help="error records a hard stop and fails the run. Never auto-retry after one.")
+    parser.add_argument("--execution-path", choices=("skill", "direct-container"),
+                        default=None,
+                        help="How the stage ran: skill, through its mapped skill, or "
+                             "direct-container, through the overlay's documented docker run "
+                             "when the skill was unavailable. Required on an ok commit of a "
+                             "skill-mapped stage; recorded at state.iterations.<phase>."
+                             "execution_paths.<stage>.")
     parser.add_argument("--duration-sec", type=int, default=0,
                         help="Stage wall-clock seconds. Omit when no start time was captured; "
                              "it records 0. Do not invent a duration.")
@@ -640,6 +670,20 @@ def main() -> int:
                 "not succeeded, and committing it ok would let the loop advance past a "
                 "missing result. If kpi_analyze printed 'mAP: nan', a target class has no "
                 "ground truth in the KPI set: commit this stage with --status error")
+
+        # Which way a stage ran is recorded, not assumed. Inferring "skill" from a
+        # missing flag would record a forgotten fallback as a skill run, most likely
+        # where the fallback is the norm -- a runtime with no Skill tool, where every
+        # stage takes it. An error commit is exempt: refusing it would lose the only
+        # evidence of the failure.
+        if args.execution_path is not None and stage not in SKILL_STAGES + ("prep",):
+            raise ValueError(
+                f"--execution-path does not apply to {stage!r}, which runs no mapped skill "
+                f"and so has only one way to run")
+        if stage in SKILL_STAGES and args.status == "ok" and args.execution_path is None:
+            raise ValueError(
+                f"stage {stage!r} requires --execution-path: skill if it ran through its "
+                f"mapped skill, direct-container if it used the overlay's docker run")
 
         results_dir = Path(args.results_dir).expanduser().resolve()
         if not results_dir.is_dir():
@@ -887,6 +931,17 @@ def main() -> int:
                 raise ValueError(f"state.iterations.{phase} must be an object")
             entry.update(artifacts)
             entry.update(extras)
+
+            # Recorded per stage, because a phase entry holds several stages and one
+            # field would be overwritten by each. A stage that fell back to the
+            # overlay's docker run is then distinguishable on disk from one that ran
+            # through its mapped skill, which is otherwise impossible after the fact.
+            if args.execution_path is not None:
+                paths = entry.setdefault("execution_paths", {})
+                if not isinstance(paths, dict):
+                    raise ValueError(f"state.iterations.{phase}.execution_paths must be "
+                                     f"an object, got {type(paths).__name__}")
+                paths[stage] = args.execution_path
 
             # Which target classes are rare is a property of the pool, so it can
             # only be settled once prep has built one. init leaves it null on a run
