@@ -122,6 +122,12 @@ typed `EXHAUSTED` while other roles continue. When every role is exhausted and
 no synthesis work is pending, the query manifest marks convergence and the
 workflow completes without submitting an empty mining request.
 
+For either strategy, candidates may remain while every similarity is below the
+frozen minimum. This is reported per role as `NO_MATCHES`, distinct from an
+exhausted candidate pool. It does not fail the retrieval stage: synthesis may
+still add training images, and a loop without synthesis converges instead of
+retraining an unchanged cumulative dataset.
+
 The initial `-1.0` similarity threshold is an explicit calibration policy,
 not evidence that all candidates are equally useful. Review retrieval outputs
 before freezing a stricter value for a later run.

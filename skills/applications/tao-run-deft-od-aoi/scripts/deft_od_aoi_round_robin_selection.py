@@ -374,12 +374,20 @@ def materialize(policy_path: Path, candidate_root: Path, retrieval_root: Path,
         raise FileExistsError(existing[0])
     for role, path in outputs.items():
         path.parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame(selected.get(role, [])).to_parquet(path, index=False)
+        columns = list(candidates[role].columns)
+        columns.extend(name for name in ("similarity", "query_id") if name not in columns)
+        pd.DataFrame(selected.get(role, []), columns=columns).to_parquet(path, index=False)
     admission.save(index_path)
+    selected_counts = {role: len(selected.get(role, [])) for role in enabled}
     report = {
         "status": "COMPLETE", "iteration": int(manifest["iteration"]),
         "selection_strategy": strategy,
-        "selected_counts": {role: len(selected.get(role, [])) for role in enabled},
+        "selected_counts": selected_counts,
+        "role_status": {
+            role: {"status": "SELECTED" if count else "NO_MATCHES",
+                   "selected_count": count}
+            for role, count in selected_counts.items()
+        },
         "outputs": {role: str(path) for role, path in outputs.items()},
         "admission_index": str(index_path),
         "admission_counters": dict(sorted(admission.report.items())),

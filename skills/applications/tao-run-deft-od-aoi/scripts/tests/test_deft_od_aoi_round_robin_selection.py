@@ -472,3 +472,92 @@ def test_materialize_rejects_unknown_candidate_exclusion(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="unknown candidates"):
         MODULE.materialize(policy, candidates, retrieval)
+
+
+def test_materialize_records_no_matches_as_valid_empty_selection(tmp_path: Path) -> None:
+    candidates, retrieval = tmp_path / "candidates", tmp_path / "retrieval"
+    candidates.mkdir()
+    retrieval.mkdir()
+    source_coco = tmp_path / "real.json"
+    source_coco.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": "source", "source_path": "/source"}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1,
+                         "bbox": [0, 0, 10, 10]}],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(yaml.safe_dump({
+        "sources": {"real": {"images": str(tmp_path), "coco": str(source_coco)}},
+        "retrieval": {
+            "selection": {"strategy": "round_robin_similarity"},
+            "minimum_similarity": 1.1, "candidate_overfetch": 2,
+            "audit_top_k_per_query": 20,
+        },
+        "routing": {
+            "real_mine_factor_min": 1, "near_miss_real_factor": 2,
+            "near_miss_real_cap_per_pocket": 20, "clean_factor": 1,
+            "clean_cumulative_cap_per_real": 1.0,
+        },
+        "admission": {
+            "refill_overfetch_steps": [5, 15, 50, 200],
+            "duplicate_global_cosine": 0.995,
+            "duplicate_defect_cosine": 0.985,
+            "duplicate_position_delta": 0.04,
+            "clean_duplicate_global_cosine": 0.999,
+            "clean_cluster_cosine": 0.97,
+            "clean_cluster_minimum_cap": 2,
+            "clean_cluster_quota_divisor": 4,
+            "duplicate_gt_iou": 0.9,
+            "minimum_box_area_px": 64,
+            "maximum_box_aspect": 25.0,
+        },
+    }))
+    manifest = {
+        "status": "COMPLETE", "iteration": 1, "query_counts": {"real": 1},
+        "enabled_roles": ["real"], "selection_strategy": "round_robin_similarity",
+        "role_status": {
+            "real": {"status": "READY", "query_count": 1,
+                     "candidate_count": 1, "excluded_count": 0,
+                     "remaining_candidate_count": 1},
+            "clean": {"status": "NO_QUERIES", "query_count": 0,
+                      "candidate_count": 0, "excluded_count": 0,
+                      "remaining_candidate_count": 0},
+        },
+        "converged": False,
+        "synthesis_pending": False,
+    }
+    (retrieval / "query_manifest.json").write_text(json.dumps(manifest))
+    pd.DataFrame([{
+        "filepath": "/candidate", "candidate_id": "candidate",
+        "source_filepath": "/source", "source_image_id": 1,
+        "embedding": [1.0, 0.0],
+    }]).to_parquet(candidates / "real_candidate_embeddings.parquet", index=False)
+    pd.DataFrame({"filepath": []}).to_parquet(
+        retrieval / "exclude_real_candidates.parquet", index=False
+    )
+    query = pd.DataFrame([{
+        "filepath": "/query", "query_id": "query", "reason": "fn",
+        "dataset_id": "line", "texture_id": "board", "defect_class": "bridge",
+        "real_factor": 1, "embedding": [1.0, 0.0],
+    }])
+    query.drop(columns="embedding").to_parquet(
+        retrieval / "real_queries.parquet", index=False
+    )
+    query.to_parquet(retrieval / "real_query_embeddings.parquet", index=False)
+
+    report = MODULE.materialize(policy, candidates, retrieval)
+    artifacts = {
+        "query_manifest": {"path": retrieval / "query_manifest.json"},
+        "selection_report": {"path": retrieval / "round_robin_selection_report.json"},
+        "admission_index": {"path": retrieval / "round_robin_admission_index.npy"},
+        "real_queries": {"path": retrieval / "real_queries.parquet"},
+        "real_query_embeddings": {"path": retrieval / "real_query_embeddings.parquet"},
+        "real_exclusions": {"path": retrieval / "exclude_real_candidates.parquet"},
+        "real_mined": {"path": retrieval / "mine_real/final_unique_files.parquet"},
+    }
+
+    COMMIT_MODULE._validate_retrieval(1, artifacts)
+    assert report["role_status"]["real"] == {
+        "status": "NO_MATCHES", "selected_count": 0,
+    }
+    assert pd.read_parquet(artifacts["real_mined"]["path"]).empty

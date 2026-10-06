@@ -95,7 +95,7 @@ The loop composes existing bank actions:
 
 All specs are nested YAML dictionaries. Every GPU/Data Services action uses the
 selected platform's `submit/status/logs/cancel` contract and a job record.
-Stop on missing artifacts, role overlap, empty enabled mining, class drift, or
+Stop on missing or invalid artifacts, role overlap, class drift, or
 failed training. Never infer live state from the JSON record alone.
 
 ## Retrieval preparation
@@ -303,10 +303,19 @@ generation root via `--generation-root`; admission resolves the declared
 logical `binary_coco` output instead of hardcoding its filename. Synthetic
 categories are folded to `defect`, and
 the frozen cumulative fraction cap is applied against admitted real defects.
-For this second pass, provide the same-iteration real admission as
-`--previous-coco` and set `--synthetic-only`; synthetic inputs do not
-implicitly turn off mining admission.
-Boxes alone never substitute for the required pixel mask. If the request has no
+Commit initial admission before requesting synthesis. The stage controller
+uses its calculated synthetic capacity: zero room records a
+`no_synthetic_budget` skip and bypasses iteration synthesis. Train only when
+this iteration admitted new images; otherwise converge. Positive capacity
+can remain from prior real admissions even without new real matches.
+The post-generation cap and quality checks still apply when synthesis runs;
+provide the same-iteration real admission as `--previous-coco` and set
+`--synthetic-only` so synthetic inputs do not implicitly rerun mining admission.
+`SYNTHETIC_ADMISSION_CAPPED` reports eligible generated images excluded by the
+cap. See `references/pipeline.md` for budget-skip evidence. A zero cumulative
+real count permits zero synthetic admissions.
+
+Boxes never substitute for the required pixel mask. If the request has no
 routed FNs, or preparation reports no mask-eligible FNs, commit that typed skip
 contract as `iteration_synthesis` and continue to training without running AMP
 or fabricating generation/admission success. Missing or empty AnomalyGen clean

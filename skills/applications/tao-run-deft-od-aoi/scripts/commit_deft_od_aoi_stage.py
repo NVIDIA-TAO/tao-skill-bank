@@ -101,6 +101,9 @@ def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
         if Path(str(report.get("admission_index"))).resolve() != Path(
                 artifacts["admission_index"]["path"]).resolve():
             raise ValueError("round-robin selection report has a mismatched admission index")
+        selection_role_status = report.get("role_status")
+        if not isinstance(selection_role_status, dict):
+            raise ValueError("round-robin selection report has no role outcomes")
     for role, count in counts.items():
         evidence = role_status.get(role) or {}
         if int(evidence.get("query_count", -1)) != count:
@@ -125,12 +128,19 @@ def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
         if role in enabled and len(pd.read_parquet(
                 artifacts[f"{role}_query_embeddings"]["path"])) != count:
             raise ValueError(f"{role} embedding count disagrees with its manifest")
-        if role in enabled:
-            mined = pd.read_parquet(artifacts[f"{role}_mined"]["path"])
-            if mined.empty:
-                raise ValueError(f"{role} mining produced no selected candidates")
-            if selected_counts is not None and selected_counts.get(role) != len(mined):
-                raise ValueError(f"{role} selection count disagrees with its report")
+        if role not in enabled:
+            continue
+        mined = pd.read_parquet(artifacts[f"{role}_mined"]["path"])
+        if selected_counts is not None and selected_counts.get(role) != len(mined):
+            raise ValueError(f"{role} selection count disagrees with its report")
+        if selected_counts is not None:
+            evidence = selection_role_status.get(role) or {}
+            expected = "SELECTED" if len(mined) else "NO_MATCHES"
+            if (evidence.get("status") != expected
+                    or evidence.get("selected_count") != len(mined)):
+                raise ValueError(f"{role} selection outcome disagrees with its artifact")
+        elif "filepath" not in mined:
+            raise ValueError(f"{role} mining output lacks filepath")
     if bool(manifest.get("converged")) != (not enabled and not manifest.get("synthesis_pending")):
         raise ValueError("retrieval convergence evidence is inconsistent")
     return manifest
@@ -155,15 +165,53 @@ def _validate_admission(iteration: int,
         count = admitted.get(role, 0)
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise ValueError("admission report has invalid admitted counts")
+    outcomes = report.get("role_status")
+    valid_outcomes = isinstance(outcomes, dict)
+    for value in outcomes.values() if valid_outcomes else []:
+        count = value.get("selected_count") if isinstance(value, dict) else None
+        valid_outcomes = (
+            isinstance(count, int) and not isinstance(count, bool) and count >= 0
+            and value.get("status") == ("SELECTED" if count else "NO_MATCHES")
+        )
+        if not valid_outcomes:
+            break
+    if not valid_outcomes:
+        raise ValueError("admission report has invalid role outcomes")
+    admitted = report.get("admitted") or {}
+    expected_new = sum(int(admitted.get(role, -1)) for role in ("real", "clean", "synthetic"))
+    if expected_new < 0 or report.get("new_training_images") != expected_new:
+        raise ValueError("admission report new-image count does not reconcile")
     return report
+
+
+def _synthetic_room(admission: dict[str, Any]) -> int:
+    evidence = admission.get("synthetic_admission")
+    room = evidence.get("available_room_before_admission") if isinstance(evidence, dict) else None
+    if isinstance(room, bool) or not isinstance(room, int) or room < 0:
+        raise ValueError("admission report lacks valid synthetic capacity")
+    return room
+
+
+def _committed_admission(state: dict[str, Any], iteration: int) -> dict[str, Any]:
+    previous = next((event for event in reversed(state.get("events", []))
+                     if event.get("stage") == "iteration_admission"
+                     and event.get("iteration") == iteration), {})
+    artifacts = previous.get("artifacts") or {}
+    if "admission_report" not in artifacts:
+        raise ValueError("synthesis requires committed initial admission evidence")
+    for artifact in artifacts.values():
+        path = Path(artifact["path"])
+        if not path.is_file() or _sha(path) != artifact["sha256"]:
+            raise ValueError("committed initial admission evidence changed")
+    return _validate_admission(iteration, artifacts)
 
 
 def _validate_budget_skip(state: dict[str, Any], iteration: int,
                           artifacts: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], str]:
-    if set(artifacts) - {"synthesis_request", "admission_report", "admission_index"}:
-        raise ValueError("a budget skip must not include generation artifacts")
     request = _read_json(artifacts, "synthesis_request")
     admission = _validate_admission(iteration, artifacts)
+    if set(artifacts) - {"synthesis_request", "admission_report", "admission_index"}:
+        raise ValueError("a budget skip must not include generation artifacts")
     previous = next((event for event in reversed(state.get("events", []))
                      if event.get("stage") == "iteration_admission"
                      and event.get("iteration") == iteration), {})
@@ -191,6 +239,7 @@ def _validate_budget_skip(state: dict[str, Any], iteration: int,
     if (request.get("fn_count") != 0
             or request.get("eligible_fn_count") != planning["eligible_fn_count"]
             or planning["eligible_fn_count"] < 1
+            or planning["new_image_budget"] != _synthetic_room(admission)
             or not planning["new_image_budget"] < planning["images_per_fn"]
             or planning["selected_fn_count"] != 0
             or planning["planned_images"] != 0
@@ -431,6 +480,7 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
     elif stage == "iteration_gaps":
         _validate_gaps(artifacts)
     next_stage, status = NEXT.get(stage), "RUNNING"
+    synthesis_decision = None
     if stage == "iteration_retrieval" and retrieval and retrieval.get("converged"):
         next_stage, status = None, "COMPLETE"
         state["completion_reason"] = "mining_exhausted"
@@ -440,12 +490,27 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         next_stage, status = None, "COMPLETE"
         state["completion_reason"] = "all_producers_exhausted"
     if stage == "iteration_admission" and state.get("synthesis_enabled"):
-        next_stage = "iteration_synthesis"
+        room = _synthetic_room(admission)
+        if room:
+            next_stage = "iteration_synthesis"
+        else:
+            synthesis_decision = {"status": "SKIPPED", "reason": "no_synthetic_budget",
+                                  "available_room_before_admission": room}
     if synthesis_skip_reason:
-        admitted = synthesis["admitted"]
-        if not sum(int(admitted.get(role, 0)) for role in ("real", "clean", "synthetic")):
-            next_stage, status = None, "COMPLETE"
-            state["completion_reason"] = "no_new_training_images"
+        synthesis_decision = {"status": "SKIPPED", "reason": synthesis_skip_reason,
+                              "available_room_before_admission": _synthetic_room(admission)}
+    if stage == "iteration_synthesis" and admission and not admission["new_training_images"]:
+        admission = _committed_admission(state, iteration)
+    if (next_stage != "iteration_synthesis"
+            and stage in {"iteration_admission", "iteration_synthesis"} and admission and not int(
+                admission["new_training_images"])):
+        next_stage, status = None, "COMPLETE"
+        outcomes = list(admission["role_status"].values())
+        state["completion_reason"] = (
+            "retrieval_no_matches"
+            if outcomes and all(row["status"] == "NO_MATCHES" for row in outcomes)
+            else "retrieval_no_new_data"
+        )
     if stage == "iteration_gaps":
         if iteration >= int(state["max_iterations"]):
             next_stage, status = None, "COMPLETE"
@@ -455,9 +520,8 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
                  next_stage=next_stage)
     event = {"stage": stage, "iteration": iteration, "artifacts": artifacts,
              "committed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    if synthesis_skip_reason:
-        event["synthesis_decision"] = {"status": "SKIPPED",
-                                       "reason": synthesis_skip_reason}
+    if synthesis_decision:
+        event["synthesis_decision"] = synthesis_decision
     state.setdefault("events", []).append(event)
     temporary = state_path.with_suffix(state_path.suffix + ".tmp")
     temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
@@ -475,7 +539,10 @@ def main() -> int:
     parser.add_argument("--artifact", action="append", default=[])
     args = parser.parse_args()
     result = commit(args.state.resolve(), args.stage, args.iteration, args.artifact)
-    print(json.dumps({"status": result["status"], "next_stage": result["next_stage"]}))
+    summary = {"status": result["status"], "next_stage": result["next_stage"]}
+    if result.get("completion_reason"):
+        summary["completion_reason"] = result["completion_reason"]
+    print(json.dumps(summary))
     return 0
 
 
