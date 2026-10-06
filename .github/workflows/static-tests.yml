@@ -33,3 +33,36 @@ jobs:
           set -euo pipefail
           BASE="$(git merge-base "${BASE_SHA}" HEAD)"
           pre-commit run --from-ref "${BASE}" --to-ref HEAD --show-diff-on-failure
+
+  card-pack-tests:
+    name: Card pack unit tests (token-efficient kit + DEFT AOI pack)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node (loads the Pi provider extension in tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install test dependencies
+        run: pip install pandas pyarrow pyyaml numpy matplotlib pillow
+
+      - name: Pi adapter guard tests
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pi" --no-save --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+          PI_TEST_RUNTIME="$RUNNER_TEMP/pi" node --test scripts/tests/token_efficient_guard.test.mjs
+
+      - name: Kit driver + installer tests
+        run: python -m unittest discover -s scripts/tests -p test_token_efficient_execution.py
+
+      - name: DEFT AOI card helper tests
+        run: python -m unittest discover -s skills/applications/tao-run-deft-aoi/tests -p 'test_card_*.py'
