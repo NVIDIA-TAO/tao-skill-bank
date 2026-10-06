@@ -13,6 +13,22 @@ MASK_BRANCHES_PER_NEIGHBOR = 2
 SELECTION_MODES = {"all_eligible", "generated_per_type_plan"}
 
 
+def resolve_candidate_topn(
+    synthesis: dict[str, Any], legacy_candidate_overfetch: Any = None,
+) -> int:
+    """Resolve the synthesis-only clean-neighbor search depth."""
+    value = synthesis.get("candidate_topn", legacy_candidate_overfetch)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("synthesis.candidate_topn must be a positive integer")
+    neighbors = synthesis.get("max_neighbors_per_fn")
+    if (isinstance(neighbors, int) and not isinstance(neighbors, bool)
+            and value < neighbors):
+        raise ValueError(
+            "synthesis.candidate_topn must be at least max_neighbors_per_fn"
+        )
+    return value
+
+
 def validate_synthesis_contract(synthesis: dict[str, Any]) -> tuple[str, int]:
     selection = synthesis.get("fn_selection") or {}
     if not isinstance(selection, dict):
@@ -28,6 +44,8 @@ def validate_synthesis_contract(synthesis: dict[str, Any]) -> tuple[str, int]:
     if (isinstance(neighbors, bool) or not isinstance(neighbors, int)
             or neighbors < 1):
         raise ValueError("synthesis.max_neighbors_per_fn must be a positive integer")
+    if "candidate_topn" in synthesis:
+        resolve_candidate_topn(synthesis)
     if "cumulative_fraction_of_total_defects" in synthesis:
         try:
             fraction = float(synthesis["cumulative_fraction_of_total_defects"])

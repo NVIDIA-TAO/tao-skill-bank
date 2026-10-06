@@ -153,6 +153,12 @@ def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     assert policy["retrieval"]["preprocessing"]["profile"] == "square_context"
     assert policy["retrieval"]["selection"]["strategy"] == "round_robin_similarity"
     assert policy["retrieval"]["output_size"] == 224
+    assert policy["retrieval"]["candidate_overfetch"] == 15
+    assert policy["retrieval"]["round_robin_refill_overfetch"] == [
+        5, 15, 50, 200, 100000,
+    ]
+    assert policy["synthesis"]["candidate_topn"] == 3
+    assert policy["synthesis"]["max_neighbors_per_fn"] == 1
     assert policy["routing"]["round_robin_real_factor_default"] == 3
     assert policy["routing"]["near_miss_real_cap_per_pocket"] == 20
     assert "near_miss_real_cap" not in policy["routing"]
@@ -263,6 +269,64 @@ def test_initialize_preserves_legacy_synthetic_fraction_override(tmp_path: Path)
     assert policy["synthesis"]["fn_selection"] == {"mode": "all_eligible"}
 
 
+def test_initialize_keeps_synthesis_topn_independent_from_retrieval(
+        tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    _enable_synthesis(tmp_path, value)
+    _set_valid_routed_metadata(tmp_path, value)
+    value["retrieval"] = {"candidate_overfetch": 9}
+    value["synthesis"]["candidate_topn"] = 3
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+
+    assert policy["retrieval"]["candidate_overfetch"] == 9
+    assert policy["synthesis"]["candidate_topn"] == 3
+    assert not any(
+        warning["code"] == "inherited_synthesis_candidate_topn"
+        for warning in state["warnings"]
+    )
+
+
+def test_initialize_migrates_legacy_shared_candidate_overfetch(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    _enable_synthesis(tmp_path, value)
+    _set_valid_routed_metadata(tmp_path, value)
+    value["retrieval"] = {"candidate_overfetch": 7}
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+
+    assert policy["retrieval"]["candidate_overfetch"] == 7
+    assert policy["synthesis"]["candidate_topn"] == 7
+    assert state["warnings"][-1] == {
+        "code": "inherited_synthesis_candidate_topn",
+        "source": "retrieval.candidate_overfetch",
+        "target": "synthesis.candidate_topn",
+        "value": 7,
+        "message": (
+            "synthesis.candidate_topn was omitted; inherited the explicit "
+            "retrieval.candidate_overfetch value for backward compatibility"
+        ),
+    }
+
+
+def test_initialize_names_invalid_legacy_candidate_overfetch(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    _enable_synthesis(tmp_path, value)
+    _set_valid_routed_metadata(tmp_path, value)
+    value["retrieval"] = {"candidate_overfetch": 0}
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="retrieval.candidate_overfetch.*inherited"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
 @pytest.mark.parametrize(
     ("override", "message"),
     [
@@ -270,6 +334,11 @@ def test_initialize_preserves_legacy_synthetic_fraction_override(tmp_path: Path)
         ({"max_neighbors_per_fn": 0}, "max_neighbors_per_fn.*positive integer"),
         ({"max_neighbors_per_fn": True}, "max_neighbors_per_fn.*positive integer"),
         ({"max_neighbors_per_fn": 1.5}, "max_neighbors_per_fn.*positive integer"),
+        ({"candidate_topn": 0}, "candidate_topn.*positive integer"),
+        ({"candidate_topn": True}, "candidate_topn.*positive integer"),
+        ({"candidate_topn": 1.5}, "candidate_topn.*positive integer"),
+        ({"candidate_topn": 2, "max_neighbors_per_fn": 3},
+         "candidate_topn.*at least max_neighbors_per_fn"),
         ({"fn_selection": {"mode": "generated_per_type_plan", "images_per_fn": 2}},
          "images_per_fn is derived"),
         ({"cumulative_fraction_of_total_defects": -0.1}, "must be in.*0, 1"),

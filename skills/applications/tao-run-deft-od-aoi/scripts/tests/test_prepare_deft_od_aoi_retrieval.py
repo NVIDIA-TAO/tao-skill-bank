@@ -932,6 +932,7 @@ def test_round_robin_selection_is_independent_of_preprocessing(
         "annotations": [], "categories": [{"id": 1, "name": "defect"}],
     }))
     document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    document["retrieval"]["candidate_overfetch"] = 999
     policy.write_text(yaml.safe_dump(document))
     MODULE.candidates(policy, tmp_path / "candidates")
     strict = tmp_path / "strict.parquet"
@@ -939,7 +940,10 @@ def test_round_robin_selection_is_independent_of_preprocessing(
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
                    "bbox": [8, 8, 16, 12], "best_iou": 0.0,
                    "real_factor": 3}]).to_parquet(strict)
-    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+    # Exercise the clean role so the requested count proves that round-robin
+    # ignores the deliberately large max-similarity overfetch above.
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [8, 8, 16, 12], "best_iou": 0.0}]).to_parquet(loose)
 
     report = MODULE.queries(
         policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
@@ -954,7 +958,9 @@ def test_round_robin_selection_is_independent_of_preprocessing(
     ]
     assert not {"benchmark", "texture", "defect_type"}.intersection(frame.columns)
     assert Image.open(frame.iloc[0].filepath).size == expected_size
+    assert report["requested_crop_counts"] == {"real": 1, "clean": 2}
     assert not (tmp_path / "queries/mine_real.yaml").exists()
+    assert not (tmp_path / "queries/mine_clean.yaml").exists()
 
 
 def test_round_robin_defaults_to_three_real_candidates_per_strict_fn(
