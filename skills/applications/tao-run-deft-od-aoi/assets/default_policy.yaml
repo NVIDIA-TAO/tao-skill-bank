@@ -16,6 +16,8 @@ gap:
   background_iou_upper: 0.05
   near_miss_iou_upper: 0.5
 retrieval:
+  selection:
+    strategy: round_robin_similarity
   model: SigLIP
   model_path: google/siglip-base-patch16-224
   preprocessing:
@@ -26,14 +28,25 @@ retrieval:
   output_size: 224
   minimum_similarity: -1.0
   candidate_overfetch: 15
+  round_robin_refill_overfetch: [5, 15, 50, 200, 100000]
+  audit_top_k_per_query: 20
 routing:
   real_mine_factor_min: 1
   real_mine_factor_max: 6
+  round_robin_real_factor_default: 3
   near_miss_real_factor: 2
-  near_miss_real_cap: 20
+  near_miss_real_cap_per_pocket: 20
   clean_factor: 2
   clean_cumulative_cap_per_real: 1.0
 admission:
+  duplicate_global_cosine: 0.995
+  duplicate_defect_cosine: 0.985
+  duplicate_position_delta: 0.04
+  clean_duplicate_global_cosine: 0.999
+  clean_cluster_cosine: 0.97
+  clean_cluster_minimum_cap: 2
+  clean_cluster_quota_divisor: 4
+  duplicate_gt_iou: 0.9
   minimum_box_area_px: 64
   maximum_box_aspect: 25.0
 training:
