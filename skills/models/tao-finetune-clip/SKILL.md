@@ -20,7 +20,7 @@ tags:
 
 # CLIP
 
-> **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
+> **Standalone install?** Read [CLIP standalone setup](references/standalone-setup.md) and verify the bank checkout before running `tao-setup` or launching a CLIP action.
 
 Contrastive Language-Image Pre-training model for zero-shot and fine-tuned image classification, image-text retrieval, and embedding extraction. Fine-tuning adapts CLIP's shared image-text embedding space to domain-specific image-caption data.
 
@@ -64,7 +64,7 @@ Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows st
 
 ## Instructions
 
-Use this skill for NVIDIA TAO CLIP jobs: training, evaluation, embedding inference, ONNX export, and TensorRT engine generation. Start by identifying the requested action, then load only the referenced files needed for that action: `defaults.json` for default parameters, `config.json` for action/data-source wiring, `references/spec_template.yaml` for full spec shape, and `references/model_info.yaml` for SDK metadata.
+Use this skill for NVIDIA TAO CLIP jobs: training, evaluation, embedding inference, ONNX export, and TensorRT engine generation. Start by identifying the requested action, then read `references/skill_info.yaml` for image, command, and data-source wiring; `references/spec_template_<action>.yaml` for packaged action defaults; and `schemas/<action>.schema.json` when packaged for parameter metadata. Use `references/spec_template.yaml` for the full spec shape and `references/tao-deploy-clip.md` for TensorRT actions.
 
 For dataset-backed actions, collect the required image, caption, list, or prompt files from the user and place the resolved paths in `spec_overrides`. For local Docker runs, mount extracted folders in the container and point `image_dir` / `caption_dir` at those folders; if a data source provides `.tar.gz` archives, extract them before running the in-container CLIP commands. For `export` and `gen_trt_engine`, infer parent artifacts from the upstream job when available; otherwise require explicit checkpoint, ONNX, or engine paths. Run `gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference` in the TAO Deploy image.
 
@@ -74,13 +74,16 @@ For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and Tens
 
 - **Dataset type:** image_text
 - **Formats:** custom image/caption folders or WebDataset shards
-- **Monitoring metric:** val/t2i_mAP
+- **Monitoring metric:** `val/t2i_mAP` for paired-caption retrieval;
+  `val/pas/overall_mAP` for PAS metadata matching
 
-The train action emits `val/t2i_mAP`, which is the AutoML selection objective.
-The standalone evaluate action reports the corresponding held-out metric as
-`test/t2i_mAP`; use that name for checkpoint evaluation and compare its value
-with the selected training validation metric rather than expecting a `val/`
-key from the evaluate action.
+Before selecting a PAS AutoML objective or comparing training and evaluation,
+read [PAS metric guidance](references/pas-metrics.md). PAS validation logs
+`val/pas/{easy,medium,hard,overall}_{mAP,rank1,rank5}`; standalone PAS evaluate
+writes CSVs rather than `test/*` scalars. For a like-for-like comparison, use
+the same checkpoint and validation subset, set
+`evaluate.pas_ground_truth_mode: scalar_attributes`, and read
+`nvidia_pas_metadata_metrics_weighted_aggregate.csv`.
 
 ### Supported Models
 
@@ -89,6 +92,28 @@ key from the evaluate action.
 - **SigLIP2:** `siglip2-so400m-patch16-256`, `siglip2-so400m-patch14-224`, `siglip2-so400m-patch14-384`, `siglip2-so400m-patch16-384`, `siglip2-so400m-patch16-512`, `siglip2-so400m-patch16-naflex`
 
 Radio-CLIP requires `model.adaptor_name` to be set to `siglip` or `clip`.
+
+Under the tower `mode` contract, OpenCLIP supports `full` / `frozen`, but
+rejects `lora`. See [backbone support](references/clip-peft.md).
+
+### LoRA and preservation regularization
+
+Before constructing a LoRA spec or PEFT AutoML search space, read
+[CLIP PEFT guidance](references/clip-peft.md) for per-tower fields, defaults,
+backbone target modules, numeric bounds, migration from tower `enabled` to
+`mode`, and encoder-freeze precedence. `peft` and `regularization` are
+top-level spec blocks; use the selected runtime's config contract.
+
+With PEFT enabled under the tower `mode` contract, tower modes override
+`model.freeze_*_encoder`: `frozen` freezes the tower, `full` trains it, and
+`lora` trains adapters with the backbone frozen. Remove conflicting freeze
+flags and verify per-tower trainable-parameter counts.
+
+LoRA checkpoints contain the full model; budget full-model storage.
+Preservation regularization adds a full frozen teacher on the GPU and a
+teacher forward pass. Keep `regularization.enabled: false` for recommended
+SigLIP2 PAS runs: preservation loss has not been fully validated there.
+The teacher is excluded from checkpoints.
 
 ### Per-Action Dataset Requirements
 
@@ -175,6 +200,11 @@ Set `export.encoder_type: separate` when deployment should use independent visio
 
 For checkpoint-dependent actions, use the model-specific checkpoint resolver output from the parent train job. CLIP training writes checkpoints such as `model_epoch_000_step_00020.pth` and a `clip_latest.pth` symlink. Use the exact resolved checkpoint for `evaluate.checkpoint`, `inference.checkpoint`, `export.checkpoint`, and `train.resume_training_checkpoint_path`; use `clip_latest.pth` only when the user explicitly asks for latest.
 
+For LoRA checkpoints, preserve the training model settings and complete
+top-level `peft` block in PyTorch `evaluate`, `inference`, and `export` specs.
+Read [checkpoint configuration](references/clip-peft.md#checkpoint-actions)
+before constructing those specs; action defaults alone omit PEFT.
+
 When the resolved checkpoint is trusted TAO output, checkpoint-backed PyTorch `evaluate`, `inference`, `export`, and resume training should run with `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`. PyTorch 2.6 otherwise defaults checkpoint loading to weights-only mode and can reject CLIP Lightning checkpoints containing NumPy scalar metadata.
 
 **gen_trt_engine:**
@@ -209,14 +239,22 @@ Use `evaluate.trt_engine` for TensorRT evaluation and `inference.trt_engine` for
 - **model.image_size**: Training transform image resolution. Keep it aligned with the selected fixed-resolution backbone.
 - **train.num_epochs**: CLIP fine-tuning often converges quickly. Start with 10-20 epochs for domain adaptation, then increase only if validation loss is still improving.
 - **train.optim.vision_lr / train.optim.text_lr**: Learning rates for the two encoders. CLIP is sensitive to high learning rates; reduce both if loss is unstable.
-- **model.freeze_vision_encoder / model.freeze_text_encoder**: Defaults are false. Freezing one encoder can help when the dataset is small or only one modality needs adaptation.
+- **model.freeze_vision_encoder / model.freeze_text_encoder**: Defaults are false. These flags control encoder freezing when `peft.enabled: false`. With PEFT enabled under the tower `mode` contract, `peft.vision.mode` / `peft.text.mode` override them, even if they disagree: `full` trains the encoder, `frozen` freezes it, and `lora` trains adapters. See [PEFT precedence](references/clip-peft.md#encoder-freeze-flags-and-peft-precedence) and remove conflicting freeze flags.
 - **train.loss_type**: `siglip` is recommended for SigLIP2 and Radio-CLIP. Use `clip` for CLIP-style softmax loss.
 - **export.encoder_type**: `combined` exports one ONNX graph. `separate` exports independent vision and text graphs.
 - **gen_trt_engine.tensorrt.data_type**: TensorRT deployment supports `fp16` and `fp32`.
 
 ## Hardware
 
-Single-GPU training works for small datasets. Use 4+ GPUs for datasets with more than 100k images or large backbones. Use 16GB+ VRAM per GPU for small/fixed-resolution runs and larger GPUs for Radio-CLIP or high-resolution OpenCLIP variants.
+Single-GPU training works for small datasets. Use 4+ GPUs for datasets with more than 100k images or large backbones. Use 16GB+ VRAM per GPU for small/fixed-resolution runs with preservation regularization disabled and larger GPUs for Radio-CLIP or high-resolution OpenCLIP variants.
+
+The 16GB+ guidance does not account for the additional full teacher model
+created by `regularization.enabled: true`. If testing regularization, budget
+VRAM for that second model and its forward-pass intermediates, measure peak
+memory and step time for the actual backbone and batch size, and reduce
+`dataset.train.batch_size` or use a larger GPU as needed. Extra memory depends
+on the model's resident dtype; `train.precision: fp16` alone does not guarantee
+that the teacher weights occupy half precision.
 
 ## Error Patterns
 
@@ -224,7 +262,7 @@ See `references/error-patterns.md` for the full list of CLIP error symptoms and 
 
 ## Spec Param / Parent Model Inference
 
-See `references/spec-param-inference.md` for the model-specific inference mappings (the full `clip.config.json` action/spec-field/inference-function table) that generated runners apply with SDK helpers before `create_job()`, plus `parent_job_id` resolution rules.
+See `references/spec-param-inference.md` for the packaged model-specific action/spec-field/inference-function mappings that generated runners apply with SDK helpers before `create_job()`, plus `parent_job_id` resolution rules.
 
 ## Deployment
 
