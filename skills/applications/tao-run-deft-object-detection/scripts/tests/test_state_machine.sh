@@ -675,8 +675,10 @@ assert_rc 0 "state records the failure without advancing stage_completed"
 section "B2. only loop_stop may follow a hard stop"
 
 freeze "$RUN_B"
+# A well-formed retry -- it carries its mAP -- so the hard-stop rule is what refuses
+# it, not an argument check.
 commit "$RUN_B" baseline kpi_analyze \
-  --kpi-csv "$RUN_B/baseline/kpi/kpi_calc.csv" \
+  --kpi-csv "$RUN_B/baseline/kpi/kpi_calc.csv" --map-value 0.4 \
   --summary "silent retry after the hard stop"
 assert_rc 1 "retrying the failed stage is rejected"
 case "$RUN_OUT" in
@@ -2291,37 +2293,123 @@ case "$RUN_OUT" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
-# G24 — a run with no baseline mAP has produced no trend
+# G24 — a phase that recorded no mAP has not succeeded, so the loop cannot pass it
 #
-# --map-value is optional, because a log printing "mAP: nan" has none to record.
-# Completion is not: the baseline mAP is what every iteration is compared against.
+# The per-phase mAP trend is the loop's only result. kpi_analyze committed ok without
+# one left a hole the loop then advanced past, and the run still ended "complete".
+# A real `mAP: nan` cannot be iteration-specific -- the KPI set and mapping are the
+# same for every phase -- so it is a configuration fault, recorded as status=error.
 # ═══════════════════════════════════════════════════════════════════════════
-CURRENT_SECTION="G24 completion needs a baseline mAP"
+CURRENT_SECTION="G24 every scored phase records its mAP"
 
 G24=$(new_workspace g24); make_pool "$G24"
 G24_RUN="$G24/results/run_g24"
-init_run "$G24" "$G24_RUN" 1
+init_run "$G24" "$G24_RUN" 2
 make_phase_artifacts "$G24_RUN" baseline
 commit "$G24_RUN" baseline inference \
   --inference-labels-dir "$G24_RUN/baseline/inference/labels" --summary s --duration-sec 1
+
+freeze "$G24_RUN"
 commit "$G24_RUN" baseline kpi_analyze \
-  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" \
-  --summary "mAP: nan — no value to record" --duration-sec 1
-assert_rc 0 "[G24] kpi_analyze may commit without a map_value"
-
-make_iter_artifacts "$G24_RUN" iter1
-commit "$G24_RUN" iter1 gap_analysis \
-  --weak-images "$G24_RUN/iter1/gaps/weak_images.parquet" \
-  --gap-report "$G24_RUN/iter1/gaps/gap_report.json" \
-  --weak-image-count 0 --summary "no weak images" --duration-sec 1
-commit "$G24_RUN" iter1 loop_stop --summary "early stop" --duration-sec 1
-assert_rc 0 "[G24] the documented early stop is committed"
-
-run "$PY" "$AUDIT" --results-dir "$G24_RUN" --require-complete
-assert_rc 1 "[G24] but with no baseline mAP the run is not complete"
+  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" --summary "scored" --duration-sec 1
+assert_rc 1 "[G24] kpi_analyze is refused as ok without --map-value"
 case "$RUN_OUT" in
-  *"no baseline mAP"*) ok "[G24] the reason names the missing baseline mAP" ;;
-  *) notok "[G24] the reason names the missing baseline mAP" "output: $RUN_OUT" ;;
+  *"requires --map-value"*) ok "[G24] the refusal names --map-value" ;;
+  *) notok "[G24] the refusal names --map-value" "output: $RUN_OUT" ;;
+esac
+assert_unchanged "$G24_RUN" "[G24] the refused commit writes nothing"
+
+# It is an argument rule, so it fires before the lock is taken or any state is read:
+# pointed at a results dir that does not exist, the refusal is still this one.
+commit "$G24/results/no_such_run" baseline kpi_analyze \
+  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" --summary "scored" --duration-sec 1
+case "$RUN_OUT" in
+  *"requires --map-value"*) ok "[G24] the mAP rule is checked before any state is read" ;;
+  *) notok "[G24] the mAP rule is checked before any state is read" "output: $RUN_OUT" ;;
+esac
+
+commit "$G24_RUN" baseline kpi_analyze \
+  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 \
+  --summary "kpi: mAP=0.5" --duration-sec 1
+assert_rc 0 "[G24] the baseline scored with its mAP commits"
+
+# Only kpi_analyze may record an mAP. It lives on the phase entry, so any other
+# stage's commit would overwrite the phase's measured score.
+commit "$G24_RUN" baseline loop_stop --map-value 0.99 --summary "stop" --duration-sec 1
+assert_rc 1 "[G24] --map-value on a stage other than kpi_analyze is refused"
+case "$RUN_OUT" in
+  *"--map-value belongs to kpi_analyze, not 'loop_stop'"*)
+    ok "[G24] the refusal names the stage it belongs to" ;;
+  *) notok "[G24] the refusal names the stage it belongs to" "output: $RUN_OUT" ;;
+esac
+assert_eq '0.5' "$("$PY" -c 'import json,sys
+print(json.load(open(sys.argv[1]))["iterations"]["baseline"]["map_value"])' "$G24_RUN/deft_state.json")" \
+  "[G24] the phase keeps the mAP its kpi_analyze measured"
+
+# An iteration scored without its mAP: the loop must not move on to iter2.
+make_iter_artifacts "$G24_RUN" iter1
+for st in gap_analysis embed mine stage train inference; do
+  case "$st" in
+    gap_analysis) commit "$G24_RUN" iter1 gap_analysis \
+        --weak-images "$G24_RUN/iter1/gaps/weak_images.parquet" \
+        --gap-report "$G24_RUN/iter1/gaps/gap_report.json" \
+        --weak-image-count 9 --summary s --duration-sec 1 ;;
+    embed) commit "$G24_RUN" iter1 embed \
+        --embeddings-parquet "$G24_RUN/iter1/embeddings/weak_images_embeddings.parquet" \
+        --summary s --duration-sec 1 ;;
+    mine) commit "$G24_RUN" iter1 mine \
+        --mining-output "$G24_RUN/iter1/mining/final_unique_files.parquet" \
+        --mining-summary "$G24_RUN/iter1/mining/summary.json" --summary s --duration-sec 1 ;;
+    stage) commit "$G24_RUN" iter1 stage \
+        --odvg "$G24_RUN/iter1/tmm/annotations/tmm_odvg.jsonl" \
+        --label-map "$G24_RUN/iter1/tmm/annotations/labelmap.json" \
+        --staged-images-dir "$G24_RUN/iter1/tmm/images" \
+        --exclude-parquet "$G24_RUN/iter1/mined_cumulative.parquet" --summary s --duration-sec 1 ;;
+    train) commit "$G24_RUN" iter1 train \
+        --checkpoint "$G24_RUN/iter1/train/gdino_model_latest.pth" \
+        --training-spec "$G24_RUN/iter1/train_grounding_dino.yaml" --summary s --duration-sec 1 ;;
+    inference) commit "$G24_RUN" iter1 inference \
+        --inference-labels-dir "$G24_RUN/iter1/inference/labels" --summary s --duration-sec 1 ;;
+  esac
+done
+commit "$G24_RUN" iter1 kpi_analyze \
+  --kpi-csv "$G24_RUN/iter1/kpi/kpi_calc.csv" --summary "scored" --duration-sec 1
+assert_rc 1 "[G24] an iteration's kpi_analyze is refused as ok without --map-value"
+assert_eq 'kpi_analyze' "$(report_field "$G24_RUN" next_action)" \
+  "[G24] so the loop stays on iter1's scoring rather than advancing to iter2"
+
+# `mAP: nan` is recorded as the failure it is, and the run stops there.
+commit "$G24_RUN" iter1 kpi_analyze --status error \
+  --summary "kpi_analyze printed mAP: nan" --duration-sec 1
+assert_rc 0 "[G24] a nan mAP is committed as status=error"
+assert_eq 'true' "$(report_field "$G24_RUN" run_failed)" \
+  "[G24] and the run is failed, not carried on to iter2"
+
+# A run recorded before the rule: an ok kpi_analyze with no map_value in state. The
+# audit refuses it, naming the phase, so it is repaired rather than built on.
+G24B=$(new_workspace g24b); make_pool "$G24B"
+G24B_RUN="$G24B/results/run_g24b"
+init_run "$G24B" "$G24B_RUN" 1
+make_phase_artifacts "$G24B_RUN" baseline
+commit "$G24B_RUN" baseline inference \
+  --inference-labels-dir "$G24B_RUN/baseline/inference/labels" --summary s --duration-sec 1
+commit "$G24B_RUN" baseline kpi_analyze \
+  --kpi-csv "$G24B_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 --summary s --duration-sec 1
+"$PY" - "$G24B_RUN/deft_state.json" <<'EOF'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p))
+del s["iterations"]["baseline"]["map_value"]     # as an older commit_stage allowed
+json.dump(s, open(p, "w"))
+EOF
+run "$PY" "$AUDIT" --results-dir "$G24B_RUN"
+assert_rc 1 "[G24] an older run with an ok kpi_analyze and no mAP fails the audit"
+case "$RUN_OUT" in
+  *"DEFT_RUN_STATUS=INVALID"*) ok "[G24] it audits INVALID, so it is repaired rather than built on" ;;
+  *) notok "[G24] it audits INVALID, so it is repaired rather than built on" "output: $RUN_OUT" ;;
+esac
+case "$RUN_OUT" in
+  *"baseline/kpi_analyze ok but"*"map_value"*) ok "[G24] the audit names the phase missing its mAP" ;;
+  *) notok "[G24] the audit names the phase missing its mAP" "output: $RUN_OUT" ;;
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
