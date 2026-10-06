@@ -18,6 +18,7 @@ plugin workflow must not require a `tao-core` checkout at runtime.
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib
 import json
 import logging
@@ -69,6 +70,18 @@ COSMOS_EVALUATE_AUTOML_DEFAULT_PARAMETERS = [
     "generation.presence_penalty",
     "generation.frequency_penalty",
 ]
+
+
+SPARSE4D_EXCLUDED_FIELDS = (
+    "model.sv_aux_head",
+    "model.sv_scene_keywords",
+    "model.head.loose_to_tight.sv_depth_weight",
+    "model.head.loose_to_tight.sv_size_weight",
+    "model.head.loose_to_tight.sv_yaw_weight",
+    "dataset.resize_to_canonical_2d",
+    "dataset.canonical_2d_height",
+    "dataset.canonical_2d_width",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -185,6 +198,41 @@ def filter_schema(schema: dict[str, Any], valid_actions: set[str], current_actio
     schema["default"] = {
         key: value for key, value in schema.get("default", {}).items() if key in allowed_keys
     }
+    return schema
+
+
+def filter_sparse4d_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Package only calibrated multi-camera fields, including defaults and metadata."""
+    schema = copy.deepcopy(schema)
+
+    def excluded(path: str) -> bool:
+        return any(path == field or path.startswith(field + ".") for field in SPARSE4D_EXCLUDED_FIELDS)
+
+    def visit(node: dict[str, Any], prefix: str = "") -> None:
+        for metadata in ("default", "popular"):
+            for field in SPARSE4D_EXCLUDED_FIELDS:
+                if not field.startswith(prefix):
+                    continue
+                parts = field[len(prefix):].split(".")
+                value = node.get(metadata)
+                for part in parts[:-1]:
+                    value = value.get(part) if isinstance(value, dict) else None
+                if isinstance(value, dict):
+                    value.pop(parts[-1], None)
+        for metadata in ("automl_disabled_parameters", "automl_default_parameters"):
+            if metadata in node:
+                node[metadata] = [path for path in node[metadata] if not excluded(path)]
+        if "required" in node:
+            node["required"] = [key for key in node["required"] if not excluded(prefix + key)]
+        properties = node.get("properties", {})
+        for key in list(properties):
+            path = prefix + key
+            if excluded(path):
+                del properties[key]
+            elif isinstance(properties[key], dict):
+                visit(properties[key], path + ".")
+
+    visit(schema)
     return schema
 
 
@@ -369,6 +417,8 @@ def generate_schema_for_action(
             json_with_meta = dataclass2json_converter.dataclass_to_json(exp_config)
             schema = dataclass2json_converter.create_json_schema(json_with_meta)
             schema = filter_schema(schema, get_valid_action_keys(skill_config, core_module), schema_action)
+            if core_module == "sparse4d":
+                schema = filter_sparse4d_schema(schema)
             if core_module == "cosmos-rl" and schema_action in {"evaluate", "inference"}:
                 schema = unwrap_cosmos_non_train_action_schema(schema, schema_action)
             if core_module == "cosmos-rl" and schema_action == "evaluate":

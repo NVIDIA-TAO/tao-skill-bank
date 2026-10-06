@@ -42,7 +42,7 @@ def normalize_metadata(value):
     if isinstance(value, dict):
         return {
             key: sorted(item)
-            if key in {"popular", "automl_disabled_parameters"}
+            if key in {"popular", "automl_disabled_parameters", "required"}
             and isinstance(item, list)
             and all(isinstance(entry, str) for entry in item)
             else normalize_metadata(item)
@@ -132,6 +132,28 @@ def test_geometric_fragment_merges_into_runtime_dataclass(package, backbone):
     assert merged.model.backbone.type == backbone
     assert merged.model.head.loose_to_tight.enable
     assert merged.dataset.sync_route
+
+
+@pytest.mark.parametrize("package", ["nvidia_tao_core", "nvidia_tao_pytorch"])
+@pytest.mark.parametrize("backbone", ["resnet_50", "resnet_101"])
+def test_packaged_template_keeps_runtime_routes_disabled(package, backbone):
+    pytest.importorskip(package)
+    omega = pytest.importorskip("omegaconf").OmegaConf
+    module = importlib.import_module(f"{package}.config.sparse4d.default_config")
+    template = yaml.safe_load((SKILL / "references/spec_template_train.yaml").read_text())
+    template["model"]["backbone"]["type"] = backbone
+    template["model"]["head"]["instance_bank"]["anchor"] = "/models/selected/anchor.npy"
+    template["train"]["pretrained_model_path"] = "/models/selected/model.pth"
+    config = omega.merge(omega.structured(module.ExperimentConfig()), template,
+                         omega.load(SKILL / "references/geometric_distillation_train.yaml"))
+    assert config.model.backbone.type == backbone
+    assert config.model.head.instance_bank.anchor == "/models/selected/anchor.npy"
+    assert config.train.pretrained_model_path == "/models/selected/model.pth"
+    assert config.model.head.loose_to_tight.enable
+    assert config.model.head.loose_to_tight.pseudo_enable
+    assert config.dataset.sync_route
+    assert not config.model.sv_aux_head.enable
+    assert not config.dataset.resize_to_canonical_2d
 
 
 def test_core_validator_accepts_distillation_and_rejects_unknown_field():

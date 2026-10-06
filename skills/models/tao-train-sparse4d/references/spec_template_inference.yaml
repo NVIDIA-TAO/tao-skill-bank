@@ -328,29 +328,8 @@ model:
       class_gate: true
       pseudo_box_weight: 0.1
       pseudo_cls_weight: 1.0
-      sv_depth_weight: 0.0
-      sv_size_weight: 0.25
-      sv_yaw_weight: 0.0
   use_temporal_align: false
   cotrain_param_touch: false
-  sv_scene_keywords:
-  - SV2D
-  sv_aux_head:
-    enable: false
-    in_channels: 256
-    num_classes: 0
-    roi_size: 7
-    hidden_dim: 256
-    fpn_strides:
-    - 4
-    - 8
-    - 16
-    - 32
-    use_level: 1
-    loss_weight: 1.0
-    det_box_key: det_boxes_2d
-    det_cls_key: det_classes_2d
-    min_box_size: 2.0
 dataset:
   type: omniverse_3d_det_track
   batch_size: 2
@@ -386,9 +365,6 @@ dataset:
   rtdetr_2d_per_class_score_thr: {}
   rtdetr_2d_cache_size: 4
   rtdetr_2d_mark_real: true
-  resize_to_canonical_2d: false
-  canonical_2d_height: 1080
-  canonical_2d_width: 1920
   sync_route: false
   real_scene_keywords: []
   real_block_prob: -1.0

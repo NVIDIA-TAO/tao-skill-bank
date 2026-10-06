@@ -71,14 +71,14 @@
     ]
   },
   {
-    "id": "tao-train-sparse4d-unsupported-data",
-    "question": "A user request: \"I have uncalibrated single-camera COCO images of bicycles and cars. Can I use the released warehouse LTT weights unchanged for Sparse4D geometric distillation?\" Identify the applicable skill and outline the documented plan using its instructions and references. Do NOT run commands, scripts, web searches, or other tools; describe the plan only.",
+    "id": "tao-train-sparse4d-taxonomy-mismatch",
+    "question": "A user request: \"I have synchronized, calibrated multi-camera scenes with 2D detections of bicycles and cars, plus separate 3D-labeled training and validation data. Can I use the released warehouse LTT weights unchanged for Sparse4D geometric distillation?\" Identify the applicable skill and outline the documented plan using its instructions and references. Do NOT run commands, scripts, web searches, or other tools; describe the plan only.",
     "expected_skill": "tao-train-sparse4d",
     "expected_script": null,
-    "ground_truth": "Identify unsupported single-view inputs and incompatible taxonomy, and explain the supported calibrated route without inventing a working recipe.",
+    "ground_truth": "Identify the incompatible taxonomy and require matching released artifacts before planning geometric distillation for these classes.",
     "expected_behavior": [
-      "Identifies calibration-free single-view training as unsupported",
       "Identifies that the released warehouse LTT taxonomy does not match bicycles and cars",
+      "Requires matching model, teacher, anchor, and LTT class contracts before proceeding",
       "Does not remap class names to pretend released weights support the new taxonomy",
       "Does not invent calibration, anchors, or a new LTT fit recipe",
       "Does not execute commands or launch jobs"

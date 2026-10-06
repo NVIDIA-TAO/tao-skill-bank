@@ -1,6 +1,6 @@
 # 2D-to-3D Geometric Distillation
 
-Use this route for synchronized, calibrated real multi-camera scenes with 2D annotations or offline detector targets, while retaining 3D-labeled training data. **2D-to-3D** is the supervision direction; **3D-to-2D projection** maps predicted cuboids into camera images for the loss. This is the ordinary `sparse4d train` task, not a separate `distill` action. Calibration-free single-view training is unsupported.
+Use this route for synchronized, calibrated real multi-camera scenes with 2D annotations or offline detector targets, while retaining 3D-labeled training data. **2D-to-3D** is the supervision direction; **3D-to-2D projection** maps predicted cuboids into camera images for the loss. This is the ordinary `sparse4d train` task, not a separate `distill` action.
 
 For the full procedure and field descriptions, use the [canonical TAO Sparse4D guide](https://docs.nvidia.com/tao/tao-toolkit/latest/text/cv_finetuning/pytorch/sparse4d/sparse4d.html). This reference supplies the skill's routing and artifact checks.
 

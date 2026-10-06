@@ -4,7 +4,6 @@
   ],
   "automl_disabled_parameters": [
     "model.head.deformable_model",
-    "model.sv_aux_head",
     "model.head.anchor_encoder.embed_dims",
     "train.optim.lr_scheduler",
     "model.head.graph_model",
@@ -16,7 +15,6 @@
     "model.head.visibility_net",
     "quantize.layers",
     "model.neck.in_channels",
-    "model.sv_aux_head.fpn_strides",
     "dataset.normalize.std",
     "train",
     "dataset.normalize",
@@ -35,7 +33,6 @@
     "dataset.real_scene_keywords",
     "model.head.refine_layer",
     "export",
-    "model.sv_scene_keywords",
     "model.head.deformable_model.kps_generator.fix_scale",
     "model.head.loss.reg.cls_allow_reverse",
     "quantize.backend_kwargs",
@@ -114,8 +111,6 @@
         ]
       },
       "batch_size": 2,
-      "canonical_2d_height": 1080,
-      "canonical_2d_width": 1920,
       "classes": [
         "person",
         "gr1_t2",
@@ -158,7 +153,6 @@
       },
       "real_block_prob": -1.0,
       "real_scene_keywords": [],
-      "resize_to_canonical_2d": false,
       "rtdetr_2d_cache_dir": "",
       "rtdetr_2d_cache_path": "",
       "rtdetr_2d_cache_size": 4,
@@ -369,9 +363,6 @@
           "pseudo_box_weight": 0.1,
           "pseudo_cls_weight": 1.0,
           "pseudo_enable": false,
-          "sv_depth_weight": 0.0,
-          "sv_size_weight": 0.25,
-          "sv_yaw_weight": 0.0,
           "tight_l1_weight": 1.0
         },
         "loss": {
@@ -534,27 +525,6 @@
         "start_level": 0,
         "type": "FPN"
       },
-      "sv_aux_head": {
-        "det_box_key": "det_boxes_2d",
-        "det_cls_key": "det_classes_2d",
-        "enable": false,
-        "fpn_strides": [
-          4,
-          8,
-          16,
-          32
-        ],
-        "hidden_dim": 256,
-        "in_channels": 256,
-        "loss_weight": 1.0,
-        "min_box_size": 2.0,
-        "num_classes": 0,
-        "roi_size": 7,
-        "use_level": 1
-      },
-      "sv_scene_keywords": [
-        "SV2D"
-      ],
       "type": "sparse4d",
       "use_deformable_func": true,
       "use_grid_mask": true,
@@ -727,8 +697,6 @@
           ]
         },
         "batch_size": 2,
-        "canonical_2d_height": 1080,
-        "canonical_2d_width": 1920,
         "classes": [
           "person",
           "gr1_t2",
@@ -771,7 +739,6 @@
         },
         "real_block_prob": -1.0,
         "real_scene_keywords": [],
-        "resize_to_canonical_2d": false,
         "rtdetr_2d_cache_dir": "",
         "rtdetr_2d_cache_path": "",
         "rtdetr_2d_cache_size": 4,
@@ -943,22 +910,6 @@
           "maximum": Infinity,
           "minimum": 1,
           "title": "Batch size",
-          "type": "int"
-        },
-        "canonical_2d_height": {
-          "default": 1080,
-          "description": "Canonical SV2D image height",
-          "maximum": Infinity,
-          "minimum": 1,
-          "title": "Canonical SV2D height",
-          "type": "int"
-        },
-        "canonical_2d_width": {
-          "default": 1920,
-          "description": "Canonical SV2D image width",
-          "maximum": Infinity,
-          "minimum": 1,
-          "title": "Canonical SV2D width",
           "type": "int"
         },
         "classes": {
@@ -1187,12 +1138,6 @@
           "description": "Scene-name substrings identifying real 2D-supervised data",
           "title": "Real scene keywords",
           "type": "list"
-        },
-        "resize_to_canonical_2d": {
-          "default": false,
-          "description": "Resize explicitly 2D-only training images to the canonical SV2D size",
-          "title": "Enable canonical SV2D resize",
-          "type": "bool"
         },
         "rtdetr_2d_cache_dir": {
           "default": "",
@@ -1507,9 +1452,7 @@
         "model.backbone",
         "model.neck",
         "model.depth_branch",
-        "model.head",
-        "model.sv_scene_keywords",
-        "model.sv_aux_head"
+        "model.head"
       ],
       "automl_enabled": false,
       "default": {
@@ -1667,9 +1610,6 @@
             "pseudo_box_weight": 0.1,
             "pseudo_cls_weight": 1.0,
             "pseudo_enable": false,
-            "sv_depth_weight": 0.0,
-            "sv_size_weight": 0.25,
-            "sv_yaw_weight": 0.0,
             "tight_l1_weight": 1.0
           },
           "loss": {
@@ -1832,27 +1772,6 @@
           "start_level": 0,
           "type": "FPN"
         },
-        "sv_aux_head": {
-          "det_box_key": "det_boxes_2d",
-          "det_cls_key": "det_classes_2d",
-          "enable": false,
-          "fpn_strides": [
-            4,
-            8,
-            16,
-            32
-          ],
-          "hidden_dim": 256,
-          "in_channels": 256,
-          "loss_weight": 1.0,
-          "min_box_size": 2.0,
-          "num_classes": 0,
-          "roi_size": 7,
-          "use_level": 1
-        },
-        "sv_scene_keywords": [
-          "SV2D"
-        ],
         "type": "sparse4d",
         "use_deformable_func": true,
         "use_grid_mask": true,
@@ -2098,9 +2017,6 @@
               "pseudo_box_weight": 0.1,
               "pseudo_cls_weight": 1.0,
               "pseudo_enable": false,
-              "sv_depth_weight": 0.0,
-              "sv_size_weight": 0.25,
-              "sv_yaw_weight": 0.0,
               "tight_l1_weight": 1.0
             },
             "loss": {
@@ -2973,9 +2889,6 @@
                 "pseudo_box_weight": 0.1,
                 "pseudo_cls_weight": 1.0,
                 "pseudo_enable": false,
-                "sv_depth_weight": 0.0,
-                "sv_size_weight": 0.25,
-                "sv_yaw_weight": 0.0,
                 "tight_l1_weight": 1.0
               },
               "description": "Loose-to-tight geometric 2D distillation config",
@@ -3163,30 +3076,6 @@
                   "description": "Enable 2D pseudo-label loss for batches without 3D ground truth",
                   "title": "Enable 2D pseudo labels",
                   "type": "bool"
-                },
-                "sv_depth_weight": {
-                  "default": 0.0,
-                  "description": "Gradient scale for SV2D metric depth",
-                  "maximum": 1.0,
-                  "minimum": 0.0,
-                  "title": "SV2D depth gradient weight",
-                  "type": "float"
-                },
-                "sv_size_weight": {
-                  "default": 0.25,
-                  "description": "Gradient scale for SV2D 3D box extent",
-                  "maximum": 1.0,
-                  "minimum": 0.0,
-                  "title": "SV2D size gradient weight",
-                  "type": "float"
-                },
-                "sv_yaw_weight": {
-                  "default": 0.0,
-                  "description": "Gradient scale for SV2D yaw",
-                  "maximum": 1.0,
-                  "minimum": 0.0,
-                  "title": "SV2D yaw gradient weight",
-                  "type": "float"
                 },
                 "tight_l1_weight": {
                   "default": 1.0,
@@ -3888,130 +3777,6 @@
           },
           "title": "Neck config",
           "type": "collection"
-        },
-        "sv_aux_head": {
-          "automl_disabled_parameters": [
-            "model.sv_aux_head.fpn_strides"
-          ],
-          "automl_enabled": false,
-          "default": {
-            "det_box_key": "det_boxes_2d",
-            "det_cls_key": "det_classes_2d",
-            "enable": false,
-            "fpn_strides": [
-              4,
-              8,
-              16,
-              32
-            ],
-            "hidden_dim": 256,
-            "in_channels": 256,
-            "loss_weight": 1.0,
-            "min_box_size": 2.0,
-            "num_classes": 0,
-            "roi_size": 7,
-            "use_level": 1
-          },
-          "description": "Calibration-free single-view auxiliary head config",
-          "properties": {
-            "det_box_key": {
-              "default": "det_boxes_2d",
-              "description": "Batch key for SV2D boxes",
-              "title": "SV auxiliary box key",
-              "type": "string"
-            },
-            "det_cls_key": {
-              "default": "det_classes_2d",
-              "description": "Batch key for SV2D class labels",
-              "title": "SV auxiliary class key",
-              "type": "string"
-            },
-            "enable": {
-              "default": false,
-              "description": "Enable the SV2D image-plane auxiliary classifier",
-              "title": "Enable SV auxiliary head",
-              "type": "bool"
-            },
-            "fpn_strides": {
-              "automl_enabled": false,
-              "default": [
-                4,
-                8,
-                16,
-                32
-              ],
-              "description": "Pixel stride for each FPN level",
-              "title": "SV auxiliary FPN strides",
-              "type": "list"
-            },
-            "hidden_dim": {
-              "default": 256,
-              "description": "Hidden dimension of the SV auxiliary classifier",
-              "maximum": Infinity,
-              "minimum": 1,
-              "title": "SV auxiliary hidden dimension",
-              "type": "int"
-            },
-            "in_channels": {
-              "default": 256,
-              "description": "Number of channels in each FPN input feature",
-              "maximum": Infinity,
-              "minimum": 1,
-              "title": "SV auxiliary input channels",
-              "type": "int"
-            },
-            "loss_weight": {
-              "default": 1.0,
-              "description": "Weight for the SV auxiliary classification loss",
-              "maximum": Infinity,
-              "minimum": 0.0,
-              "title": "SV auxiliary loss weight",
-              "type": "float"
-            },
-            "min_box_size": {
-              "default": 2.0,
-              "description": "Minimum SV2D box width and height in input pixels",
-              "maximum": Infinity,
-              "minimum": 0.0,
-              "title": "SV auxiliary minimum box size",
-              "type": "float"
-            },
-            "num_classes": {
-              "default": 0,
-              "description": "Number of classes predicted by the SV auxiliary head; zero derives the taxonomy from dataset.classes",
-              "maximum": Infinity,
-              "minimum": 0,
-              "title": "SV auxiliary classes",
-              "type": "int"
-            },
-            "roi_size": {
-              "default": 7,
-              "description": "RoIAlign output size",
-              "maximum": Infinity,
-              "minimum": 1,
-              "title": "SV auxiliary ROI size",
-              "type": "int"
-            },
-            "use_level": {
-              "default": 1,
-              "description": "FPN level used for RoIAlign",
-              "maximum": Infinity,
-              "minimum": 0,
-              "title": "SV auxiliary FPN level",
-              "type": "int"
-            }
-          },
-          "title": "SV auxiliary head config",
-          "type": "collection"
-        },
-        "sv_scene_keywords": {
-          "automl_enabled": false,
-          "default": [
-            "SV2D"
-          ],
-          "description": "Scene-name keywords identifying calibration-free SV2D batches",
-          "title": "SV2D scene keywords",
-          "type": "list"
         },
         "type": {
           "default": "sparse4d",
