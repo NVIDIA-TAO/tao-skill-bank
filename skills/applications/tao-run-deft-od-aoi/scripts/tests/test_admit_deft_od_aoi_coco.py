@@ -440,3 +440,12 @@ def test_synthetic_cap_selection_is_independent_of_coco_order(tmp_path: Path) ->
                     if row["deft_kind"] == "synthetic_defect")
 
     assert run([0, 1, 2], tmp_path / "out-a") == run([2, 0, 1], tmp_path / "out-b")
+
+
+def test_total_fraction_limit_matches_historical_definition() -> None:
+    assert MODULE._synthetic_limit(
+        2828, {"cumulative_fraction_of_total_defects": 0.25}
+    ) == (942, "fraction_of_total", 0.25)
+    assert MODULE._synthetic_limit(
+        2828, {"cumulative_fraction_of_real_defects": 0.25}
+    ) == (707, "fraction_of_real", 0.25)
