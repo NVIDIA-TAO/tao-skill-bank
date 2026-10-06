@@ -44,8 +44,13 @@ Commit baseline measurement and gap artifacts.
 
 Run `prepare_deft_od_aoi_retrieval.py queries` with the previous strict and
 loose gap parquets and the prior cumulative COCO when one exists. Submit each
-enabled query-embedding action, then each enabled `tao-mine-od-images` action.
-Empty and exhausted roles require no job. Commit `iteration_retrieval` with
+enabled query-embedding action. Then run each enabled `tao-mine-od-images`
+action for max-similarity, or run `deft_od_aoi_round_robin_selection.py` once
+for round-robin. Both paths must materialize each enabled role's
+`mine_<role>/final_unique_files.parquet`. Round-robin additionally registers
+`round_robin_selection_report.json` as the `selection_report` completion
+artifact and `round_robin_admission_index.npy` as the `admission_index`
+completion artifact. Commit `iteration_retrieval` with
 each queried role's query parquet and exclusion parquet; the latter preserves
 the exact history/configured exclusion audit even when it is empty.
 Queries routed to an initially empty clean role are typed `EXHAUSTED` with all
@@ -59,7 +64,8 @@ without admission, training, or another unchanged iteration.
 
 Run `admit_deft_od_aoi_coco.py`. For iteration 2 and later, pass the prior
 iteration's cumulative `train.json`. Gate on the new binary COCO,
-`admitted_sources.parquet`, and `admission_report.json`. Commit
+`admitted_sources.parquet`, `admission_report.json`, and round-robin's copied
+`admission_index.npy`. Commit
 `iteration_admission`.
 
 ## 5. Optional synthesis

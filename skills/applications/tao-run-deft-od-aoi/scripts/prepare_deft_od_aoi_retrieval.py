@@ -429,21 +429,28 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
     policy = yaml.safe_load(policy_path.read_text())
     profile, output_size = _preprocessing(policy)
     _validate_candidate_manifest(policy, candidate_root, profile, output_size)
+    strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get(
+        "strategy", "round_robin_similarity"
+    )
+    routing = policy["routing"]
+    round_robin_default = int(routing["round_robin_real_factor_default"])
     strict, loose = pd.read_parquet(strict_path), pd.read_parquet(loose_path)
     required = {"filepath", "gap_type", "bbox", "best_iou"}
     for label, frame in (("strict", strict), ("loose", loose)):
         if not required.issubset(frame.columns):
             raise ValueError(f"{label} gaps lack {sorted(required - set(frame.columns))}")
     events = []
-    for row in strict[strict.gap_type.astype(str).str.upper().eq("FN")].to_dict("records"):
-        events.append(("real", "fn", row))
+    for gap_index, row in strict[
+            strict.gap_type.astype(str).str.upper().eq("FN")].iterrows():
+        events.append(("real", "fn", "strict", gap_index, row.to_dict()))
     gap = policy["gap"]
-    for row in loose[loose.gap_type.astype(str).str.upper().eq("FP")].to_dict("records"):
+    for gap_index, row in loose[
+            loose.gap_type.astype(str).str.upper().eq("FP")].iterrows():
         iou = float(row["best_iou"])
         if iou < gap["background_iou_upper"]:
-            events.append(("clean", "background_fp", row))
+            events.append(("clean", "background_fp", "loose", gap_index, row.to_dict()))
         elif iou < gap["near_miss_iou_upper"]:
-            events.append(("real", "near_miss_fp", row))
+            events.append(("real", "near_miss_fp", "loose", gap_index, row.to_dict()))
     output.mkdir(parents=True)
     pockets = _kpi_pockets(policy)
     history = _history_sources(previous_coco)
@@ -455,7 +462,8 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
     warnings = []
     for role in ("real", "clean"):
         rows = []
-        for index, (_, reason, event) in enumerate(item for item in events if item[0] == role):
+        for index, (_, reason, gap_pass, gap_index, event) in enumerate(
+                item for item in events if item[0] == role):
             source = Path(str(event["filepath"])).resolve()
             if str(source) not in pockets:
                 raise ValueError(f"gap image is absent from the frozen KPI role: {source}")
@@ -476,10 +484,20 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
                 )
             else:
                 _crop(source, box, crop)
-            rows.append({"filepath": str(crop), "query_id": query_id, "role": role,
-                         "reason": reason, "source_filepath": str(source),
-                         "source_bbox": event["bbox"], "best_iou": float(event["best_iou"]),
-                         **pockets[str(source)]})
+            row = {"filepath": str(crop), "query_id": query_id, "role": role,
+                   "reason": reason, "source_filepath": str(source),
+                   "source_bbox": event["bbox"], "best_iou": float(event["best_iou"]),
+                   "routing_order_key": (
+                       f"{gap_pass}:{gap_index}:"
+                       f"{'strict_fn' if reason == 'fn' else reason}"
+                   ), **pockets[str(source)]}
+            if strategy == "round_robin_similarity" and role == "real":
+                if reason == "fn":
+                    factor_value = event.get("real_factor")
+                    if factor_value is None or pd.isna(factor_value):
+                        factor_value = real_factor or round_robin_default
+                    row["real_factor"] = int(factor_value)
+            rows.append(row)
         counts[role], frames[role] = len(rows), pd.DataFrame(rows)
         if not rows:
             excluded_candidate_crops[role] = 0
@@ -572,9 +590,11 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         (output / f"embed_{role}_queries.yaml").write_text(
             yaml.safe_dump(_embedding_spec(policy, parquet, embedded), sort_keys=False)
         )
-        routing = policy["routing"]
         if role == "real":
-            factor = real_factor or int(routing["real_mine_factor_min"])
+            factor = real_factor or (
+                round_robin_default if strategy == "round_robin_similarity"
+                else int(routing["real_mine_factor_min"])
+            )
             if not int(routing["real_mine_factor_min"]) <= factor <= int(routing["real_mine_factor_max"]):
                 raise ValueError("real factor is outside the frozen policy range")
             strict_count = sum(row["reason"] == "fn" for row in rows)
@@ -591,13 +611,19 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         requested[role] = min(
             remaining, desired * int(policy["retrieval"]["candidate_overfetch"])
         )
-        mining = {"source_path": str(candidate_root / f"{role}_candidate_embeddings.parquet"),
-                  "target_path": str(embedded), "output_dir": str(output / f"mine_{role}"),
-                  "desired_unique_count": requested[role], "allocation_policy": "global",
-                  "distance_metric": "cosine", "candidate_expansion_factor": int(policy["retrieval"]["candidate_overfetch"])}
-        if role_status[role]["excluded_count"]:
-            mining["exclude_path"] = str(exclusion_file.resolve())
-        (output / f"mine_{role}.yaml").write_text(yaml.safe_dump(mining, sort_keys=False))
+        if strategy == "max_similarity":
+            mining = {
+                "source_path": str(candidate_root / f"{role}_candidate_embeddings.parquet"),
+                "target_path": str(embedded), "output_dir": str(output / f"mine_{role}"),
+                "desired_unique_count": requested[role], "allocation_policy": "global",
+                "distance_metric": "cosine",
+                "candidate_expansion_factor": int(policy["retrieval"]["candidate_overfetch"]),
+            }
+            if role_status[role]["excluded_count"]:
+                mining["exclude_path"] = str(exclusion_file.resolve())
+            (output / f"mine_{role}.yaml").write_text(
+                yaml.safe_dump(mining, sort_keys=False)
+            )
     enabled = [role for role, evidence in role_status.items() if evidence["status"] == "READY"]
     synthesis_pending = bool(policy.get("synthesis", {}).get("enabled")) and any(
         strict.gap_type.astype(str).str.upper().eq("FN")
@@ -610,7 +636,7 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
               "admission_targets": targets, "requested_crop_counts": requested,
               "excluded_candidate_crops": excluded_candidate_crops,
               "excluded_source_images": excluded_source_images,
-              "warnings": warnings}
+              "warnings": warnings, "selection_strategy": strategy}
     _json(output / "query_manifest.json", report)
     return report
 
