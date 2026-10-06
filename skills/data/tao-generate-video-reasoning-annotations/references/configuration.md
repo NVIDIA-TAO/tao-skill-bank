@@ -10,9 +10,11 @@ Use this reference only when the parent `SKILL.md` points here for the current t
 - Per-step Model Routing (`models` / `pipeline`)
 - Grounding Injection
 - Workflow Parameters
+- Denoise Tuning (nlmeans)
 - Data Parameters
 - Top-level Parameters
 - Key Configuration Decisions
+- Live Status and Troubleshooting
 - Error Patterns
 
 
@@ -32,6 +34,17 @@ Shipped in `nvidia_tao_ds/auto_label/experiment_specs/`. Copy one, fill the `???
 For `retail`, `traffic`, or `generic` prompts, start from the closest spec and change `prompts_module`.
 
 **Preparing a copy:** use `scripts/prepare_vra_spec.py` (see `SKILL.md` Quick start) rather than hand-copying. It extracts the named spec from the target image, applies only the dotted-path fields you `--set` (including multi-line values such as `qa_types`), refuses typos and whole-section overrides, checks that the result parses to the requested values, and diffs it against the untouched original. Bundled specs change between image builds, so always prepare the spec from the image you are about to run; never reuse a copy prepared against another build.
+
+### Manual spec copy
+
+Without `prepare_vra_spec.py` (equivalent, but no diff safety net), inside the image:
+
+```bash
+SPECS=$(python -c "import nvidia_tao_ds,os;print(os.path.join(os.path.dirname(nvidia_tao_ds.__file__),'auto_label/experiment_specs'))")
+cp $SPECS/video_reasoning_annotation_smart_space_openai.yaml /workspace/vra_spec.yaml
+# edit: results_dir, data.video_root, vlm/llm base_url + model_name, prompts_module
+auto_label generate -e /workspace/vra_spec.yaml results_dir=/results/vra_run1
+```
 
 ## YAML Structure
 
@@ -102,7 +115,10 @@ video_reasoning_annotation:
     low_quality_min_dim: 480
     dedup_sensitivity: 3.0
     enhance_scale: 2.0
-    enhance_denoise: "hqdn3d"
+    enhance_denoise: "nlmeans"
+    enhance_denoise_strength: 1.0
+    enhance_denoise_patch: 7
+    enhance_denoise_window: 15
     max_workers: 4
     qa_types: ["mcq","bcq","open_qa","event_verification","causal_linkage",
                "temporal_localization","temporal_event_desc",
@@ -212,7 +228,10 @@ Optional. Step 2a can take per-clip grounding labels — a frame-accurate, actor
 | `enhance_filter_field` | `"is_low_quality"` | Routing flag that selects videos for 0e |
 | `enhance_workers` | `4` | CPU-bound |
 | `enhance_scale` | `2.0` | Lanczos upscale factor |
-| `enhance_denoise` | `"hqdn3d"` | ffmpeg `hqdn3d`/`nlmeans`/`atadenoise`/`vaguedenoiser` (only if built into the image's ffmpeg), opencv `nlm`/`bilateral`/`temporal_median`, or `none`. On the current LGPL-only base, 0e itself fails (no `rawvideo` format), so no setting helps there: drop `0e` |
+| `enhance_denoise` | `"nlmeans"` | ffmpeg `nlmeans` (the only ffmpeg denoiser in the data-services image; `hqdn3d`/`vaguedenoiser` are GPL-only), opencv `nlm`/`bilateral`/`temporal_median`, or `none`. An explicit option string such as `"nlmeans=s=1.0:p=5:r=7"` overrides the three fields below. See [Denoise Tuning](#denoise-tuning-nlmeans) |
+| `enhance_denoise_strength` | `1.0` | nlmeans `s`, 1.0-30.0: how hard it smooths. Higher removes more noise and more detail |
+| `enhance_denoise_patch` | `7` | nlmeans `p`, odd, 1-99: square compared to judge similarity |
+| `enhance_denoise_window` | `15` | nlmeans `r`, odd, 1-99: area searched for similar patches; the speed lever |
 | `enhance_clahe_clip` / `enhance_clahe_tile` | `2.0` / `8` | CLAHE on L channel |
 | `enhance_unsharp_amount` / `_sigma` / `_thresh` | `0.6` / `1.5` / `3.0` | Unsharp mask; amount 0 disables |
 | `max_video_length_sec` | `300` | Longer videos skipped |
@@ -229,6 +248,42 @@ Optional. Step 2a can take per-clip grounding labels — a frame-accurate, actor
 | `sta_grounding_labels_dir` | `""` | Root of `<clip_uuid>/**/<grounding_filename>`; enables grounding injection at 2a. Empty = off |
 | `grounding_filename` | `"events_reconciled_natural.json"` | Grounding label file discovered under each clip dir |
 | `daft_validator` | `""` | `tao-daft` path; step 5 runs `validate` on both exports. Empty = skipped (not a failure) |
+
+## Denoise Tuning (nlmeans)
+
+0e's denoise pre-pass is its slowest part. With `enhance_denoise: "nlmeans"`, three fields set the ffmpeg filter; every bundled spec that runs 0e sets them explicitly:
+
+```yaml
+enhance_denoise: "nlmeans"
+enhance_denoise_strength: 1.0    # ffmpeg s: 1.0-30.0
+enhance_denoise_patch: 7         # ffmpeg p: odd, 1-99
+enhance_denoise_window: 15       # ffmpeg r: odd, 1-99
+```
+
+nlmeans cleans each pixel by averaging it with similar-looking patches nearby:
+
+| Field | Controls | Larger | Smaller |
+|---|---|---|---|
+| `strength` | How different a patch may look and still be averaged | Smoother: more noise and more detail removed | Gentler: keeps detail and some noise |
+| `patch` | Size of the square compared | Steadier similarity judgement on heavy noise | Compares finer local detail |
+| `window` | Size of the area searched | Slightly stronger denoising, **much slower** (cost grows with its area: 15 = 225 positions, 9 = 81, 7 = 49) | **Much faster**, slightly weaker denoising |
+
+- **Defaults are ffmpeg's own**: `nlmeans=s=1.0:p=7:r=15` produces byte-identical frames to a plain `nlmeans`, so specs that keep them behave as before.
+- **Bad values are corrected, not passed**: ffmpeg refuses out-of-range options, which would make 0e continue *without* denoising. 0e clamps them into range and bumps even sizes to the next odd value, logging a warning.
+- **Strength barely affects speed**; reduce `window` first when 0e is too slow, and keep `patch` at 7.
+- `enhance_workers` (default 4) is the throughput lever for large pools: each nlmeans process uses only ~2 CPU cores.
+
+Measured 0e time per clip (denoise + CLAHE + 2x upscale + encode):
+
+| Setting | 192×144, 27.7 s | 540×360, 24.9 s |
+|---|---|---|
+| `patch 7, window 15` (default) | ~105 s | ~360 s |
+| `patch 7, window 9` | — | ~120 s |
+| `patch 5, window 7` | ~17 s | ~129 s |
+
+The faster settings produced frames visually indistinguishable from the default (PSNR 37-40 dB vs default; equal edge detail). A caption comparison on one night clip was inconclusive: repeated captions of one file vary more than the settings do.
+
+**Guidance:** keep the defaults in release specs. Use `window: 7` for very low-resolution pools (about 144-240p), where it matched the default. For 360p-class footage keep the default until a multi-clip comparison supports a smaller window. Raise `strength` to 1.5-2.0 only for very grainy night footage, then check a few captions.
 
 ## Data Parameters (`data.*`)
 
@@ -268,6 +323,57 @@ Optional. Step 2a can take per-clip grounding labels — a frame-accurate, actor
 | Verdict mismatch | `qa_use_final_verdict` | Turn on to stop asking about incidents the description says are absent |
 | Metadata | `license`, `description_extra`, `media_root`, `pipeline_version` | Set before a release run |
 
+## Live Status and Troubleshooting
+
+Requires a pipeline build that includes the live status report. Every run writes `<results_dir>/live_report/`:
+
+| File | Written | Content |
+|---|---|---|
+| `pipeline_status_live.jsonl` | During the run, as each step finishes each video | One event per line: `{"stage": "1a_caption", "video": "<path>", "status": "ok"}` |
+| `pipeline_status.json` | By step 5 (also when step 5 is re-run alone) | One row per video: every stage's status, `captioned_as`, `dropped_at`, plus `totals` (videos / completed / dropped) |
+| `PIPELINE_STATUS.md` | By step 5 | The same as a table: one row per video, one column per stage, and a "Dropped at" column |
+
+**Live journal** (`pipeline_status_live.jsonl`):
+
+- **Stages:** `0a_filter`, `0b_classify`, `0c_routing`, `0d_dedup`, `0e_enhance`, `0f_snapshot`, `1a_caption`, `1a_merge` (only with `caption_passes > 1`), `1b_chunks`, `1c_highlight`, `2_description`, `3_qa`, `4a_parse_qa`, `4b_parse_contextual`. 2b and 5 write none.
+- **Statuses:** `ok`; `error` (attempted and failed; the reason is in the run log); `skipped` (deliberately not processed: over `max_video_length_sec` at 1a, or no items emitted at 4a); `filtered_out` (0a judged it outside the domain).
+- **Watch a run:** `tail -f <results_dir>/live_report/pipeline_status_live.jsonl`; show only problems with `grep -v '"status": "ok"'`.
+- **Quirks:** the `video` path changes as the clip is copied (source → `step_0d_dedup/videos/...` → `..._enh.webm`), so group by file stem; `3_qa` and `4a_parse_qa` log one event per question type (about 12 per clip), so `ok` there means one type finished; 0d/0e log only clips they actually processed (a pass-through has no event); events carry no timestamp, and a resumed or retried run appends to the same file.
+
+**Status report** (`pipeline_status.json` / `PIPELINE_STATUS.md`): copies are mapped back to the original clip, so there is one row per input video. Only `missing`, `filtered_out` and `error` count as a drop; `dropped_at` names the first such stage. A clip an optional step had no reason to touch is `skipped (not low-quality)` at 0e or `n/a (normal lane)` at 1c, never a drop. Values carry detail, e.g. `ok (anomaly_singlepass)`, `ok (NORMAL, 0 incidents)`, `ok (12/12 parsed)`, `ok (4 files)`.
+
+**Run summary** (`scripts/summarize_vra_run.py`): `PIPELINE_STATUS.md` has one row per video, which stops being readable past a few dozen videos, and it exists only if the run reached step 5. The script gives a run-level answer for any run size:
+
+```bash
+python3 scripts/summarize_vra_run.py <results_dir> --log <run_log.txt> [--out <results_dir>/RUN_SUMMARY.md]
+```
+
+The container usually runs as root, so `live_report/` and the `step_*` folders are root-owned on the host. Write `--out` to a path you own, such as the results root if you created it.
+
+- **Verdict:** `COMPLETED` (no drops), `COMPLETED_WITH_DROPS`, `INCOMPLETE` (step 5 wrote no current report: the run crashed or is still running) or `CRASHED` (the log ends in a traceback; the exception line is shown).
+- **Per-stage counts:** one row per stage, one column per status, instead of one row per video.
+- **Problem videos only:** errors first, then `filtered_out`, each with its drop stage and the last log WARNING naming it. Capped at `--max-list` (default 50; `-1` lists all).
+- **Where the run stopped:** for an incomplete run, the last stage each surviving video reached.
+- **Source:** `pipeline_status.json` when step 5 wrote one newer than the live journal; otherwise the journal is rebuilt directly. Stages a crashed run never reached are not counted as drops.
+- **Output and exit code:** `--json` prints the full summary. The exit code is 0 only for `COMPLETED`, so a wrapper can branch on it.
+
+**Diagnosing a run:**
+
+1. Run `summarize_vra_run.py`: the verdict line, then the problem videos. For one video's full row, open `PIPELINE_STATUS.md`.
+2. For that stage, find the reason:
+
+   | Stage | Where the reason is |
+   |---|---|
+   | 0a filter | `step_0a_filter/filter_results.jsonl`: `is_valid` + `raw_response` (the VLM's own verdict, e.g. `"No"`) |
+   | 0b classify | `step_0b_classify/classification.jsonl`; if the row is missing, the run log around "Step 0b" |
+   | 1a/1b/1c caption | run log around "Step 1a/1b/1c": truncation at `max_tokens` (see Error Patterns: "Long videos dropped"); `skipped` at 1a means over `max_video_length_sec` |
+   | 2a description | `step_2_description/descriptions.jsonl`: missing rows; `final_verdict` for lane mismatches |
+   | 3 qa / 4a parse | run log line `Step 4: Stats - ... parsed ok / parse fail / skipped`; `4a_parse_qa` live events marked `error` |
+   | 4b contextual | run log `Step 4b: failed on <video>: <reason>` |
+
+3. Recover dropped videos with `scripts/find_vra_dropouts.py` and a bounded retry (SKILL.md, "Recovering dropped videos after a run").
+4. After any manual fix, regenerate the report without model calls by re-running step 5 only: `video_reasoning_annotation.workflow.steps=[5]`.
+
 ## Error Patterns
 
 | Symptom | Cause | Fix |
@@ -290,6 +396,9 @@ Optional. Step 2a can take per-clip grounding labels — a frame-accurate, actor
 | Import error for `prompts_module` | Wrong short name / module not on `PYTHONPATH` | Use a bundled name or mount the module and set a full dotted path |
 | `ImportError: cv2` | 0d/0e enabled without opencv | Install `opencv-python-headless` or drop 0d/0e |
 | ffprobe not found | Missing ffmpeg | Install ffmpeg |
-| 0e enhances 0 videos (`ffmpeg rc=234, frames=0`, `Requested output format 'rawvideo' is not known`) | Image on the current LGPL-only base: its ffmpeg has no `rawvideo` format, so 0e cannot re-encode | Drop `0e` from `steps` until the base image includes `rawvideo` |
-| `Denoise pre-pass failed` warnings in 0e | The requested filter is not built into the image's ffmpeg | Use an opencv option (`nlm`, `bilateral`, `temporal_median`) once 0e works on that image |
+| 0e enhances 0 videos (`ffmpeg rc=234, frames=0`, `Requested output format 'rawvideo' is not known`) | An older LGPL-only image whose ffmpeg lacks the `rawvideo` format 0e re-encodes through | Use an image built after the 0e fix, or drop `0e` from `steps` |
+| `Denoise pre-pass failed` warnings in 0e | The requested filter is not built into the image's ffmpeg (e.g. `hqdn3d`) | Use `nlmeans`, or an opencv option (`nlm`, `bilateral`, `temporal_median`) |
+| `Step 0e: enhance_denoise_<field> must be within ...` / `must be odd` | A denoise field outside ffmpeg's range | 0e already corrected it; fix the spec to the value it used |
+| 0e takes many minutes per clip | nlmeans default window (15) runs at ~0.1x real time | Lower `enhance_denoise_window` (see Denoise Tuning) and/or raise `enhance_workers` |
+| `PIPELINE_STATUS.md` shows a drop but the run log looks clean | The video was `filtered_out` at 0a (a domain decision) or `skipped` at 1a (too long) | Expected; check `raw_response` at 0a or `max_video_length_sec` |
 | Step N reads empty input | Upstream step produced nothing | Check the previous step's JSONL and `step_5_report/RESULTS_SUMMARY.md` attrition |

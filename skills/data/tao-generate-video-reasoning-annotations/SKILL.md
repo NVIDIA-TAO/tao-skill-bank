@@ -130,7 +130,7 @@ No endpoint and want to self-host? Point the user at `skills/applications/tao-ru
 
 Runs in the data-services container via the `auto_label` CLI. The bundled specs live *inside the image*, not in this repo — always edit a fresh copy pulled from the exact image you're about to run, never a cached copy, since the bundled spec's fields (workflow defaults, worker caps, even which steps run by default) move between image builds.
 
-**Preferred: `scripts/prepare_vra_spec.py`.** It pulls the named spec out of the image with `docker create`/`docker cp` (no entrypoint execution, so no startup-banner noise), applies only the fields you name via `--set DOTTED.KEY=JSON_VALUE`, and prints a diff against the untouched original so every deviation from the bundled template is visible before launch. It edits lines in place rather than re-dumping the YAML, so every comment in the bundled spec survives in fields you didn't override — those comments carry the domain reasoning behind non-default values. Multi-line values (e.g. `qa_types`) are replaced whole; whole-section overrides and typos are refused; and the result is parsed and checked against the requested values before anything is written. It refuses to run against an image that isn't already pulled locally.
+**Preferred: `scripts/prepare_vra_spec.py`.** It copies the named spec out of the (already pulled) image, applies only the fields you `--set DOTTED.KEY=JSON_VALUE`, and prints a diff against the original. It edits lines in place, so the bundled comments (the reasoning behind non-default values) survive; multi-line values are replaced whole, typos and whole-section overrides are refused, and the result is parse-checked before anything is written.
 
 ```bash
 python3 skills/data/tao-generate-video-reasoning-annotations/scripts/prepare_vra_spec.py \
@@ -140,24 +140,28 @@ python3 skills/data/tao-generate-video-reasoning-annotations/scripts/prepare_vra
   --set 'results_dir="/results/vra_run1"' \
   --set 'video_reasoning_annotation.data.video_root="/path/to/clips"' \
   --set 'video_reasoning_annotation.vlm.openai.base_url="https://your-endpoint/v1"'
-
-auto_label generate -e /workspace/vra_spec.yaml
 ```
 
-A `--set` key must be the *dotted path down to the exact line* in the bundled file (e.g. `video_reasoning_annotation.vlm.openai.model_name`, not `vlm.model_name`) — the script fails loudly on any key that doesn't match a line, rather than silently no-op'ing a typo. This is also why endpoints must be set this way and not via a `video_reasoning_annotation.vlm.openai.*` CLI override at launch time: the bundled specs share `vlm`/`llm` endpoint blocks with `models:` via YAML anchors, so a launch-time override only changes `vlm`/`llm`, never the anchored copies every step actually reads through `pipeline:`. `--set` edits the one line in the file itself, so it reaches every anchored copy.
+A `--set` key is the dotted path to the exact line (e.g. `video_reasoning_annotation.vlm.openai.model_name`). Set endpoints this way, not with a launch-time `vlm.openai.*` override: the specs share endpoint blocks with `models:` through YAML anchors, so a launch-time override never reaches the copies the steps read, while `--set` edits the anchored line itself.
 
-Manual fallback (equivalent, no diff safety net):
-
-```bash
-SPECS=$(python -c "import nvidia_tao_ds,os;print(os.path.join(os.path.dirname(nvidia_tao_ds.__file__),'auto_label/experiment_specs'))")
-cp $SPECS/video_reasoning_annotation_smart_space_openai.yaml /workspace/vra_spec.yaml
-# edit: results_dir, data.video_root, vlm/llm base_url + model_name, prompts_module
-auto_label generate -e /workspace/vra_spec.yaml results_dir=/results/vra_run1
-```
-
-Keys go in the environment (`OPENAI_API_KEY` / `GOOGLE_API_KEY`), never in the spec or on argv. Hydra dot-overrides at launch time work for scalar fields not shared via an anchor (`video_reasoning_annotation.workflow.qa_resume=true`).
+Without the helper, copy the spec by hand: [configuration.md → Manual spec copy](references/configuration.md#manual-spec-copy). Keys go in the environment (`OPENAI_API_KEY` / `GOOGLE_API_KEY`), never in the spec or on argv. Hydra dot-overrides at launch time work for scalar fields not shared via an anchor (`video_reasoning_annotation.workflow.qa_resume=true`).
 
 Full field reference, spec guide, and error patterns: [references/configuration.md](references/configuration.md).
+
+## Launch and run summary
+
+Always launch this way: the summary runs after the pipeline (`;`, not `&&`, so also on failure) and the pipeline's exit code is kept.
+
+```bash
+R=<results_dir>  # must equal results_dir in the spec
+docker run -d --name <run_name> --gpus all --shm-size 16G -e OPENAI_API_KEY \
+  -v <spec_dir>:<spec_dir>:ro -v <video_dir>:<video_dir>:ro -v $R:$R \
+  -v <skill_dir>/scripts:/vra_skill_scripts:ro \
+  <image> bash -c "auto_label generate -e <spec> > $R/_run.log 2>&1; rc=\$?; \
+    python3 /vra_skill_scripts/summarize_vra_run.py $R --log $R/_run.log --out $R/RUN_SUMMARY.md; exit \$rc"
+```
+
+`RUN_SUMMARY.md` holds the verdict, per-stage counts and problem videos with causes. When the container exits, show it to the user first; if it is missing (container killed), run the same script on the host. Never report a run as done from the exit code alone. If the verdict is not `COMPLETED`, follow "Recovering dropped videos" below.
 
 ## Re-running / resuming
 
@@ -167,7 +171,7 @@ Full field reference, spec guide, and error patterns: [references/configuration.
 
 ### Recovering dropped videos after a run
 
-Save the run's stdout/stderr to a file (`docker run ... > run_log.txt 2>&1`); it is the only place per-video failure reasons appear. After the run finishes:
+The saved run log is the only place per-video failure reasons appear. After the run finishes:
 
 1. **Find what was dropped and why.**
    `python3 scripts/find_vra_dropouts.py <results_dir> --log <run_log.txt> --inputs <input.jsonl>`
@@ -184,16 +188,7 @@ Save the run's stdout/stderr to a file (`docker run ... > run_log.txt 2>&1`); it
 2. Check `step_0a_filter/filter_results.jsonl` row count against the "Filtering N videos" log line — filter errors silently drop videos.
 3. Read a few `step_1a_caption/captions.jsonl` entries by eye — accurate, right detail, not refusals?
 4. Read `step_2_description/descriptions.jsonl` (`final_verdict`, `incident_count`) and `step_3_qa/qa_output.jsonl`.
-5. Read `step_5_report/RESULTS_SUMMARY.md` for stage-by-stage attrition **counts**. It does not say *why* a given video dropped — for that, check the field noted below for the stage where the count fell:
-
-   | Stage | File | Field with the reason |
-   |---|---|---|
-   | 0a filter | `step_0a_filter/filter_results.jsonl` | `is_valid` + `raw_response` (the VLM's own verdict text, e.g. `"No"`) |
-   | 0b classify | `step_0b_classify/classification.jsonl` | per-video error/exception field, if the row is missing entirely check the log around "Step 0b" |
-   | 1a/1b/1c caption | run log around "Step 1a/1b/1c" | truncation-at-`max_tokens` rejections (see Error Patterns: "Long videos dropped") |
-   | 2a description | `step_2_description/descriptions.jsonl` | missing rows vs the staged video count; `final_verdict` for lane mismatches |
-   | 3 qa / 4a parse | run log line `Step 4: ... parsed ok / parse fail / skipped` | the jsonl itself has no explicit failure flag — the parse counts in this log line are authoritative |
-
+5. Read `RUN_SUMMARY.md` (see "Launch and run summary"). Per-video detail is in `live_report/PIPELINE_STATUS.md`. See [configuration.md → Live Status and Troubleshooting](references/configuration.md#live-status-and-troubleshooting).
 6. Iterate on prompts (captions first), re-run, then scale to the full set.
 
 Visual review (optional, from the pipeline repo root): `streamlit run nvidia_tao_ds/auto_label/video_reasoning_annotation/app_stage_review.py` (per-stage) and `app_qa_review.py` (step 4 tasks).
@@ -239,6 +234,7 @@ Key fields under `video_reasoning_annotation:` (full reference in [references/co
   step_4_output/        <task>_<model_tag>.json    tao-vl-reason-v1.0
   step_4b_contextual/   <video>/contextual/{video,events,chunks,msted}.json   metropolis-v3.0
   step_5_report/        RESULTS_SUMMARY.md, annotation_report.json
+  live_report/          pipeline_status_live.jsonl (during the run), pipeline_status.json, PIPELINE_STATUS.md
 ```
 
 Step 4a task files: `mcq`, `mcq_openended`, `bcq`, `bcq_openended`, `open_qa`, `event_verification`, `causal_linkage`, `temporal_localization`, `temporal_description`, `scene_description`, `video_summarization` (plus `public_safety` families when enabled). Envelope:
@@ -259,7 +255,7 @@ Step 4a task files: `mcq`, `mcq_openended`, `bcq`, `bcq_openended`, `open_qa`, `
 
 - **Container**: `nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services` <!-- versions-key: images.tao_toolkit.data_services -->. The pipeline must be the 0a-5 version described here (`workflow.steps` accepts `"0a"`); older images use the retired `"0"`/`"2"`/`"4"` steps. The image must also ship the bundled `auto_label/experiment_specs/video_reasoning_annotation_*.yaml` (packaged only in builds that include `experiment_specs/__init__.py`). There is no fallback: if the directory is missing, stop and ask for a newer image.
 - **GPU with NVDEC**: images built on the current LGPL-only data-services base ship an ffmpeg that decodes H.264 **only** through `h264_cuvid`. Older images (e.g. `6.26.3-data-services`) use a GPL ffmpeg with software H.264 decode. Run with `--gpus all` (the image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`). Without a GPU, H.264 `.mp4` inputs fail in chunking, highlight clips and enhancement.
-- **ffmpeg / ffprobe**: resolution probing, chunking, dedup, enhancement, highlight clips (VP9/WebM output). **Step 0e does not work on the current LGPL-only data-services base:** its ffmpeg lacks the `rawvideo` format 0e uses to re-encode frames, so 0e enhances 0 videos whatever `enhance_denoise` is set to (the base-image fix is pending). On such images, drop `0e` from `steps` (and keep `0f` if `0d` runs).
+- **ffmpeg / ffprobe**: resolution probing, chunking, dedup, enhancement, highlight clips (VP9/WebM output). 0e needs `rawvideo` and `nlmeans` in the image's ffmpeg (data-services images built after the 0e fix); on older LGPL-only images 0e enhances 0 videos, so drop `0e` there. 0e's `nlmeans` denoise is slow by default (~0.1x real time); tune it with `enhance_denoise_strength`/`_patch`/`_window` (configuration.md → Denoise Tuning).
 - **opencv-python-headless + numpy**: only for 0d / 0e.
 - **google-genai** and **openai** Python packages: both imported at load regardless of backend.
 - **VLM endpoint**: at least one.
