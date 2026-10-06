@@ -123,10 +123,14 @@ COCO before unique-neighbor matching. Admission still performs the authoritative
 source-level deduplication gate.
 
 The candidate manifest records a zero count and emits no candidate parquet or
-embedding spec for an empty clean source role. Run every emitted embedding spec
-through `tao-generate-image-embeddings`, then
-each enabled mining spec through `tao-mine-od-images`. Defective candidates
-and gap queries use contextual crops; clean candidates use the frozen grid.
+embedding spec for an empty clean source role.
+
+Run every emitted embedding spec through `tao-generate-image-embeddings`, then
+each enabled mining spec through `tao-mine-od-images`. Defective candidates and
+gap queries use the independently selected `retrieval.preprocessing.profile`:
+the default `square_context` mean-pads and resizes to 224×224, while
+`tight_context` preserves an aspect-ratio-aware native-size crop. Clean
+candidates use the same profile over the frozen grid.
 Strict FNs and loose near-miss FPs route to real data. Background-like loose
 FPs route only to the verified-clean role. Pass the prior cumulative COCO as
 `--previous-coco`; optional role-specific exclusion parquets use
