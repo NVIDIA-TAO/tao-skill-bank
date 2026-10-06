@@ -33,12 +33,25 @@ actions:
         type: file
       dataset.val_dataset.ann_file:
         type: file
-      dataset.test_dataset.ann_file:
-        type: file
       train.pretrained_model_path:
         type: file
         optional: true
       train.resume_training_checkpoint_path:
+        type: file
+        optional: true
+      model.head.loose_to_tight.mlp_ckpt:
+        type: file
+        optional: true
+      dataset.ltt_2dgt_sidecar_dir:
+        type: folder
+        optional: true
+      dataset.rtdetr_2d_cache_dir:
+        type: folder
+        optional: true
+      dataset.rtdetr_2d_cache_path:
+        type: file
+        optional: true
+      dataset.pkl_cam_counts_path:
         type: file
         optional: true
     outputs:
@@ -53,17 +66,16 @@ actions:
     inputs:
       dataset.data_root:
         type: folder
+        optional: true
         container_path: /data/aicity_root/train
       model.head.instance_bank.anchor:
         type: file
-      dataset.train_dataset.ann_file:
-        type: file
-      dataset.val_dataset.ann_file:
-        type: file
       dataset.test_dataset.ann_file:
         type: file
+        optional: true
       dataset.quant_calibration_dataset.images_dir:
         type: folder
+        optional: true
       quantize.model_path:
         type: file
     outputs:
@@ -80,10 +92,6 @@ actions:
         type: folder
         container_path: /data/aicity_root/val
       model.head.instance_bank.anchor:
-        type: file
-      dataset.train_dataset.ann_file:
-        type: file
-      dataset.val_dataset.ann_file:
         type: file
       dataset.test_dataset.ann_file:
         type: file
@@ -120,10 +128,6 @@ actions:
         container_path: /data/aicity_root/test
       model.head.instance_bank.anchor:
         type: file
-      dataset.train_dataset.ann_file:
-        type: file
-      dataset.val_dataset.ann_file:
-        type: file
       dataset.test_dataset.ann_file:
         type: file
       inference.checkpoint:
@@ -142,33 +146,18 @@ data_sources:
     dataset.data_root:
       source: train_datasets
       path: ''
-    model.head.instance_bank.anchor:
-      source: train_datasets
-      path: anchor_init.npy
     dataset.train_dataset.ann_file:
       source: train_datasets
       path: ''
     dataset.val_dataset.ann_file:
       source: eval_dataset
-      path: ''
-    dataset.test_dataset.ann_file:
-      source: inference_dataset
       path: ''
   quantize:
     dataset.data_root:
       source: train_datasets
       path: ''
-    model.head.instance_bank.anchor:
-      source: train_datasets
-      path: anchor_init.npy
-    dataset.train_dataset.ann_file:
-      source: train_datasets
-      path: ''
-    dataset.val_dataset.ann_file:
-      source: eval_dataset
-      path: ''
     dataset.test_dataset.ann_file:
-      source: inference_dataset
+      source: calibration_dataset
       path: ''
     dataset.quant_calibration_dataset.images_dir:
       source: calibration_dataset
@@ -177,34 +166,13 @@ data_sources:
     dataset.data_root:
       source: eval_dataset
       path: ''
-    model.head.instance_bank.anchor:
-      source: train_datasets
-      path: anchor_init.npy
-    dataset.train_dataset.ann_file:
-      source: train_datasets
-      path: ''
-    dataset.val_dataset.ann_file:
+    dataset.test_dataset.ann_file:
       source: eval_dataset
       path: ''
-    dataset.test_dataset.ann_file:
-      source: inference_dataset
-      path: ''
-  export:
-    model.head.instance_bank.anchor:
-      source: train_datasets
-      path: anchor_init.npy
+  export: {}
   inference:
     dataset.data_root:
       source: inference_dataset
-      path: ''
-    model.head.instance_bank.anchor:
-      source: train_datasets
-      path: anchor_init.npy
-    dataset.train_dataset.ann_file:
-      source: train_datasets
-      path: ''
-    dataset.val_dataset.ann_file:
-      source: eval_dataset
       path: ''
     dataset.test_dataset.ann_file:
       source: inference_dataset

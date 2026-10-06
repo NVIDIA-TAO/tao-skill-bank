@@ -19,6 +19,7 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
+- [Geometric Distillation](references/geometric_distillation.md) <br>
 - [Local Docker Conversion Guide](references/local_docker_conversion.md) <br>
 - [Skill Info (AutoML config)](references/skill_info.yaml) <br>
 - [Spec Param Inference Mappings](references/spec_param_inference.md) <br>
@@ -38,7 +39,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task in the external NVSkills-Eval profile (astra-sandbox environment). <br>
+The historical version 0.1.0 evaluation used one task in the external NVSkills-Eval profile. Version 0.2.0 packages seven no-execution scenarios; local CPU and plan-review evidence is recorded in [BENCHMARK.md](BENCHMARK.md). Fresh managed evaluation/signing remains required. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -59,7 +60,7 @@ Underlying evaluation signals used in this run: <br>
 
 
 
-## Evaluation Results: <br>
+## Historical Evaluation Results (0.1.0): <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
@@ -69,7 +70,7 @@ Underlying evaluation signals used in this run: <br>
 | Efficiency | 1 | 79% (+52%) | 28% (-0%) |
 
 ## Skill Version(s): <br>
-0.1.0 (source: frontmatter) <br>
+0.2.0 (source: frontmatter); the historical NVSkills results above apply to 0.1.0 <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

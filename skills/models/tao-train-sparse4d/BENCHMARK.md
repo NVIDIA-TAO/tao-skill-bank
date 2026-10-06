@@ -1,5 +1,31 @@
 # Evaluation Report
 
+## Maintenance Validation — 2026-10-06, Skill 0.2.0
+
+This update changes workflow guidance, action input contracts, generated schemas/templates, and the no-execution evaluation set. The NVSkills-Eval results below are historical results for version 0.1.0; they do not certify this revision. The managed validation/signing pipeline must generate current publication evidence.
+
+Local validation:
+
+- 32 Sparse4D CPU tests pass: six schema/template pairs, declared action inputs, evaluation and artifact routing, regeneration against public source dataclasses, co-training fragment merges for ResNet-50 and ResNet-101 in both Core and PyTorch, annotation-free conversion configuration, and the depth-repair CLI with real temporary HDF5/PKL fixtures.
+- 10 existing command-hygiene, image-resolution, and repository-URL tests pass (42 tests total).
+- Independent no-execution plan evaluation covers backbone selection, released-LTT adaptation with RN101, an unspecified backbone, evaluation without training data, incompatible single-view/taxonomy inputs, exact resume, and a one-GPU wiring smoke test. This is a local workflow review, not a fresh NVSkills performance score.
+- No GPU job or full training/accuracy comparison was run for this skill revision. Configuration/CPU checks do not establish container execution, convergence, accuracy equivalence, or support in an older image.
+
+Schema sources: TAO Core `cfa016e1c5314d50d2dbaa272eb0b01403997c63` and TAO Data Services `8a9503287094cf54f32f54d395e088d31d5fad7e`. The additional PyTorch dataclass merges use `2db3de4217b3f25c1d60ae71e6acd320016fdc9e`. Schemas and templates were emitted by `scripts/generate_dataclass_schemas.py` through its `generate_for_model` entry point, using the selected skill's action metadata in a temporary generation directory.
+
+Run the focused tests with compatible source checkouts on `PYTHONPATH` to enable all source-parity checks:
+
+```bash
+python -m pytest scripts/tests/test_sparse4d_skill.py \
+  scripts/tests/test_skill_command_hygiene.py \
+  scripts/tests/test_resolve_tao_image.py \
+  scripts/tests/test_repository_urls.py -q -ra
+```
+
+Without the source packages, the source-parity tests report skips. The skill bank's validator is authoritative for frontmatter: the generic skill-creator quick validator rejects `compatibility` and `tags`, which this repository requires for signing; retain those fields.
+
+## Historical NVSkills-Eval — Skill 0.1.0
+
 Evaluation of the `tao-train-sparse4d` skill before publication through NVSkills-Eval.
 
 This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the skill. The goal is to document whether the skill is safe, discoverable, effective, and useful for agents before it is published for broader workflow use.
