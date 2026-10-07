@@ -52,14 +52,20 @@ the raw-data mount to hold the extracted frames as well as the H5 depth maps.
 
 ## Local Docker command shape
 
-After platform preflight, specification staging, and job-record creation, the local Docker platform can submit this command shape. Set `TAO_PYT_IMAGE` to the resolved model image, `TAO_GPU_REQUEST` to the approved GPU allocation, `TAO_DATA_DIR` to the absolute host staging root (including `aicity_root`, `specs`, and model/artifact files), and `TAO_RESULTS_DIR` to the current job record's results directory. All specification paths must match these mounts. The same model command is recorded by the platform workflow; do not create an untracked second training run.
+After platform preflight, specification staging, and job-record creation, the local Docker platform can submit this command shape. Set `TAO_PYT_IMAGE` to the resolved model image, `TAO_GPU_REQUEST` to explicit allocated GPU IDs (for example `device=0`), `TAO_DATA_DIR` to the absolute host staging root (including `aicity_root`, `specs`, and model/artifact files), and `TAO_RESULTS_DIR` to the current job record's results directory. `TAO_JOB_ID` is the ID returned by `tao_job_record.py open`. Use the Docker platform's `HOST_IDENTITY_ARGS` array to preserve the submitting UID, GID, and supplementary groups. All specification paths must match these mounts.
 
 ```bash
-docker run --rm --gpus "${TAO_GPU_REQUEST}" --shm-size=16g \
+docker run -d --name "${TAO_JOB_ID}" --label "tao-job=${TAO_JOB_ID}" \
+  --gpus "${TAO_GPU_REQUEST}" --shm-size=16g \
+  "${HOST_IDENTITY_ARGS[@]}" \
+  -e USER="$(id -un)" -e LOGNAME="$(id -un)" \
+  -e HOME=/tmp -e XDG_CACHE_HOME=/tmp/.cache \
   -v "${TAO_DATA_DIR}:/data:ro" \
   -v "${TAO_RESULTS_DIR}:/results" \
   "${TAO_PYT_IMAGE}" \
   sparse4d train -e /data/specs/train.yaml
 ```
+
+Record the returned container ID as `RUNNING`, then use the platform's `status` and `logs` verbs. Retain the exited container until its logs and terminal state have been recorded. Results persist in the bound results directory; the example's cache directory is ephemeral.
 
 Conversion uses the action-level Data Services image and `annotations convert`; its raw-data mount must be writable if video decoding will extract frames. For quantization that needs calibration, supply `dataset.quant_calibration_dataset.images_dir` and the matching calibration PKL at `dataset.test_dataset.ann_file`. Weight-only quantization can omit calibration data when supported by the selected backend.

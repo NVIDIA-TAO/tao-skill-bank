@@ -2,14 +2,35 @@
 
 ## Maintenance Validation — 2026-10-06, Skill 0.2.0
 
-This update changes workflow guidance, action input contracts, generated schemas/templates, and the no-execution evaluation set. The NVSkills-Eval results below are historical results for version 0.1.0; they do not certify this revision. The managed validation/signing pipeline must generate current publication evidence.
+This update changes workflow guidance, action input contracts, generated schemas/templates, and the evaluation set. The release target is TAO 7.3.0. The NVSkills-Eval results below are historical results for version 0.1.0; they do not certify this revision. The managed validation/signing pipeline must generate current publication evidence.
 
 Local validation:
 
 - 36 Sparse4D CPU tests pass: six schema/template pairs, declared action inputs, evaluation and artifact routing, regeneration against public source dataclasses, packaged-template and co-training fragment merges for ResNet-50 and ResNet-101 in both Core and PyTorch, annotation-free conversion configuration, and the depth-repair CLI with real temporary HDF5/PKL fixtures.
 - 10 existing command-hygiene, image-resolution, and repository-URL tests pass (46 tests total).
 - Independent no-execution plan evaluation covers backbone selection, released-LTT adaptation with RN101, an unspecified backbone, evaluation without training data, incompatible taxonomy inputs, exact resume, and a one-GPU wiring smoke test. This is a local workflow review, not a fresh NVSkills performance score.
-- No GPU job or full training/accuracy comparison was run for this skill revision. Configuration/CPU checks do not establish container execution, convergence, accuracy equivalence, or support in an older image.
+- The same 46 CPU tests and the skill-bank validator also pass after applying the two scoped skill commits (`d2123f3`, `081224b`) to skill-bank `release/7.3.0` at `bea0d96f798380cabf35011850054c3ba238132b`. The release candidate retains that branch's image pins; it does not import the default branch's image selection.
+
+### Local TAO 7.3 runtime validation
+
+Bounded tests ran on one RTX PRO 6000 Blackwell GPU, with existing datasets and checkpoint bundles mounted read-only and each action writing to its own tracked output directory. Images came from the 7.3 release branch:
+
+- PyTorch: `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-78-multiarch`, manifest digest `sha256:72e6057cf4351f940d13e12c29320959961a64a271c40e3aa6f93b4cf96ce2d5`.
+- Data Services: `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-75-multiarch`, manifest digest `sha256:12c73e28ff1037e2df80c636fbce051c75525a7dcc42aaaa23fabad3ea4f2d62`.
+
+Passed execution and artifact checks:
+
+- ResNet-50: four FP32 training steps, two BF16 training steps with gradient scrubbing disabled, baseline evaluation, and inference from the new FP32 checkpoint.
+- ResNet-101: baseline evaluation, eight steps of 2D-to-3D geometric distillation with the released frozen LTT adapter, and checkpoint continuation from step 8 to step 10. Saved model and optimizer tensors are finite and checkpoint step counters match the requested budgets.
+- Data Services teacher-cache preparation and lazy-index generation. A separate eight-step ResNet-101 run consumed these newly generated artifacts with lazy loading enabled. Supplemental observation of the installed training methods recorded seven real-scene pseudo-2D batches and one labeled 3D batch, with finite, nonzero losses for each active route. Standalone evaluation of that fresh checkpoint passed.
+- Standalone evaluation and inference use `dataset.test_dataset.ann_file` while the train/validation paths are deliberately unavailable. Both backbone tests preserve their paired seven-class taxonomy, preprocessing, anchors, and temporal dimensions; the two baseline metric configurations differ and their scores are not compared.
+- ResNet-50 ONNX export at 960 x 544 from the new checkpoint, followed by ONNX structural validation. The fresh mixed-training checkpoint also passes finite model/optimizer checks.
+
+**Open release blocker:** annotation-free conversion fails in Data Services `7.3.0-rc-75-multiarch` because its installed `AICityConfig` lacks `load_annotations` (and `fps`). The converter and approved SDU 2.0.2 dependency update are merged and backported to Data Services `release/7.3.0` at `4eceb550b10cad122f6c4e4929c5f51e5e2e968f`, but this image predates that update and contains SDU 1.0.0. Build and pin a newer 7.3 Data Services image, then repeat raw annotation-free conversion and its downstream handoff. Existing compatible PKLs allowed the model tests to proceed; this is not a passing raw-data-to-model end-to-end test.
+
+These are small wiring tests using four labeled training frames, four real-scene frames, and two held-out evaluation frames. They establish local execution, not convergence, production accuracy, multi-GPU behavior, quantization support, TensorRT execution, or numerical parity. Continuation with an extended step budget is not a claim of equivalence to an uninterrupted training schedule. Fresh managed NVSkills evaluation/signing remains required.
+
+The observed issues are reflected in the skill: select release-matched images, inspect JPEG/HDF5 storage across mixed inputs, bind action output paths, use tracked Docker jobs with the submitting identity, and verify actual supervision-route coverage within a bounded smoke budget.
 
 Schema sources: TAO Core `cfa016e1c5314d50d2dbaa272eb0b01403997c63` and TAO Data Services `8a9503287094cf54f32f54d395e088d31d5fad7e`. The additional PyTorch dataclass merges use `2db3de4217b3f25c1d60ae71e6acd320016fdc9e`. Schemas and templates were emitted by `scripts/generate_dataclass_schemas.py` through its `generate_for_model` entry point, using the selected skill's action metadata in a temporary generation directory. The generator limits packaged Sparse4D fields to calibrated multi-camera workflows, preserving the retained dataclass defaults and metadata.
 

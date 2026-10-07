@@ -28,7 +28,9 @@ annotations convert -e /specs/aicity2ovpkl_unlabeled.yaml \
   results_dir=/results/real_infos
 ```
 
-Here `30` is an example capture rate. HDF5 RGB input instead uses `aicity.rgb_format=h5` and `dataset.use_h5_file_for_rgb: true`; inspect the shipped specification and supported HWC frame layout. Unlabeled conversion needs neither ground truth nor depth files. It emits info PKLs with `gt_boxes=None` and **does not generate anchors**. Reuse the selected pretrained model's anchors.
+Here `30` is an example capture rate. HDF5 RGB input instead uses `aicity.rgb_format=h5` and `dataset.use_h5_file_for_rgb: true`; inspect the shipped specification and supported HWC frame layout. The `dataset.use_h5_file_for_rgb` setting applies to the combined training dataset: use `false` for JPEG PKLs and `true` for HDF5 PKLs. Inspect the actual image paths in every split and make their storage format consistent before mixing them; a pretrained specification's HDF5 setting must not be inherited for JPEG inputs. Keep the model's image dimensions and normalization unchanged.
+
+Unlabeled conversion needs neither ground truth nor depth files. It emits info PKLs with `gt_boxes=None` and **does not generate anchors**. Reuse the selected pretrained model's anchors.
 
 Verify image paths, camera names, source `frame_idx`, timestamps in seconds, and calibration before preparing teacher caches. The PKL's legacy `sensor2world_transform` name holds a world-to-camera transform for the unrecentered specification; do not invert it because of its name. For recentered BEV groups, it maps group-local coordinates into the camera frame.
 
@@ -64,6 +66,8 @@ The bank's `dataset_convert` action is `annotations convert`. These preparation 
 Merge [the co-training fragment](geometric_distillation_train.yaml) into the selected model's complete train specification, preserving its backbone, anchors, preprocessing, optimizer, and held-out validation input. Paths and `RealWarehouse` are examples to replace. Leave `ltt_2dgt_sidecar_dir` unset when the optional visible-2D route is unused. Do not replace the complete specification with the fragment.
 
 Both LTT `enable` and `pseudo_enable` are required. Each batch must have one supervision route. For distributed mixed training, keep `dataset.sync_route: true`, a positive `scene_switch_iters`, and scene keywords that include all real 2D-supervised scenes while excluding the 3D route. `real_block_prob: 0.5` is an example block probability. Leave `model.cotrain_param_touch: false` to use find-unused-parameters DDP; enabling it can change inactive parameters through optimizer state and weight decay. The route and class order are fixed inputs, not hyperparameters to silently change during HPO.
+
+For a bounded wiring test, choose an explicit optimizer-step budget and a short positive `scene_switch_iters` (for example `1`). The training CLI currently computes total steps as `num_epochs * floor(num_frames * num_bev_groups / (num_nodes * num_gpus * batch_size))`. Verify that this is positive and reaches several route blocks. The production example's cadence of `100` is unsuitable for an eight-step smoke test. Route selection is probabilistic, so elapsed steps alone do not establish coverage; inspect the sampled routes and their losses. This budget adjustment is a test setting, not a memory optimization or production recommendation.
 
 Check that a short run consumes both routes. Expect normal 3D losses on labeled data and `loss_box_2d_pseudo_*` / `loss_cls_pseudo_*` on valid real samples. A missing or mismatched cache can set `has_2d_pseudo=False` and skip supervision. A processed frame with no detections is distinct and can supervise background. Investigate zero losses and join warnings before a long run.
 
