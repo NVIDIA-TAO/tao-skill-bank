@@ -43,7 +43,11 @@ Read `references/skill_info.yaml` before train requests. This model is AutoML-en
 
 AutoML's monitoring name is `val_mAP`; Sparse4D emits `img_bbox_NuScenes/mAP` and `mAP` as aliases. A promoted resume job may carry the source rung's metric without a new evaluation: report its provenance and verify the resumed checkpoint independently. Follow the AutoML skill's baseline-evaluation requirement. Evaluate, inference, export, and quantize remain in this skill.
 
-## Actions and required artifacts
+## Training Requirements
+
+Training needs converted OVPKL data, held-out labeled validation data, matching anchors, and the selected pretrained checkpoint or resume state. Preserve the selected backbone and ordered taxonomy. Geometric distillation additionally needs the released LTT checkpoint and prepared supervision caches. Choose the GPU count and training budget from the user's request and available resources.
+
+### Per-Action Dataset Requirements
 
 The model uses OVPKL annotations. The action contract declares staged inputs, commands, outputs, and optional artifacts. Paths embedded in info PKLs, split lists, and lazy indexes must also remain visible inside the selected runtime; staging a split file alone does not stage its referenced data.
 
@@ -61,6 +65,21 @@ The evaluation CLI calls the test dataloader. Setting only `dataset.val_dataset.
 Resolve `model.head.instance_bank.anchor` as an explicit model artifact from the selected bundle or a compatible labeled conversion. It is not inferred from a mandatory training dataset for evaluation or export.
 
 Use [checkpoint and output resolution](references/spec_param_inference.md) for exact artifact handoff. Do not choose the first checkpoint found or rely on a removed SDK job resolver.
+
+### Typical Spec Overrides
+
+For AutoML, construct `spec_overrides` from concrete staged paths in the table above and `skill_info.yaml`'s `data_sources`; dotted keys are an AutoML override map, not the container YAML format. Set only the inputs needed by the selected action.
+
+| Scope | Overrides to resolve |
+|---|---|
+| Training data | `dataset.data_root`, `dataset.train_dataset.ann_file`, `dataset.val_dataset.ann_file` |
+| Model initialization | `model.backbone.type`, `model.head.instance_bank.anchor`, `dataset.classes`, and `train.pretrained_model_path` or `train.resume_training_checkpoint_path` |
+| Training resources | `train.num_gpus`, `train.num_epochs`, `dataset.batch_size`, and `dataset.num_workers`, preserving the requested budget |
+| Geometric distillation | The LTT/cache paths and route fields in [the training fragment](references/geometric_distillation_train.yaml); preserve their validated class order and supervision policy during HPO |
+| Evaluation and inference | `dataset.data_root`, `dataset.test_dataset.ann_file`, matching anchors, and the action's checkpoint |
+| Output | `results_dir` and the action-specific output paths bound to the current job |
+
+With `dataset.lazy_load: true`, stage the split's parent directory as a folder, including `<split>_lazy_index.pkl` beside the split and `_pkl_cam_counts.pkl` when used. Point `ann_file` into that staged directory; do not let file-only staging relocate it away from its index. Keep referenced PKLs and images visible, and rebuild the index after relocation. `dataset.pkl_cam_counts_path` is an optional camera-count override, not the lazy index.
 
 ## Configuration and resource checks
 

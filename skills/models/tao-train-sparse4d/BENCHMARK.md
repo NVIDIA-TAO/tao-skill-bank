@@ -1,6 +1,26 @@
 # Evaluation Report
 
-## Maintenance Validation — 2026-10-06, Skill 0.2.0
+## Maintenance Validation — 2026-10-07, Skill 0.2.0
+
+Review fixes restore the AutoML section contract, specify lazy-index folder staging and teacher-cache filenames, and move schema exclusions into the model's `skill_info.yaml`. Sparse4D-specific version keys pin compatible TAO 7.3 images on `main` to match the release branch without changing other models' image selections.
+
+- 51 CPU tests pass with no skips: the previous 46 contract/source tests plus five shared-generator exclusion cases. Regeneration produces the same six packaged schemas and templates; the generic filter preserves unrelated fields and validates malformed exclusion metadata.
+- The skill-bank validator, version-stamp check, repository hooks, and whitespace checks pass.
+- PyTorch: `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-83-multiarch`, manifest digest `sha256:0f21f1cf37074ef955a1cc6a626b2d60c01309d09d204e8a3c0ae6d805132c6c`. <!-- unpinned: exact image used for this dated validation -->
+- Data Services: `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-80-multiarch`, manifest digest `sha256:7fbc02f6cb8e2203ba76723ee24de354e987f65c9d102c962eeb8992e5f2df7a`. <!-- unpinned: exact image used for this dated validation -->
+
+Bounded local execution on one RTX PRO 6000 Blackwell GPU passed:
+
+- The installed PyTorch and Core schemas accept all five model-action templates and both backbone variants of the geometric-distillation fragment: ten template merges and four fragment merges. The previously missing dataset and co-training fields are present in the image.
+- Data Services rc-80 contains SDU 2.0.2 and exposes `aicity.load_annotations` and `aicity.fps`. Raw calibrated-scene conversion produced four frames across seven cameras with `gt_boxes=None`, without depth inputs or generated anchors. Use the complete shipped specification, including its required `aicity.version`; an earlier abbreviated test fixture omitted that field.
+- Separate tracked preparation jobs generated a fresh teacher cache and a lazy index beside the mixed split. Each operation uses its own output directory; sharing a results directory without explicit overwrite hits the preparation-summary overwrite guard.
+- ResNet-101 consumed those fresh artifacts and the newly converted PKL for eight training steps. Observation of the unchanged installed training methods recorded seven valid pseudo-2D batches and one labeled 3D batch, all with finite active losses. Evaluation of the new checkpoint produced finite predictions on two held-out frames.
+- ResNet-50 completed four FP32 training steps. Inference from the new checkpoint produced finite predictions on two held-out frames; ONNX export and structural checking passed with image input `[batch_size, num_cams, 3, 540, 960]`.
+- Both new checkpoints contain finite saved model and optimizer tensors and the expected step counters, 4 and 8. The tests preserve the selected backbone, taxonomy, preprocessing, anchors, and temporal dimensions.
+
+**The rc-75 annotation-free conversion blocker is resolved by the rc-80 test and fresh downstream handoff above.** These small tests establish execution and artifact compatibility, not convergence, production accuracy, distributed behavior, TensorRT execution, quantization, or numerical parity. BF16 and resume results below belong to the earlier rc-78 validation; they were not rerun on rc-83. Fresh managed NVSkills evaluation/signing remains required.
+
+## Prior Maintenance Validation — 2026-10-06, Skill 0.2.0
 
 This update changes workflow guidance, action input contracts, generated schemas/templates, and the evaluation set. The release target is TAO 7.3.0. The NVSkills-Eval results below are historical results for version 0.1.0; they do not certify this revision. The managed validation/signing pipeline must generate current publication evidence.
 
@@ -15,8 +35,8 @@ Local validation:
 
 Bounded tests ran on one RTX PRO 6000 Blackwell GPU, with existing datasets and checkpoint bundles mounted read-only and each action writing to its own tracked output directory. Images came from the 7.3 release branch:
 
-- PyTorch: `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-78-multiarch`, manifest digest `sha256:72e6057cf4351f940d13e12c29320959961a64a271c40e3aa6f93b4cf96ce2d5`.
-- Data Services: `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-75-multiarch`, manifest digest `sha256:12c73e28ff1037e2df80c636fbce051c75525a7dcc42aaaa23fabad3ea4f2d62`.
+- PyTorch: `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-78-multiarch`, manifest digest `sha256:72e6057cf4351f940d13e12c29320959961a64a271c40e3aa6f93b4cf96ce2d5`. <!-- unpinned: historical validation image retained for provenance -->
+- Data Services: `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-75-multiarch`, manifest digest `sha256:12c73e28ff1037e2df80c636fbce051c75525a7dcc42aaaa23fabad3ea4f2d62`. <!-- unpinned: historical validation image retained for provenance -->
 
 Passed execution and artifact checks:
 
@@ -26,18 +46,19 @@ Passed execution and artifact checks:
 - Standalone evaluation and inference use `dataset.test_dataset.ann_file` while the train/validation paths are deliberately unavailable. Both backbone tests preserve their paired seven-class taxonomy, preprocessing, anchors, and temporal dimensions; the two baseline metric configurations differ and their scores are not compared.
 - ResNet-50 ONNX export from the new checkpoint, followed by ONNX structural validation. The actual graph image input is `[batch_size, num_cams, 3, 540, 960]`; setting `export.input_height: 544` did not change that signature in the tested exporter. The fresh mixed-training checkpoint also passes finite model/optimizer checks.
 
-**Open release blocker:** annotation-free conversion fails in Data Services `7.3.0-rc-75-multiarch` because its installed `AICityConfig` lacks `load_annotations` (and `fps`). The converter and approved SDU 2.0.2 dependency update are merged and backported to Data Services `release/7.3.0` at `4eceb550b10cad122f6c4e4929c5f51e5e2e968f`, but this image predates that update and contains SDU 1.0.0. Build and pin a newer 7.3 Data Services image, then repeat raw annotation-free conversion and its downstream handoff. Existing compatible PKLs allowed the model tests to proceed; this is not a passing raw-data-to-model end-to-end test.
+**Historical failure, resolved above:** annotation-free conversion failed in Data Services rc-75 because its installed `AICityConfig` lacked `load_annotations` and `fps`, and it contained SDU 1.0.0. The October 7 rc-80 test uses SDU 2.0.2, passes raw conversion, and feeds the newly generated data into training. The older rc-78 model tests below used existing compatible PKLs and do not independently establish that raw-data handoff.
 
 These are small wiring tests using four labeled training frames, four real-scene frames, and two held-out evaluation frames. They establish local execution, not convergence, production accuracy, multi-GPU behavior, quantization support, TensorRT execution, or numerical parity. Continuation with an extended step budget is not a claim of equivalence to an uninterrupted training schedule. Fresh managed NVSkills evaluation/signing remains required.
 
 The observed issues are reflected in the skill: select release-matched images, inspect JPEG/HDF5 storage across mixed inputs, bind action output paths, use tracked Docker jobs with the submitting identity, and verify actual supervision-route coverage within a bounded smoke budget.
 
-Schema sources: TAO Core `cfa016e1c5314d50d2dbaa272eb0b01403997c63` and TAO Data Services `8a9503287094cf54f32f54d395e088d31d5fad7e`. The additional PyTorch dataclass merges use `2db3de4217b3f25c1d60ae71e6acd320016fdc9e`. Schemas and templates were emitted by `scripts/generate_dataclass_schemas.py` through its `generate_for_model` entry point, using the selected skill's action metadata in a temporary generation directory. The generator limits packaged Sparse4D fields to calibrated multi-camera workflows, preserving the retained dataclass defaults and metadata.
+Schema sources: TAO Core `cfa016e1c5314d50d2dbaa272eb0b01403997c63` and TAO Data Services `8a9503287094cf54f32f54d395e088d31d5fad7e`. The additional PyTorch dataclass merges use `2db3de4217b3f25c1d60ae71e6acd320016fdc9e`. Schemas and templates were emitted by `scripts/generate_dataclass_schemas.py` through its `generate_for_model` entry point, using the selected skill's action metadata in a temporary generation directory. The generator applies the model-owned `schema_excluded_fields` contract to package the supported workflow while preserving retained dataclass defaults and metadata.
 
 Run the focused tests with compatible source checkouts on `PYTHONPATH` to enable all source-parity checks:
 
 ```bash
 python -m pytest scripts/tests/test_sparse4d_skill.py \
+  scripts/tests/test_schema_field_exclusions.py \
   scripts/tests/test_skill_command_hygiene.py \
   scripts/tests/test_resolve_tao_image.py \
   scripts/tests/test_repository_urls.py -q -ra

@@ -72,18 +72,6 @@ COSMOS_EVALUATE_AUTOML_DEFAULT_PARAMETERS = [
 ]
 
 
-SPARSE4D_EXCLUDED_FIELDS = (
-    "model.sv_aux_head",
-    "model.sv_scene_keywords",
-    "model.head.loose_to_tight.sv_depth_weight",
-    "model.head.loose_to_tight.sv_size_weight",
-    "model.head.loose_to_tight.sv_yaw_weight",
-    "dataset.resize_to_canonical_2d",
-    "dataset.canonical_2d_height",
-    "dataset.canonical_2d_width",
-)
-
-
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -201,16 +189,21 @@ def filter_schema(schema: dict[str, Any], valid_actions: set[str], current_actio
     return schema
 
 
-def filter_sparse4d_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Package only calibrated multi-camera fields, including defaults and metadata."""
+def filter_schema_excluded_fields(schema: dict[str, Any], excluded_fields: list[str]) -> dict[str, Any]:
+    """Omit model-declared fields from properties, defaults, and search metadata."""
+    if not isinstance(excluded_fields, list) or any(
+        not isinstance(field, str) or not field or any(not part for part in field.split("."))
+        for field in excluded_fields
+    ):
+        raise ValueError("schema_excluded_fields must be a list of nonempty dotted field paths")
     schema = copy.deepcopy(schema)
 
     def excluded(path: str) -> bool:
-        return any(path == field or path.startswith(field + ".") for field in SPARSE4D_EXCLUDED_FIELDS)
+        return any(path == field or path.startswith(field + ".") for field in excluded_fields)
 
     def visit(node: dict[str, Any], prefix: str = "") -> None:
         for metadata in ("default", "popular"):
-            for field in SPARSE4D_EXCLUDED_FIELDS:
+            for field in excluded_fields:
                 if not field.startswith(prefix):
                     continue
                 parts = field[len(prefix):].split(".")
@@ -405,6 +398,7 @@ def generate_schema_for_action(
             "core_module": "annotations",
             "source": "tao-dataservices annotations dataclass config",
         }
+        schema = filter_schema_excluded_fields(schema, skill_config.get("schema_excluded_fields", []))
         return schema, "annotations", "convert"
 
     schema_action = ACTION_ALIASES.get(action, action)
@@ -417,8 +411,7 @@ def generate_schema_for_action(
             json_with_meta = dataclass2json_converter.dataclass_to_json(exp_config)
             schema = dataclass2json_converter.create_json_schema(json_with_meta)
             schema = filter_schema(schema, get_valid_action_keys(skill_config, core_module), schema_action)
-            if core_module == "sparse4d":
-                schema = filter_sparse4d_schema(schema)
+            schema = filter_schema_excluded_fields(schema, skill_config.get("schema_excluded_fields", []))
             if core_module == "cosmos-rl" and schema_action in {"evaluate", "inference"}:
                 schema = unwrap_cosmos_non_train_action_schema(schema, schema_action)
             if core_module == "cosmos-rl" and schema_action == "evaluate":

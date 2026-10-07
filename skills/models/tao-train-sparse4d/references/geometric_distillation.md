@@ -18,7 +18,7 @@ Use the same order in preparation `class_names` and training `dataset.classes`. 
 
 ## Prepare calibrated real scenes
 
-Use the [maintained annotation-free conversion specification](https://github.com/NVIDIA-TAO/tao-data-services/blob/main/nvidia_tao_ds/annotations/experiment_specs/aicity2ovpkl_unlabeled.yaml). Copy it to the staged specifications directory and set its ordered `aicity.class_config.CLASS_LIST` to the selected model taxonomy. The complete specification sets `aicity.load_annotations: false`, disables recentering, selects JPEG input, and uses all calibrated cameras as one group.
+Use the [maintained annotation-free conversion specification](https://github.com/NVIDIA-TAO/tao-data-services/blob/release/7.3.0/nvidia_tao_ds/annotations/experiment_specs/aicity2ovpkl_unlabeled.yaml). Copy it to the staged specifications directory and set its ordered `aicity.class_config.CLASS_LIST` to the selected model taxonomy. The complete specification sets `aicity.load_annotations: false`, disables recentering, selects JPEG input, and uses all calibrated cameras as one group.
 
 Arrange `/data/aicity_root/train/<scene>/calibration.json` and `<camera>/rgb/000000000.jpg`, `000000001.jpg`, and so on. Calibration must contain separate camera intrinsics and world-to-camera poses. All camera sequences must be synchronized, contiguous from zero, nonempty, and equal in length. Set the actual capture rate, not an assumed 30 FPS:
 
@@ -47,7 +47,7 @@ The resulting path is `/data/sparse4d_rn50_vtrainable_v3.0/_loose_to_tight_mlp.p
 
 ## Prepare supervision and the mixed split
 
-Use the [Data Services preparation specification](https://github.com/NVIDIA-TAO/tao-data-services/blob/main/nvidia_tao_ds/annotations/experiment_specs/sparse4d_prepare.yaml). Fill its paths, class order, teacher class aliases, scene name, and camera mapping before submitting the selected operation:
+Use the [Data Services preparation specification](https://github.com/NVIDIA-TAO/tao-data-services/blob/release/7.3.0/nvidia_tao_ds/annotations/experiment_specs/sparse4d_prepare.yaml). Fill its paths, class order, teacher class aliases, scene name, and camera mapping before submitting the selected operation:
 
 ```bash
 annotations sparse4d_prepare -e /specs/sparse4d_prepare.yaml operation=ltt_2dgt
@@ -56,8 +56,8 @@ annotations sparse4d_prepare -e /specs/sparse4d_prepare.yaml operation=lazy_inde
 ```
 
 - `ltt_2dgt` is optional visible-2D supervision for 3D-labeled scenes. Its `box2` and `box3` are amodal and visible **2D** boxes, respectively.
-- `rtdetr_2d` converts precomputed per-camera KITTI `labels.tar.gz` archives; it does not run the teacher. Generate detections on exactly the converted source frames. Explicitly map or drop teacher classes, and match scene/camera names to the PKLs. Keep these caches away from scenes intended to remain on the 3D route.
-- `lazy_index` consumes a split with one container-visible PKL path per line, each included once. Include the 3D-labeled and real info PKLs. It writes a sibling index with embedded camera counts; rebuilding it is required after changing the split or relocating the source files.
+- `rtdetr_2d` converts precomputed per-camera KITTI `labels.tar.gz` archives; it does not run the teacher. Generate detections on exactly the converted source frames. Explicitly map or drop teacher classes, and match scene/camera names to the PKLs. When using `dataset.rtdetr_2d_cache_dir`, set `rtdetr_2d.output_path` to `<scene>__rtdetr2d.npz` inside that directory, with `<scene>` matching the runtime scene name after the BEV-group separator and `rtdetr_2d_dedup_regex` normalization. For one cache with a different filename, use `dataset.rtdetr_2d_cache_path` explicitly. Keep these caches away from scenes intended to remain on the 3D route.
+- `lazy_index` consumes a split with one container-visible PKL path per line, each included once. Include the 3D-labeled and real info PKLs. For a split named `mixed_train.txt`, it writes the required sibling `mixed_train_lazy_index.pkl` with embedded camera counts. Stage the split parent directory as a folder, preserving that adjacency and `_pkl_cam_counts.pkl` when used; fetching the split alone through S3/Kubernetes staging is insufficient. Keep referenced PKLs and images visible. Rebuild the index after changing the split or relocating source files. `dataset.pkl_cam_counts_path` does not replace the required index.
 
 The bank's `dataset_convert` action is `annotations convert`. These preparation operations are separate Data Services commands, submitted through the selected platform's job contract; do not rename them to `sparse4d dataset_convert` or pretend they run during model training.
 

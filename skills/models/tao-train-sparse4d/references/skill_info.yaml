@@ -1,12 +1,21 @@
 name: tao-train-sparse4d
 network_arch: sparse4d
 automl_enabled: true
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.pyt
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-83-multiarch  # versions-key: images.tao_toolkit.sparse4d_pyt
 data_format: ovpkl
 gpu_spec_key: train.num_gpus
+schema_excluded_fields:
+  - model.sv_aux_head
+  - model.sv_scene_keywords
+  - model.head.loose_to_tight.sv_depth_weight
+  - model.head.loose_to_tight.sv_size_weight
+  - model.head.loose_to_tight.sv_yaw_weight
+  - dataset.resize_to_canonical_2d
+  - dataset.canonical_2d_height
+  - dataset.canonical_2d_width
 actions:
   dataset_convert:
-    container_image: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.data_services
+    container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-80-multiarch  # versions-key: images.tao_toolkit.sparse4d_data_services
     command: annotations convert -e {config_path}
     config_format: yaml
     mode: config
@@ -31,6 +40,11 @@ actions:
         type: file
       dataset.train_dataset.ann_file:
         type: file
+        description: >-
+          For lazy_load=true, stage the split parent directory with its matching
+          <split>_lazy_index.pkl and optional _pkl_cam_counts.pkl, then point this
+          field at the split inside that staged directory. Stage referenced PKLs
+          and images as well. Fetching this file alone is insufficient.
       dataset.val_dataset.ann_file:
         type: file
       train.pretrained_model_path:
