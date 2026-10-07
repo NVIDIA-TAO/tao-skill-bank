@@ -26,7 +26,21 @@ questions:
 
 1. Resolve an explicitly named workspace or the conventional `~/workspace`
    candidate without creating it.
-2. Resolve the archive root using this exact precedence and scope:
+2. Resolve the archive root with the packaged read-only implementation of the
+   exact precedence and scope below:
+
+   ```bash
+   DISCOVERY_ARGS=(--workspace "$WORKSPACE")
+   if [ -n "${ARCHIVE_ROOT:-}" ]; then
+     DISCOVERY_ARGS+=(--archive-root "$ARCHIVE_ROOT")
+   fi
+   python3 "$SKILL_ROOT/scripts/discover_pas_inputs.py" "${DISCOVERY_ARGS[@]}"
+   ```
+
+   When the user supplied exact file paths, pass `--images-archive` and
+   `--metadata-archive` instead of `--archive-root`. This command, rather than
+   an agent-authored filesystem search, is authoritative for depth and symlink
+   handling.
 
    - If the user supplied both archive file paths, require the exact names
      `images_raw.tar` and `meta.tar.gz`, a shared non-symlink parent, and two
@@ -187,8 +201,17 @@ Run this section only after required intake is resolved.
    "${TAO_SKILL_BANK_PATH:?}/scripts/check_tao_launch_preflight.py" \
      --skill-bank "$TAO_SKILL_BANK_PATH" --platform "$PLATFORM" \
      --container-image "$PAS_PYT_IMAGE" \
-     --gpu-min-count "$NUM_GPUS" "${TARGET_GPU_ARGS[@]}"
+     --path "workspace=$WORKSPACE" --min-free-disk-gb workspace=256 \
+     --gpu-min-count "$NUM_GPUS" "${TARGET_GPU_ARGS[@]}" \
+     --defer-container-probes
    ```
+
+   This discovery invocation explicitly uses `--defer-container-probes`. It
+   may inspect the daemon and host inventory but cannot start a container.
+   After approval, rerun the same command without `--defer-container-probes`
+   before config/state creation. A PAS PyTorch or data-services image with an
+   unsupported GPU architecture is a hard failure; the checker must never
+   silently skip that image gate.
 
    Docker inspects the selected local or `DOCKER_HOST` daemon, images, GPU, and
    paths from that daemon's compute frame; SLURM checks SSH, scheduler, Lustre,
@@ -345,6 +368,7 @@ Inputs
                        ABI/packages/entrypoints/imports/pip/CUDA=<pass | fail | n/a>
   control environment: <absolute path>; distinct from execution profiles=<true | false>
   storage/staging: tier=<A | B | C>; compute targets=<resolved platform paths>
+  workspace capacity: free=<GiB>; required>=256 GiB; status=<pass | fail>
   GPUs: <selected host IDs or platform allocation> (source=<user | default>);
         physical=<count or n/a>; visible=<CUDA-visible count or n/a>;
         requested=<num_gpus>; memory=<free/total or platform inventory>
@@ -369,7 +393,12 @@ after approval, show only the changed rows and wait for approval again.
 
 For a new run, perform the following in order.
 
-1. Follow the selected platform skill's approved image/runtime acquisition.
+1. Verify the native host prerequisites before creating the control
+   environment: `python3`, the distro's `python3-venv` support, and `pip` must
+   be present. A missing `venv`/`ensurepip` implementation is a blocker and the
+   remediation package is `python3-venv` (plus `python3-pip` when pip is
+   absent); name it explicitly rather than failing later inside step 3.
+   Then follow the selected platform skill's approved image/runtime acquisition.
    Docker and Brev acquire the approved images through Docker; SLURM converts and
    caches both images as SQSH before allocating GPUs; Kubernetes makes both
    images pullable by the namespace. Virtualenv uses two immutable execution
@@ -385,7 +414,7 @@ For a new run, perform the following in order.
    ```bash
    (
      if [ -z "${NGC_KEY:-}" ]; then
-       echo "NGC_KEY is not set. Export it in the shell that launches the agent." >&2
+       printf '%s\n' 'NGC_KEY is not set. Export it in the shell that launches the agent.' >&2
        exit 2
      fi
      printf '%s' "$NGC_KEY" | docker login nvcr.io \
@@ -417,13 +446,21 @@ For a new run, perform the following in order.
    hashes, use a source checkout as runtime, or weaken the acquisition
    boundary. Never expose credentials or silently substitute a platform.
 
-2. Run an image-specific CUDA framework smoke using the exact approved resource
+2. Rerun the shared checker with the same arguments except for
+   `--defer-container-probes`, then run an image-specific CUDA framework smoke
+   using the exact approved resource
    shape. GPU enumeration or `nvidia-smi` inside a container is not sufficient:
    it can succeed when the image's PyTorch/CUDA build cannot initialize against
-   the host driver. Bind-mount and execute
-   `scripts/check_pas_cuda_runtime.py` inside every pinned runtime that the
+   the host driver. Bind-mount the packaged file read-only at exactly
+   `/probe/check_pas_cuda_runtime.py`, mount the attestation directory writable
+   at `/attestation`, and execute the probe inside every pinned runtime that the
    approved run will use. Require `clip` for the PyTorch image and require both
    `embedding` and `tmm` for the data-services image:
+
+   The exact bind forms are
+   `$SKILL_ROOT/scripts/check_pas_cuda_runtime.py:/probe/check_pas_cuda_runtime.py:ro`
+   and `$WORKSPACE/.tao/preflight:/attestation:rw`; do not mount the skill tree
+   writable or leave `/probe` implicit.
 
    ```bash
    python3 /probe/check_pas_cuda_runtime.py \
@@ -432,20 +469,35 @@ For a new run, perform the following in order.
      --min-gpus "$NUM_GPUS" --require-cli embedding --require-cli tmm
    ```
 
-   For LoRA, make the PyTorch probe image-bound and persist its non-secret
-   attestation outside the not-yet-created run directory:
+   For Docker, use the packaged launcher, which resolves `RepoDigests`, runs
+   the digest-qualified image, and renders those exact mounts. It writes one
+   non-secret PyTorch attestation outside the not-yet-created run directory for
+   both SFT and LoRA:
 
    ```bash
-   LORA_ATTESTATION="$WORKSPACE/.tao/preflight/pas-clip-lora.json"
-   python3 /probe/check_pas_cuda_runtime.py \
-     --min-gpus "$NUM_GPUS" --require-cli clip \
-     --require-clip-lora --image-ref "$PAS_PYT_IMAGE" \
-     --output "$LORA_ATTESTATION"
+   PYT_RUNTIME_ATTESTATION="$WORKSPACE/.tao/preflight/pas-pyt-runtime.json"
+   DS_RUNTIME_ATTESTATION="$WORKSPACE/.tao/preflight/pas-ds-runtime.json"
+   python3 "$SKILL_ROOT/scripts/run_pas_runtime_probe.py" --approved \
+     --image "$PAS_PYT_IMAGE" --image-kind pyt \
+     --finetuning-method "$FINETUNING_METHOD" \
+     --min-gpus "$NUM_GPUS" --gpu-ids "$GPU_IDS" \
+     --output "$PYT_RUNTIME_ATTESTATION"
+   python3 "$SKILL_ROOT/scripts/run_pas_runtime_probe.py" --approved \
+     --image "$PAS_DS_IMAGE" --image-kind ds \
+     --min-gpus "$NUM_GPUS" --gpu-ids "$GPU_IDS" \
+     --output "$DS_RUNTIME_ATTESTATION"
    ```
 
-   This verifies the PEFT schema, SigLIP2 targets, adapter injection,
-   checkpoint compatibility registration, and merge path. A missing, failed,
-   or different-image attestation blocks config creation.
+   The attestation records the selected tag and immutable `sha256` image digest
+   plus the supported fine-tuning methods. LoRA additionally verifies the PEFT
+   schema, SigLIP2 targets, adapter injection, checkpoint compatibility
+   registration, and merge path. SFT is not allowed to bypass or silently
+   ignore this binding. A missing, failed, tag-mismatched, digest-less, or
+   method-incompatible attestation blocks config creation. Platform consumers
+   for SLURM, Kubernetes, and Brev must copy/mount the same packaged probe at
+   `/probe/check_pas_cuda_runtime.py`, mount an attestation output directory,
+   resolve the platform-native immutable image digest, and pass both
+   `--image-ref` and `--image-digest`; the semantic contract is identical.
 
    The selected platform consumer owns the surrounding Docker, `srun`, pod, or
    Brev command and must allocate the approved GPUs to the probe exactly as it
@@ -477,9 +529,11 @@ For a new run, perform the following in order.
    create it and install only the bundled runtime's third-party dependencies:
 
    ```bash
+   python3 -c 'import ensurepip, venv'
+   python3 -m pip --version
    python3 -m venv "$WORKSPACE/.venv"
    "$WORKSPACE/.venv/bin/pip" install \
-     pandas numpy matplotlib pyarrow pillow pyyaml scikit-learn
+     pandas numpy matplotlib pyarrow pillow pyyaml scikit-learn jsonschema
    "$WORKSPACE/.venv/bin/pip" install torch \
      --index-url https://download.pytorch.org/whl/cpu
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
@@ -488,9 +542,8 @@ For a new run, perform the following in order.
 
    Never install into the system interpreter. If package installation was not
    in the approved actions, obtain approval first.
-   The control interpreter used by `run_deft_action.py` must also import
-   `jsonschema`; install that small helper in an approved non-system
-   environment if no existing Python provides it.
+   The final import check for the control environment is
+   `import pas_deft, jsonschema`; both are required before continuing.
 4. Materialize an immutable run config and `approval.json` from the bundled
    templates. Pass every approved override explicitly; this command writes
    only `${RESULTS_DIR}/config/` and refuses an initialized run:
@@ -516,8 +569,8 @@ For a new run, perform the following in order.
    if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
      PREP_OPTIONAL_ARGS+=(--requires-hf-token)
    fi
-   if [ "$FINETUNING_METHOD" = lora ]; then
-     PREP_OPTIONAL_ARGS+=(--lora-capability-attestation "$LORA_ATTESTATION")
+   if [ "$PLATFORM" != virtualenv ]; then
+     PREP_OPTIONAL_ARGS+=(--pyt-runtime-attestation "$PYT_RUNTIME_ATTESTATION")
    fi
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \

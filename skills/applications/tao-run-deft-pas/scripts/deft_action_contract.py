@@ -313,6 +313,24 @@ def validate_action(
         raise ValueError(f"state.config.{image_key} must be a non-empty approved image")
     workspace, dataset_root, config_dir = validate_runtime_paths(results_dir, config)
     platform = str(config["platform"])
+    if (
+        image_kind == "pyt"
+        and platform != "virtualenv"
+        and config.get("finetuning_method") is not None
+    ):
+        digest = config.get("pyt_image_digest")
+        if not isinstance(digest, str) or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", digest
+        ):
+            raise ValueError(
+                "state.config.pyt_image_digest must bind the approved PyTorch image"
+            )
+        repository = image.split("@", 1)[0]
+        last_slash = repository.rfind("/")
+        last_colon = repository.rfind(":")
+        if last_colon > last_slash:
+            repository = repository[:last_colon]
+        image = f"{repository}@{digest}"
     patches_dir = pathlib.Path(__file__).resolve().parent.parent / "patches"
     if not patches_dir.is_dir():
         raise ValueError(f"container compatibility patches are missing: {patches_dir}")

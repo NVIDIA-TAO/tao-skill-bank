@@ -32,6 +32,49 @@ def test_cosmos_image_allowlist_includes_compute_capability_variant():
     assert {"sm_103", "sm_103a"} <= supported
 
 
+def test_pas_image_families_have_a_shared_checker_architecture_gate():
+    assert preflight.known_supported_sms(
+        "nvcr.io/nvstaging/tao/tao-toolkit-pyt:test", []
+    )
+    assert preflight.known_supported_sms(
+        "nvcr.io/nvstaging/tao/tao-toolkit-ds:test", []
+    )
+
+
+def test_docker_container_probe_is_deferred_when_preapproval_requests_it(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        preflight,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                '{"nvidia": {}}\n'
+                if command[:2] == ["docker", "info"] and "--format" in command
+                else ""
+            ),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(preflight, "query_host_gpus", lambda **_kwargs: (True, _host_gpus()[:1]))
+    monkeypatch.setattr(
+        preflight,
+        "check_docker_gpu_smoke",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("pre-approval check must not start a container")
+        ),
+    )
+    assert preflight.check_local_docker(
+        [], {}, 20, False,
+        "nvcr.io/nvstaging/tao/tao-toolkit-pyt:test",
+        "ubuntu:22.04", False, [], None, 50.0, False, [], True,
+    )
+    assert "deferred until approval" in capsys.readouterr().out
+
+
 def test_architecture_specific_target_matches_family_target():
     assert preflight.gpu_arch_is_supported("sm_103", {"sm_103a"})
     assert preflight.gpu_arch_is_supported("sm_103a", {"sm_103"})

@@ -14,9 +14,12 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import pathlib
+import re
 import shutil
 import sys
+import tempfile
 from typing import Any, Callable
 
 
@@ -88,9 +91,23 @@ def probe_clip_lora_contract(config_type: Any, lora_module: Any) -> dict[str, An
             "alpha",
             "dropout",
         )
+        if not isinstance(block, dict):
+            raise RuntimeError(
+                f"CLIP PEFT {tower} contract is incomplete: tower is not an object"
+            )
         missing = [key for key in required_fields if key not in block]
-        if missing or block.get("target_modules") != required_targets:
-            raise RuntimeError(f"CLIP PEFT {tower} contract is incomplete")
+        wrong_targets = block.get("target_modules") != required_targets
+        if missing or wrong_targets:
+            details = []
+            if missing:
+                details.append("missing fields: " + ", ".join(missing))
+            if wrong_targets:
+                details.append(
+                    "target_modules must be " + ", ".join(required_targets)
+                )
+            raise RuntimeError(
+                f"CLIP PEFT {tower} contract is incomplete: " + "; ".join(details)
+            )
     symbols = (
         "LoRALinear",
         "inject_lora",
@@ -122,6 +139,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--require-cli", action="append", default=[])
     parser.add_argument("--require-clip-lora", action="store_true")
     parser.add_argument("--image-ref")
+    parser.add_argument("--image-digest")
     parser.add_argument("--output", type=pathlib.Path)
     return parser
 
@@ -136,14 +154,31 @@ def main() -> int:
             required_clis=args.require_cli,
             torch_module=torch,
         )
+        if args.output is not None:
+            if not args.image_ref or not args.image_digest:
+                raise ValueError(
+                    "--output requires --image-ref and --image-digest"
+                )
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", args.image_digest):
+                raise ValueError(
+                    "--image-digest must be an immutable sha256:<64 lowercase hex> digest"
+                )
+            result.update(
+                {
+                    "schema_version": "1",
+                    "image_ref": args.image_ref,
+                    "image_digest": args.image_digest,
+                    "finetuning_methods": ["sft"],
+                }
+            )
         if args.require_clip_lora:
-            if not args.image_ref or args.output is None:
-                raise ValueError("--require-clip-lora requires --image-ref and --output")
+            if args.output is None:
+                raise ValueError("--require-clip-lora requires --output")
             from nvidia_tao_pytorch.config.clip.default_config import CLIPExperimentConfig
             from nvidia_tao_pytorch.multimodal.clip.model import lora
 
-            result["image_ref"] = args.image_ref
             result["clip_lora"] = probe_clip_lora_contract(CLIPExperimentConfig, lora)
+            result["finetuning_methods"].append("lora")
     except Exception as exc:
         print(
             f"PAS_CUDA_PROBE=FAIL reason={type(exc).__name__}: {exc}",
@@ -152,7 +187,21 @@ def main() -> int:
         return 1
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        fd, temporary = tempfile.mkstemp(
+            prefix=args.output.name + ".",
+            suffix=".tmp",
+            dir=str(args.output.parent),
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(result, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            pathlib.Path(temporary).replace(args.output)
+        except Exception:
+            pathlib.Path(temporary).unlink(missing_ok=True)
+            raise
     print("PAS_CUDA_PROBE=PASS " + json.dumps(result, sort_keys=True))
     return 0
 
