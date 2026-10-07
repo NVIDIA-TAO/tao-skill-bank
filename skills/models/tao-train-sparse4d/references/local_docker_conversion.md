@@ -31,6 +31,8 @@ dataset conversion produces fewer anchors, for example a 3-frame conversion that
 emits a 72-row `anchor_init.npy`, evaluate/inference can still run with matching
 reduced config values but export will fail during memory-bank update. For fine-tuning, reuse the selected pretrained model's matching anchors. For a labeled conversion that needs new anchors, use enough annotated frames to generate the configured count; do not pad or invent anchors. Annotation-free conversion intentionally produces no anchor file.
 
+The current exporter reads image dimensions from `model.input_shape` in `[width, height]` order, not the generic `export.input_width` / `export.input_height` fields. Preserve the selected checkpoint's paired preprocessing and verify the emitted ONNX input signature before building an engine. For example, `model.input_shape: [960, 540]` produces an image input shaped `[batch_size, num_cams, 3, 540, 960]`; setting `export.input_height: 544` alone does not change it.
+
 When reusing a previous dataset conversion for AutoML or repeated training,
 copy or mount the conversion output by the explicit `dataset_convert_job_id`,
 not by the first `results_dir` found under a results root. The following checks are specific to the labeled AICity smoke fixture, not required filenames for every dataset. Before launch, verify the selected action's actual artifacts. Standalone evaluation reads `dataset.test_dataset.ann_file`, even when evaluating a held-out `val` PKL:
