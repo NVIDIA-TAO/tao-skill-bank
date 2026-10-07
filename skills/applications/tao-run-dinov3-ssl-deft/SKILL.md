@@ -28,10 +28,11 @@ prepares and approves its inputs; it does not implement orchestration.
    weakness. Read [architecture.md](references/architecture.md) for the
    scientific meaning, task weighting, and stopping policy.
 2. Read [tao-container-integration.md](references/tao-container-integration.md).
-   Check release readiness before offering a launch: the selected image must
-   contain the reviewed DEFT modules and pass packaged validation. A stock
-   DS image containing TAO is not sufficient. The executable profile is one
-   allocated DS container; no external runner ships with this application.
+   Check release readiness before offering a launch: the resolved
+   `images.tao_toolkit.data_services` image must be a release build whose
+   installed packages contain the reviewed DEFT modules and pass packaged
+   validation. An older DS build is not sufficient. The executable profile is
+   one allocated DS container; no external runner ships with this application.
 3. Follow the selected platform's launch gate. For Docker, use the concrete
    allocation, preflight, and `docker exec` lifecycle in the integration
    reference. Inside that runtime, follow the preparation sequence in
@@ -40,8 +41,9 @@ prepares and approves its inputs; it does not implement orchestration.
    source store with its payload contract, and write the target contract.
    No additional host/model package installation is needed. Generate a packaged recipe with `init`,
    fill paths/resources, then run `validate <config>` and `plan <config>`.
-   Read [adapter-contracts.md](references/adapter-contracts.md) when configuring
-   custom scoring/evaluation, indexed retrieval, or resource policies.
+   Read [adapter-contracts.md](references/adapter-contracts.md) when declaring a
+   held-out benchmark ([isolation](references/adapter-contracts.md#held-out-benchmark-isolation)),
+   or configuring custom scoring/evaluation, indexed retrieval, or resource policies.
 4. Inspect the plan and present the approval contract below. Read
    `references/skill_info.yaml:path_contract` as the input-mount checklist:
    every applicable path must be visible in the allocated container, and
@@ -58,7 +60,10 @@ Populate these six items from preflight and the plan, not from assumptions:
 
 - Loop: chosen strategy, maximum rounds, stops, evaluation scope and patience.
 - Data: immutable target/source versions, verified row/shard counts, parent
-  history, storage capacity and mount locations.
+  history, storage capacity and mount locations. For any held-out benchmark,
+  the identity sidecar and its declared columns, even with evaluation disabled,
+  and preflight's `contracts.benchmark_isolation` (at least 1; otherwise stop)
+  ([held-out benchmark isolation](references/adapter-contracts.md#held-out-benchmark-isolation)).
 - Sampling: fixed target budget, resolved integer task quotas, neighbors,
   radius/floor and duplicate thresholds; index, audit, probes/depth for ANN.
 - Training: passes, resolution, resources/update floor and immutable original

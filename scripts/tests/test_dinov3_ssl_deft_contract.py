@@ -132,6 +132,41 @@ def test_application_image_resolves_to_data_services_runtime():
     assert resolved["source"] == "application.container_image"
 
 
+def test_release_readiness_uses_the_declared_ds_image_contract():
+    """Docs and resolver share one release-managed DS image, not a missing key."""
+    text = (SKILL / "references/tao-container-integration.md").read_text()
+    info = yaml.safe_load((SKILL / "references/skill_info.yaml").read_text())
+    assert f"images.{info['container_image']}" in text
+    assert "docker image inspect --format '{{index .RepoDigests 0}}'" in text
+    assert "deft_dinov3_data_services" not in text
+    assert "deft_dinov3_pyt" not in text
+    assert "The currently declared general-purpose DS image is not a DEFT release" not in text
+    assert "Keep the application PR draft" not in text
+    assert "installed" in text and "packaged regression tests" in text
+    assert "release team" in text
+
+
+def test_benchmark_isolation_evaluation_requires_identity_metadata():
+    """Keep a behavioral evaluation for renamed copies and disabled evaluation."""
+    cases = json.loads((SKILL / "evals/evals.json").read_text())
+    case = next(item for item in cases if item["id"].endswith("benchmark-isolation"))
+    assert "content_sha256" in case["ground_truth"]
+    assert "independent of evaluation" in case["ground_truth"]
+    text = (SKILL / "references/adapter-contracts.md").read_text()
+    for rule in (
+        "data.benchmark_acquisition_units", "data.acquisition_unit_column",
+        "content_sha256", "even when evaluation is disabled", "diagnostic_replay",
+        "before publishing its artifact seal", "near-duplicates",
+        "tao-data-services/pull/57", "omit both",
+        '"contracts": {"benchmark_isolation": 1}', "stop before launch",
+    ):
+        assert rule in text, rule
+    skill = (SKILL / "SKILL.md").read_text()
+    assert "contracts.benchmark_isolation" in skill
+    assert skill.count("adapter-contracts.md#held-out-benchmark-isolation") >= 2
+    assert "stock DS image" not in skill
+
+
 def test_application_contract_declares_shared_paths_dynamic_output_and_cancel():
     info = yaml.safe_load(
         (SKILL / "references" / "skill_info.yaml").read_text(encoding="utf-8")

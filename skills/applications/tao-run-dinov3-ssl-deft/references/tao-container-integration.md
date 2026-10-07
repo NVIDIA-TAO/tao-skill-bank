@@ -6,14 +6,22 @@ is required by the single-container design.
 
 ## Release readiness
 
-The currently declared general-purpose DS image is not a DEFT release.
-Do not launch this application against it. Publication is blocked until TAO
-Infra provides a build carrying the reviewed DS, PyTorch, and Core changes,
-the packaged suite and GPU smoke tests pass, and a dedicated
-`images.tao_toolkit.deft_dinov3_data_services` digest is pinned in
-`versions.yaml` and `skill_info.yaml`. Keep the application PR draft until then.
-A separate PyTorch deployment would also need a tested
-`images.tao_toolkit.deft_dinov3_pyt` pin.
+This application uses the release-managed `images.tao_toolkit.data_services`
+image from `versions.yaml`, selected by `skill_info.yaml`. There is no separate
+DEFT image or DINOv3-specific image key. Use the supported release checkout;
+`main` is development source and its default image need not contain pending
+changes. Resolve the image from that checkout, never copy a tag from prose.
+
+The release team builds DS with the reviewed DS/PyTorch packages and updates
+the release image pins. Before rollout, validate that exact image's installed
+packages with workflow preflight, packaged regression tests and GPU smoke
+tests. In particular, verify held-out benchmark exclusion, rejection before
+materialization seals, and fresh-start training with auto-resume disabled.
+An image built before the fixes must not be reported as containing them merely
+because its tag is newer or because source-overlay tests pass. Record the
+resolved digest and test results in the release evidence; do not patch packages
+at container startup. A rebuild and pin update belong to the release handoff,
+not to a parallel application-specific image lifecycle.
 
 Source-overlay QA demonstrates source compatibility only. It is not evidence
 that the published image contains these modules. The ANN path additionally
@@ -27,11 +35,21 @@ job-record opening, UID/GID mapping, cache variables and GPU selection.
 Resolve the approved application image on the host with:
 
 ```bash
-python scripts/resolve_tao_image.py --application tao-run-dinov3-ssl-deft --action run
+DEFT_TAG=$(python scripts/resolve_tao_image.py --application tao-run-dinov3-ssl-deft \
+  --action run --format json | python -c 'import json, sys; print(json.load(sys.stdin)["image"])')
 ```
 
-Resolve symbolic keys here, then pass explicit digest-pinned image references
-to DS. It does not read Skill Bank or `versions.yaml`.
+Show `DEFT_TAG` to the user and accept an explicit override. Then pin the
+digest, because a tag can move between preflight and launch:
+
+```bash
+docker pull "$DEFT_TAG"
+DEFT_IMAGE=$(docker image inspect --format '{{index .RepoDigests 0}}' "$DEFT_TAG")
+```
+
+`RepoDigests` is empty for an image that was never pulled from a registry; stop
+in that case. Every `docker run` below takes `$DEFT_IMAGE`. DS does not read
+Skill Bank or `versions.yaml`.
 
 The example below assumes the platform has prepared these reviewed bindings:
 `DEFT_IMAGE` is the tested image digest, `DEFT_ROOT` contains config, data,

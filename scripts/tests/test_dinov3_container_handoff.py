@@ -107,6 +107,15 @@ def test_only_data_services_requires_cross_repo_smoke_imports(
     assert "TAO_DEFT_REQUIRE_CROSS_REPO_SMOKE" not in skill_bank
 
 
+def preflight_report(calls, contracts):
+    """Fake DS preflight that records its argv and prints its JSON report."""
+    def main(argv):
+        calls.append(argv)
+        print(json.dumps({"contracts": contracts, "cuda_verified": True}, indent=2))
+        return 0
+    return main
+
+
 @pytest.mark.parametrize("repo", ["tao-pytorch", "tao-data-services"])
 def test_packaged_default_does_not_require_optional_faiss(monkeypatch, repo):
     preflight_calls = []
@@ -114,21 +123,108 @@ def test_packaged_default_does_not_require_optional_faiss(monkeypatch, repo):
     def installed(name):
         return SimpleNamespace(
             __file__="/installed/module.py",
-            **({"main": lambda argv: preflight_calls.append(argv) or 0}
-               if name == "nvidia_tao_ds.mining.dinov3.workflow.cli" else {}),
+            main=preflight_report(preflight_calls, {"benchmark_isolation": 1}),
+            initialize_train_experiment=lambda cfg, **_: (None, {}),
         )
 
+    isolation_checks = []
     monkeypatch.setattr(handoff.importlib, "import_module", installed)
+    monkeypatch.setattr(handoff, "benchmark_isolation_check", lambda: isolation_checks.append(True))
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True)))
     monkeypatch.setitem(sys.modules, "faiss", None)
+    monkeypatch.setenv("TAO_VISIBLE_DEVICES", "0")
     assert handoff.packaged_check(repo) == 0
     expected_calls = (
         [["preflight", "--gpu"]]
         if repo in {"tao-data-services", "tao-skill-bank"} else []
     )
     assert preflight_calls == expected_calls
+    assert isolation_checks == [True] * len(expected_calls)
     with pytest.raises(ModuleNotFoundError, match="faiss"):
         handoff.packaged_check(repo, require_gpu_faiss=True)
+
+
+@pytest.mark.parametrize("contracts", [{}, {"benchmark_isolation": 0}])
+def test_packaged_check_rejects_image_without_benchmark_isolation(monkeypatch, capsys, contracts):
+    """An older DS image accepts the sidecar but never screens the source pool."""
+    calls = []
+    monkeypatch.setattr(handoff.importlib, "import_module", lambda _: SimpleNamespace(
+        __file__="/installed/module.py", main=preflight_report(calls, contracts),
+    ))
+    with pytest.raises(RuntimeError, match="predates held-out benchmark isolation"):
+        handoff.packaged_check("tao-data-services")
+    assert calls == [["preflight", "--gpu"]]
+    assert '"cuda_verified": true' in capsys.readouterr().out
+
+
+def installed_materialize(seal_renamed=False, seal_rejected=False, skip_clean_seal=False):
+    """Fake DS data action; JSON stands in for parquet so the test needs no pandas."""
+    def main(argv):
+        options = dict(zip(argv[1::2], argv[2::2]))
+        delta = json.loads(Path(options["--delta"]).read_text())
+        held_out = json.loads(Path(options["--benchmark-acquisition-units"]).read_text())
+        output = Path(options["--output-dir"])
+        output.mkdir()
+        if delta["content_sha256"] == held_out["content_sha256"] and not seal_renamed:
+            if seal_rejected:
+                (output / "_SUCCESS").touch()
+            raise ValueError("Cumulative training manifest overlaps the sealed benchmark: count=1")
+        if not skip_clean_seal:
+            (output / "_SUCCESS").touch()
+        return 0
+
+    class DataFrame(dict):
+        def to_parquet(self, path, index):
+            Path(path).write_text(json.dumps({key: value[0] for key, value in self.items()}))
+
+    modules = {"pandas": SimpleNamespace(DataFrame=DataFrame),
+               "nvidia_tao_ds.mining.dinov3.internal.refinement": SimpleNamespace(main=main)}
+    return modules.__getitem__
+
+
+def test_benchmark_isolation_check_accepts_guarded_image(monkeypatch):
+    monkeypatch.setattr(handoff.importlib, "import_module", installed_materialize())
+    handoff.benchmark_isolation_check()
+
+
+def test_benchmark_isolation_check_rejects_image_without_the_guard_flag(monkeypatch):
+    def main(argv):
+        raise SystemExit(2)  # argparse: unrecognized --benchmark-acquisition-units
+    modules = installed_materialize()
+    monkeypatch.setattr(handoff.importlib, "import_module", lambda name: (
+        SimpleNamespace(main=main) if name.endswith("refinement") else modules(name)))
+    with pytest.raises(SystemExit):
+        handoff.benchmark_isolation_check()
+
+
+@pytest.mark.parametrize("image,error", [
+    ({"seal_renamed": True}, "materialized a renamed benchmark copy"),
+    ({"seal_rejected": True}, "sealed a rejected manifest"),
+    ({"skip_clean_seal": True}, "did not seal a manifest disjoint"),
+])
+def test_benchmark_isolation_check_rejects_unguarded_image(monkeypatch, image, error):
+    """A renamed copy shares only its content hash with the held-out sample."""
+    monkeypatch.setattr(handoff.importlib, "import_module", installed_materialize(**image))
+    with pytest.raises(RuntimeError, match=error):
+        handoff.benchmark_isolation_check()
+
+
+def test_packaged_check_rejects_image_that_resumes_from_empty_path(monkeypatch):
+    """An image built before the fresh-start fix must not pass release checks."""
+    def installed(name):
+        return SimpleNamespace(
+            __file__="/installed/module.py",
+            # Requiring the keyword proves the check disables directory discovery.
+            initialize_train_experiment=lambda cfg, *, auto_resume: (
+                None if auto_resume else cfg["train"]["resume_training_checkpoint_path"], {}
+            ),
+        )
+
+    monkeypatch.setattr(handoff.importlib, "import_module", installed)
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True)))
+    monkeypatch.setenv("TAO_VISIBLE_DEVICES", "0")
+    with pytest.raises(RuntimeError, match="instead of starting fresh"):
+        handoff.packaged_check("tao-pytorch")
 
 
 def test_packaged_check_still_rejects_missing_cuda(monkeypatch):
