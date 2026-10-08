@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -24,6 +26,27 @@ def _pair(path: Path) -> None:
     path.mkdir(parents=True)
     (path / "images_raw.tar").write_bytes(b"images")
     (path / "meta.tar.gz").write_bytes(b"metadata")
+
+
+def test_preapproval_discovery_runs_without_site_packages(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(SCRIPT),
+            "--workspace",
+            str(workspace),
+            "--home",
+            str(tmp_path / "home"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["selection_reason"] == "none-found"
 
 
 def test_discovery_includes_depth_two_but_never_depth_three(tmp_path):
