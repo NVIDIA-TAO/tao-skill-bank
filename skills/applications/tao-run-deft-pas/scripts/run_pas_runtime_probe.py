@@ -14,7 +14,7 @@ import re
 import subprocess
 import sys
 
-from deft_action_contract import safe_absolute_path
+from path_contract import safe_absolute_path
 
 
 def _repository(image: str) -> str:

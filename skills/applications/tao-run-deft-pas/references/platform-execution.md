@@ -36,11 +36,15 @@ For Docker, PAS packages that consumer directly. Use it instead of assembling
 `docker run`, mounts, job-record operations, or credential forwarding by hand:
 
 ```bash
-python3 "$SKILL_ROOT/scripts/run_deft_docker_action.py" submit --request "$ACTION_REQUEST"
-python3 "$SKILL_ROOT/scripts/run_deft_docker_action.py" status --request "$ACTION_REQUEST"
-python3 "$SKILL_ROOT/scripts/run_deft_docker_action.py" logs --request "$ACTION_REQUEST"
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_docker_action.py" submit --request "$ACTION_REQUEST"
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_docker_action.py" status --request "$ACTION_REQUEST"
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_docker_action.py" logs --request "$ACTION_REQUEST"
 # only when cancellation is requested:
-python3 "$SKILL_ROOT/scripts/run_deft_docker_action.py" cancel --request "$ACTION_REQUEST"
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_docker_action.py" cancel --request "$ACTION_REQUEST"
 ```
 
 The packaged submit checks every approved forwarded credential variable again

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import subprocess
 import sys
 import types
@@ -604,6 +605,56 @@ def test_runtime_interpreter_probe_does_not_require_omegaconf(tmp_path, monkeypa
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "RUNTIME_INTERPRETER_SELECTED"
+
+
+def test_runtime_interpreter_rejects_override_without_jsonschema(tmp_path, monkeypatch):
+    stubs = tmp_path / "runtime-dependencies"
+    stubs.mkdir()
+    for module_name in (
+        "pandas",
+        "numpy",
+        "pyarrow",
+        "PIL",
+        "yaml",
+        "matplotlib",
+        "sklearn",
+        "torch",
+    ):
+        (stubs / f"{module_name}.py").write_text("")
+    workspace_python = tmp_path / ".venv/bin/python"
+    workspace_python.parent.mkdir(parents=True)
+    workspace_python.symlink_to(sys.executable)
+    incomplete = tmp_path / "python-without-jsonschema"
+    incomplete.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = -c ]; then\n"
+        "  case \"$2\" in *jsonschema*) exit 1 ;; *) exit 0 ;; esac\n"
+        "fi\n"
+        "printf '%s\\n' INCOMPLETE_INTERPRETER_SELECTED >&2\n"
+        "exit 86\n"
+    )
+    incomplete.chmod(0o755)
+    monkeypatch.setenv("DEFT_PYTHON", str(incomplete))
+    monkeypatch.setenv("PYTHONPATH", str(stubs))
+
+    completed = subprocess.run(
+        [
+            str(PAS_SCRIPTS / "deft_python.sh"),
+            "--runtime",
+            "--workspace",
+            str(tmp_path),
+            "-c",
+            "print('WORKSPACE_RUNTIME_SELECTED')",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "INCOMPLETE_INTERPRETER_SELECTED" not in completed.stderr
+    assert completed.stdout.strip() == "WORKSPACE_RUNTIME_SELECTED"
 
 
 @pytest.mark.parametrize(

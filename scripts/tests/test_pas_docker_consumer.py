@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,72 @@ PAS_SCRIPTS = REPO / "skills/applications/tao-run-deft-pas/scripts"
 sys.path.insert(0, str(PAS_SCRIPTS))
 import run_deft_docker_action as consumer  # noqa: E402
 import run_pas_runtime_probe as runtime_probe  # noqa: E402
+
+
+@pytest.mark.parametrize("verb", ["submit", "status", "logs", "cancel"])
+def test_documented_docker_verbs_use_workspace_interpreter(verb):
+    reference = (
+        REPO
+        / "skills/applications/tao-run-deft-pas/references/platform-execution.md"
+    ).read_text(encoding="utf-8")
+    expected = (
+        '"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \\\n'
+        f'  "$SKILL_ROOT/scripts/run_deft_docker_action.py" {verb} '
+        '--request "$ACTION_REQUEST"'
+    )
+    assert expected in reference
+    system_python = f'python3 "$SKILL_ROOT/scripts/run_deft_docker_action.py" {verb}'
+    assert system_python not in reference
+
+
+def test_docker_consumer_rejects_dependency_incomplete_python_override(tmp_path):
+    workspace_python = tmp_path / ".venv/bin/python"
+    workspace_python.parent.mkdir(parents=True)
+    workspace_python.symlink_to(sys.executable)
+    incomplete = tmp_path / "python-without-jsonschema"
+    incomplete.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = -c ]; then\n"
+        "  case \"$2\" in *jsonschema*) exit 1 ;; *) exit 0 ;; esac\n"
+        "fi\n"
+        "printf '%s\\n' INCOMPLETE_INTERPRETER_SELECTED >&2\n"
+        "exit 86\n",
+        encoding="utf-8",
+    )
+    incomplete.chmod(0o755)
+    completed = subprocess.run(
+        [
+            str(PAS_SCRIPTS / "deft_python.sh"),
+            "--workspace",
+            str(tmp_path),
+            str(PAS_SCRIPTS / "run_deft_docker_action.py"),
+            "--help",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "DEFT_PYTHON": str(incomplete)},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "INCOMPLETE_INTERPRETER_SELECTED" not in completed.stderr
+    assert "{submit,status,logs,cancel}" in completed.stdout
+
+
+def test_preapproval_runtime_probe_launcher_is_standard_library_only(tmp_path):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(PAS_SCRIPTS / "run_pas_runtime_probe.py"),
+            "--help",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--approved" in completed.stdout
 
 
 def test_forwarded_credentials_are_required_at_submit_point_of_use(monkeypatch):

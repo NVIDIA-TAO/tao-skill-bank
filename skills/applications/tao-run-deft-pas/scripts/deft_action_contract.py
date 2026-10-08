@@ -20,6 +20,7 @@ from command_contract import (
     expected_image_kind,
     expected_stage_directory,
 )
+from path_contract import safe_absolute_path
 from virtualenv_runtime import validate_tao_virtualenv
 
 
@@ -34,29 +35,6 @@ RUN_SPEC_NAMES = (
     "approval.json",
 )
 IMAGE_KINDS = frozenset(("pyt", "ds"))
-
-
-def safe_absolute_path(
-    path: pathlib.Path, name: str, *, require_exists: bool = False
-) -> pathlib.Path:
-    """Return one lexical absolute path after rejecting every symlink hop.
-
-    Resolving first and validating later loses whether the caller supplied a
-    symlink.  Keep the lexical path, normalize only ``.``/``..``, and compare it
-    with ``resolve(strict=False)`` so existing symlinks in any parent are
-    rejected even when the final path has not been created yet.
-    """
-    expanded = path.expanduser()
-    if not expanded.is_absolute():
-        raise ValueError(f"{name} must be an absolute path: {path}")
-    lexical = pathlib.Path(os.path.abspath(expanded))
-    if lexical == pathlib.Path(lexical.anchor):
-        raise ValueError(f"{name} must not be a filesystem root: {lexical}")
-    if lexical.resolve(strict=False) != lexical:
-        raise ValueError(f"{name} must not contain or traverse a symlink: {lexical}")
-    if require_exists and not lexical.exists():
-        raise ValueError(f"{name} does not exist: {lexical}")
-    return lexical
 
 
 @dataclass(frozen=True)
