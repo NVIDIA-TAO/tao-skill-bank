@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import subprocess
 import sys
 import types
@@ -24,6 +25,7 @@ DS_IMAGE = "registry.example/tao-ds:test"
 sys.path.insert(0, str(PAS_SCRIPTS))
 
 import prepare_deft_config as prepare  # noqa: E402
+import render_deft_report  # noqa: E402
 import run_pas_stage  # noqa: E402
 from command_contract import expected_fresh_outputs  # noqa: E402
 from pas_deft.config import (  # noqa: E402
@@ -58,8 +60,11 @@ def _base_argv(tmp_path: Path) -> tuple[list[str], Path, Path]:
     lora_attestation.write_text(
         json.dumps(
             {
+                "schema_version": "1",
                 "status": "PASS",
                 "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft", "lora"],
                 "clip_lora": {
                     "checkpoint_behavior": "register-and-merge",
                     "runtime_symbols": [
@@ -191,6 +196,23 @@ def test_lora_rejects_attestation_for_another_image_before_config(tmp_path):
         prepare.materialize(prepare._parser().parse_args(argv))  # noqa: SLF001
     assert not (results / "config").exists()
     assert not (results / "deft_state.json").exists()
+
+
+def test_sft_requires_and_validates_the_same_digest_bound_runtime_attestation(tmp_path):
+    argv, results, _ = _base_argv(tmp_path)
+    argv.extend(["--finetuning-method", "sft"])
+    attestation_index = argv.index("--lora-capability-attestation")
+    without_attestation = argv[:attestation_index] + argv[attestation_index + 2 :]
+    with pytest.raises(ValueError, match="require --pyt-runtime-attestation"):
+        prepare.materialize(prepare._parser().parse_args(without_attestation))  # noqa: SLF001
+
+    attestation = Path(argv[attestation_index + 1])
+    payload = json.loads(attestation.read_text())
+    del payload["image_digest"]
+    attestation.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="immutable image_digest"):
+        prepare.materialize(prepare._parser().parse_args(argv))  # noqa: SLF001
+    assert not (results / "config").exists()
 
 
 def test_pas_notebook_controls_are_materialized_without_semantic_drift(tmp_path):
@@ -352,6 +374,8 @@ def test_test_split_survives_state_initialization_and_audit(tmp_path):
     assert state["config"]["eval_split"] == "test"
     assert state["config"]["queries_per_slice"] == 50
     assert state["config"]["text_embed_model"] == "SigLIP"
+    assert state["config"]["finetuning_method"] == "lora"
+    assert state["config"]["pyt_image_digest"] == "sha256:" + "a" * 64
     assert state["config"]["visualize"] is False
     assert state["config"]["visualize_embeddings"] is False
 
@@ -382,6 +406,37 @@ def test_test_split_survives_state_initialization_and_audit(tmp_path):
     assert typed.mining.knn_metric == "cosine"
 
 
+def test_report_renders_the_durable_finetuning_method(tmp_path):
+    state = {
+        "workflow": "tao-run-deft-pas",
+        "started_at": "2026-10-07T00:00:00+00:00",
+        "max_iterations": 1,
+        "current_iteration": 0,
+        "metric_contract": {
+            "metric_name": "Rank-1",
+            "query_type": "medium",
+            "op": ">=",
+            "target": None,
+        },
+        "config": {"finetuning_method": "lora"},
+        "iterations": {},
+    }
+    document, _, _ = render_deft_report._render_html(  # noqa: SLF001
+        results_dir=tmp_path,
+        trigger="iteration-complete",
+        state=state,
+        entries=[],
+        audit_report={
+            "status": "IN_PROGRESS",
+            "terminal": False,
+            "next_action": "baseline/dataset_setup",
+            "warnings": [],
+        },
+    )
+    assert "finetuning_method" in document
+    assert ">lora<" in document
+
+
 def test_schema_v3_approval_remains_valid_as_local_docker(tmp_path):
     _, results, dataset = _materialize(tmp_path)
     approval_path = results / "config" / "approval.json"
@@ -390,6 +445,8 @@ def test_schema_v3_approval_remains_valid_as_local_docker(tmp_path):
     approval.pop("platform")
     approval.pop("docker_remote")
     approval.pop("virtualenvs")
+    approval.pop("finetuning_method")
+    approval.pop("pyt_image_digest")
     approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8")
 
     init = subprocess.run(
@@ -548,6 +605,56 @@ def test_runtime_interpreter_probe_does_not_require_omegaconf(tmp_path, monkeypa
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "RUNTIME_INTERPRETER_SELECTED"
+
+
+def test_runtime_interpreter_rejects_override_without_jsonschema(tmp_path, monkeypatch):
+    stubs = tmp_path / "runtime-dependencies"
+    stubs.mkdir()
+    for module_name in (
+        "pandas",
+        "numpy",
+        "pyarrow",
+        "PIL",
+        "yaml",
+        "matplotlib",
+        "sklearn",
+        "torch",
+    ):
+        (stubs / f"{module_name}.py").write_text("")
+    workspace_python = tmp_path / ".venv/bin/python"
+    workspace_python.parent.mkdir(parents=True)
+    workspace_python.symlink_to(sys.executable)
+    incomplete = tmp_path / "python-without-jsonschema"
+    incomplete.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = -c ]; then\n"
+        "  case \"$2\" in *jsonschema*) exit 1 ;; *) exit 0 ;; esac\n"
+        "fi\n"
+        "printf '%s\\n' INCOMPLETE_INTERPRETER_SELECTED >&2\n"
+        "exit 86\n"
+    )
+    incomplete.chmod(0o755)
+    monkeypatch.setenv("DEFT_PYTHON", str(incomplete))
+    monkeypatch.setenv("PYTHONPATH", str(stubs))
+
+    completed = subprocess.run(
+        [
+            str(PAS_SCRIPTS / "deft_python.sh"),
+            "--runtime",
+            "--workspace",
+            str(tmp_path),
+            "-c",
+            "print('WORKSPACE_RUNTIME_SELECTED')",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "INCOMPLETE_INTERPRETER_SELECTED" not in completed.stderr
+    assert completed.stdout.strip() == "WORKSPACE_RUNTIME_SELECTED"
 
 
 @pytest.mark.parametrize(

@@ -1178,7 +1178,19 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         "pyt_image": config.get("pyt_image"),
                         "ds_image": config.get("ds_image"),
                     }
-                    if approval_version == "4":
+                    if approval_version == "5":
+                        expected_approval["finetuning_method"] = config.get(
+                            "finetuning_method"
+                        )
+                        expected_approval["pyt_image_digest"] = config.get(
+                            "pyt_image_digest"
+                        )
+                        expected_approval["platform"] = config.get("platform")
+                        expected_approval["docker_remote"] = config.get(
+                            "docker_remote", False
+                        )
+                        expected_approval["virtualenvs"] = config.get("virtualenvs")
+                    elif approval_version == "4":
                         expected_approval["platform"] = config.get("platform")
                         expected_approval["docker_remote"] = config.get(
                             "docker_remote", False
@@ -1211,8 +1223,8 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         and config.get("virtualenv") is None
                     ):
                         errors.append(
-                            "approval manifest schema must be version 4; versions 2 "
-                            "and 3 are accepted only for legacy local Docker runs"
+                            "approval manifest schema must be version 5; versions 2, "
+                            "3, and 4 are accepted for legacy runs"
                         )
                     else:
                         expected_approval.pop("pas_deft_bundle_sha256")

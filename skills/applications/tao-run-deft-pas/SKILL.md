@@ -121,7 +121,8 @@ and `text` adapter blocks; SigLIP2 attention targets are `q_proj`, `k_proj`,
 `v_proj`, and `out_proj`. Full-parameter SFT is selected with
 `--finetuning-method sft`: it writes `peft.enabled: false` and makes both
 encoders trainable. Never represent encoder freezing as LoRA or silently fall
-back between methods. Probe a changed image's schema before approval and stop
+back between methods. Inspect a changed image's identity before approval; run
+its container-starting schema/capability probe only after approval and stop
 if it does not expose this complete PEFT contract.
 
 The authoritative parameter contract is the nested dataclass schema in

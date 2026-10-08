@@ -31,6 +31,29 @@ DEFAULT_GPU_SMOKE_IMAGE = os.environ.get("TAO_GPU_SMOKE_IMAGE", "ubuntu:22.04")
 DEFAULT_LOW_VRAM_THRESHOLD_GB = 50.0
 KNOWN_IMAGE_SMS = {
     "cosmos-rl": ["sm_80", "sm_90", "sm_100", "sm_103", "sm_103a", "sm_120"],
+    # TAO 7.x multi-architecture PyTorch and data-services images used by PAS.
+    # Keeping this in the shared checker makes an unsupported target fail before
+    # a workflow writes state, instead of silently skipping the gate.
+    "tao-toolkit-pyt": [
+        "sm_80",
+        "sm_86",
+        "sm_89",
+        "sm_90",
+        "sm_100",
+        "sm_103",
+        "sm_103a",
+        "sm_120",
+    ],
+    "tao-toolkit-ds": [
+        "sm_80",
+        "sm_86",
+        "sm_89",
+        "sm_90",
+        "sm_100",
+        "sm_103",
+        "sm_103a",
+        "sm_120",
+    ],
 }
 
 
@@ -194,6 +217,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Allow local Docker preflight to pull the smoke image before running "
             "the GPU visibility check. Use only after user approval."
+        ),
+    )
+    parser.add_argument(
+        "--defer-container-probes",
+        action="store_true",
+        help=(
+            "Defer checks that start containers. Use during a workflow's "
+            "read-only, pre-approval discovery pass, then rerun without this "
+            "flag after approval."
         ),
     )
     parser.add_argument(
@@ -1716,6 +1748,7 @@ def check_local_docker(
     low_vram_threshold_gb: float,
     require_remote_docker: bool,
     target_gpu_indices: list[str],
+    defer_container_probes: bool,
 ) -> bool:
     ok = True
     effective_target_gpu_indices = list(target_gpu_indices)
@@ -1752,17 +1785,28 @@ def check_local_docker(
                 ok = False
 
             if remote_docker:
-                print(f"Remote Docker daemon requested: DOCKER_HOST={os.environ.get('DOCKER_HOST')}")
-                gpu_ok, gpus = query_docker_gpus(
-                    gpu_smoke_image, pull_smoke_image, target_gpu_indices
+                print(
+                    "Remote Docker daemon requested: "
+                    f"DOCKER_HOST={os.environ.get('DOCKER_HOST')}"
                 )
+                if not defer_container_probes:
+                    gpu_ok, gpus = query_docker_gpus(
+                        gpu_smoke_image, pull_smoke_image, target_gpu_indices
+                    )
+                else:
+                    gpu_ok, gpus = False, []
+                    print(
+                        "Remote Docker GPU/container checks deferred until approval; "
+                        "rerun without --defer-container-probes after approval."
+                    )
             else:
                 gpu_ok, gpus = query_host_gpus()
                 selection_ok, gpus = filter_target_gpus(gpus, target_gpu_indices)
                 gpu_ok = gpu_ok and selection_ok
                 if gpu_ok and not effective_target_gpu_indices:
                     effective_target_gpu_indices = [str(gpu["index"]) for gpu in gpus]
-            ok = gpu_ok and ok
+            if not (remote_docker and defer_container_probes):
+                ok = gpu_ok and ok
             if gpu_ok:
                 ok = (
                     check_gpu_memory(
@@ -1780,7 +1824,7 @@ def check_local_docker(
                     )
                     and ok
                 )
-            if gpu_ok:
+            if gpu_ok and not defer_container_probes:
                 ok = (
                     check_docker_gpu_smoke(
                         container_image,
@@ -1790,10 +1834,16 @@ def check_local_docker(
                     )
                     and ok
                 )
-            else:
+            elif gpu_ok:
                 print(
-                    "Docker GPU smoke skipped: effective GPU allocation failed validation"
+                    "Docker GPU smoke container deferred until approval; rerun with "
+                    "the --defer-container-probes flag removed after approval."
                 )
+            else:
+                if not (remote_docker and defer_container_probes):
+                    print(
+                        "Docker GPU smoke skipped: effective GPU allocation failed validation"
+                    )
 
     for label, raw_path in paths:
         path = normalize_local_path(raw_path)
@@ -1802,6 +1852,12 @@ def check_local_docker(
         if remote_docker:
             if skip_access:
                 print(f"Remote Docker path accepted without access check: {label}={path}")
+                continue
+            if defer_container_probes:
+                print(
+                    "Remote Docker bind-path check deferred until approval: "
+                    f"{label}={path}"
+                )
                 continue
             if not check_docker_bind_path(label, path, gpu_smoke_image, pull_smoke_image):
                 ok = False
@@ -1883,6 +1939,7 @@ def main() -> int:
             args.low_vram_threshold_gb,
             name == "remote-docker" or bool(args.docker_host or os.environ.get("DOCKER_HOST")),
             target_gpu_indices,
+            args.defer_container_probes,
         )
     elif name == "brev":
         platform_ok = check_brev(platform, args.skip_platform_access)

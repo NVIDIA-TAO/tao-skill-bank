@@ -71,6 +71,23 @@ DATASET_ACTIONS = {
 }
 
 
+def _runtime_attestation(tmp_path: Path) -> Path:
+    path = tmp_path / "pyt-runtime-attestation.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 @pytest.fixture(autouse=True)
 def _mock_expensive_virtualenv_contract_probes(monkeypatch, tmp_path):
     """Platform tests mock the contract boundary; verifier tests exercise it."""
@@ -1713,6 +1730,11 @@ def test_config_approval_immutably_binds_selected_platform(tmp_path, platform):
             "--ds-image",
             DS_IMAGE,
             *(
+                ["--pyt-runtime-attestation", str(_runtime_attestation(tmp_path))]
+                if platform != "virtualenv"
+                else []
+            ),
+            *(
                 [
                     "--pyt-virtualenv",
                     str(virtualenvs["pyt"]),
@@ -1726,7 +1748,11 @@ def test_config_approval_immutably_binds_selected_platform(tmp_path, platform):
     )
     report = prepare_config.materialize(args)
     approval = json.loads(Path(report["approval_manifest"]).read_text(encoding="utf-8"))
-    assert approval["schema_version"] == "4"
+    assert approval["schema_version"] == "5"
+    assert approval["finetuning_method"] == "sft"
+    assert approval["pyt_image_digest"] == (
+        None if platform == "virtualenv" else "sha256:" + "a" * 64
+    )
     assert approval["platform"] == platform
     assert approval["docker_remote"] is False
     assert approval["virtualenvs"] == (
@@ -1768,6 +1794,8 @@ def test_config_approval_immutably_binds_remote_docker_mode(tmp_path):
             PYT_IMAGE,
             "--ds-image",
             DS_IMAGE,
+            "--pyt-runtime-attestation",
+            str(_runtime_attestation(tmp_path)),
         ]
     )
     report = prepare_config.materialize(args)
