@@ -93,7 +93,7 @@ class MiningMediaPathsTests(unittest.TestCase):
     def test_unavailable_remote_path_keeps_lexical_matching(self):
         missing = str(self.root / "remote-only" / "clip.mp4")
         self.assertEqual(media_match_key(missing), missing)
-        self.assertEqual(media_match_key(self.video), str(self.real))
+        self.assertEqual(media_match_key(self.video), str(self.real.resolve()))
 
 
 if __name__ == "__main__":
