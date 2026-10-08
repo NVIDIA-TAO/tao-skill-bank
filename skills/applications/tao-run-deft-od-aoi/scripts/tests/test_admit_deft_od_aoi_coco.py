@@ -3,6 +3,8 @@
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -629,18 +631,44 @@ def test_admission_folds_capped_synthetic_categories_to_defect(tmp_path: Path) -
     assert {row["category_id"] for row in output["annotations"]} == {1}
 
 
-def test_admission_resolves_binary_coco_from_declared_generation_output(tmp_path: Path) -> None:
-    root = tmp_path / "generation"
-    relative = "pseudo_labels/coco_annotations_od_defect.json"
-    target = root / relative
-    target.parent.mkdir(parents=True)
-    target.write_text('{"images": [], "annotations": [], "categories": []}\n')
+def test_flat_install_cli_accepts_explicit_synthetic_artifacts(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    image = generated / "synthetic.png"
+    image.write_bytes(b"synthetic")
+    coco = generated / "synthetic.json"
+    coco.write_text(json.dumps({
+        "images": [{"id": 2, "file_name": image.name, "width": 16, "height": 16}],
+        "annotations": [{"id": 8, "image_id": 2, "category_id": 4,
+                         "bbox": [1, 1, 3, 3]}],
+        "categories": [{"id": 4, "name": "texture+defect"}],
+    }))
+    flat_script = (
+        tmp_path / "flat/skills/tao-run-deft-od-aoi/scripts/admit_deft_od_aoi_coco.py"
+    )
+    flat_script.parent.mkdir(parents=True)
+    shutil.copy2(SCRIPT, flat_script)
+    help_result = subprocess.run(
+        [sys.executable, str(flat_script), "--help"],
+        check=True, capture_output=True, text=True,
+    )
+    assert "--generation-root" not in help_result.stdout
 
-    assert MODULE._generation_output(root, "binary_coco") == target.resolve()
+    output = tmp_path / "out"
+    completed = subprocess.run([
+        sys.executable, str(flat_script),
+        "--policy", str(policy),
+        "--candidate-root", str(candidates),
+        "--retrieval-root", str(retrieval),
+        "--output-dir", str(output),
+        "--synthetic-coco", str(coco),
+        "--synthetic-images", str(generated),
+    ], check=True, capture_output=True, text=True)
 
-    target.unlink()
-    with pytest.raises(FileNotFoundError, match="declared generation output binary_coco"):
-        MODULE._generation_output(root, "binary_coco")
+    assert json.loads(completed.stdout)["status"] == "COMPLETE"
+    report = json.loads((output / "admission_report.json").read_text())
+    assert report["admitted"] == {"clean": 1, "real": 1, "synthetic": 1}
 
 
 def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) -> None:

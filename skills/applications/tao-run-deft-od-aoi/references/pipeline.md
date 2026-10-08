@@ -98,6 +98,17 @@ Re-run admission with the generated binary COCO and image root, the
 same-iteration real admission `train.json` as `--previous-coco`, and
 `--synthetic-only`. The explicit flag records mining admission as skipped;
 supplying synthetic and previous COCO inputs alone does not disable mining.
+Resolve the binary COCO from the producer action contract before invoking
+admission: join the generation action's results directory to
+`actions.generate.outputs.binary_coco.relative_path`, pass that file through
+`--synthetic-coco`, and pass the results directory through `--synthetic-images`.
+Do not make the admission script discover the producer skill or its metadata.
+In the current producer contract, `binary_coco.relative_path` is
+`pseudo_labels/coco_annotations_od_defect.json`; the similarly named
+`pseudo_labels/coco_annotations.json` is `native_coco` and must not be passed
+to admission. Treat this value as a sanity-check example rather than a
+hardcoded override: re-read the producer contract, require a normalized
+non-absolute path without `..`, and verify the resolved file exists.
 Commit `iteration_synthesis`. Never synthesize from a box without its exact
 mask.
 If post-generation admission adds nothing, the controller also verifies the
