@@ -131,6 +131,8 @@ The teacher is excluded from checkpoints.
 
 For custom training, set `dataset.train.type: custom` and provide `dataset.train.datasets` entries. Image and caption files must share the same base name. `caption_file_suffix` defaults to `.txt`, and `image_list_file` is optional.
 
+In the pinned CLIP image, inference ignores `inference.datasets[].image_list_file` and scans all of `image_dir` (NVBug 6893123). To select a subset, put only those images in a separate directory and use it as `image_dir`.
+
 When no native CLIP image-caption dataset is available, do not silently treat image-classification data as CLIP data. If the user explicitly allows a plumbing-only validation fallback, derive caption files from class labels, document that the captions are generated from labels, and keep each image/caption pair on the same base filename. Without an `image_list_file`, the TAO custom loader scans the configured image directory for image files; keep validation folders flat unless you provide a list file.
 
 For WDS training, set `dataset.train.type: wds` and provide at least one of `dataset.train.wds.root_dir` or `dataset.train.wds.shard_list_file`. `root_dir` is scanned recursively for `.tar` shards. `shard_list_file` is a text file with one shard path per line; relative lines resolve under the list-file directory unless `root_dir` is also supplied, in which case they resolve under `root_dir`. Validation/evaluation data remains custom format via `dataset.val.datasets`.
