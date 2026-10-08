@@ -1661,6 +1661,7 @@ def write_iteration_summary(
     mined_pairs_file: str,
     training_checkpoint: str,
     next_checkpoint_path: str,
+    metric: dict[str, object],
     experiment_id: str = "",
 ) -> str:
     """Write iteration_summary.json at the end of a DEFT iteration.
@@ -1675,6 +1676,7 @@ def write_iteration_summary(
         mined_pairs_file:     Path to the final mined pairs JSON.
         training_checkpoint:  Checkpoint used as input for this iteration's training.
         next_checkpoint_path: Expected path of the best checkpoint produced by training.
+        metric:               Canonical metric value and relative-change evidence.
         experiment_id:        Optional unique ID for this experiment run.
 
     Returns:
@@ -1694,6 +1696,7 @@ def write_iteration_summary(
         "mined_parquet": mined_parquet,
         "mined_pairs_file": mined_pairs_file,
         "eval_results_dir": experiment_dir,
+        "metric": metric,
     }
     out_path = os.path.join(experiment_dir, "iteration_summary.json")
     with open(out_path, "w", encoding="utf-8") as f:
