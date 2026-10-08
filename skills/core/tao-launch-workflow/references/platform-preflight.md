@@ -2,13 +2,15 @@
 
 The `tao-launch-workflow` skill points here for the full per-platform preflight steps.
 
-First verify a complete bank checkout at the installed skills' release ref.
+First verify the bank path and required shared helpers. Reuse the plugin's
+`TAO_SKILL_BANK_PATH` when set. Otherwise obtain a complete checkout at the
+installed skills' release ref with user approval, as described in `tao-setup`.
 Individual skill installs do not include shared helper scripts. Set
 `TAO_SKILL_BANK_PATH` to another checkout root if needed, then run:
 
 ```bash
 export TAO_SKILL_BANK_PATH="${TAO_SKILL_BANK_PATH:-$HOME/tao-skill-bank}"
-for item in .claude-plugin/marketplace.json versions.yaml scripts/resolve_tao_model.py scripts/resolve_tao_image.py scripts/check_tao_launch_preflight.py scripts/redact_secrets.py scripts/tao_job_record.py skills/models skills/platform skills/core/tao-artifacts/references/job_record.schema.json skills/core/tao-launch-workflow/SKILL.md; do
+for item in versions.yaml scripts/resolve_tao_model.py scripts/resolve_tao_image.py scripts/check_tao_launch_preflight.py scripts/redact_secrets.py scripts/tao_job_record.py skills/models skills/platform; do
   [ -e "$TAO_SKILL_BANK_PATH/$item" ] || { echo "Incomplete TAO skill bank: missing $item under $TAO_SKILL_BANK_PATH" >&2; exit 1; }
 done
 ```
