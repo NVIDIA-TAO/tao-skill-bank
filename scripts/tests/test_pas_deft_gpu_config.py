@@ -26,6 +26,18 @@ def _base_args(tmp_path: Path, selected: str):
     metadata = tmp_path / "meta.tar.gz"
     images.write_bytes(b"images")
     metadata.write_bytes(b"metadata")
+    attestation = tmp_path / "pyt-runtime-attestation.json"
+    attestation.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft"],
+            }
+        )
+    )
     results = workspace / "results/run"
     dataset = workspace / "data/pas"
     args = [
@@ -49,6 +61,8 @@ def _base_args(tmp_path: Path, selected: str):
         "sft",
         "--pyt-image",
         PYT_IMAGE,
+        "--pyt-runtime-attestation",
+        str(attestation),
         "--ds-image",
         DS_IMAGE,
         "--num-gpus",

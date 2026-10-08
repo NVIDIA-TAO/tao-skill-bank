@@ -27,7 +27,12 @@ from pas_deft import PasDeftConfig  # noqa: E402
 import run_deft_container as container  # noqa: E402
 import init_deft_state as state  # noqa: E402
 import prepare_deft_config as prepare  # noqa: E402
-from command_contract import command_sha256, expected_container_command  # noqa: E402
+import deft_action_contract as action_contract  # noqa: E402
+from command_contract import (  # noqa: E402
+    command_sha256,
+    expected_container_command,
+    expected_fresh_outputs,
+)
 
 PAS_ROOT = PAS_SCRIPTS.parent
 PYT_IMAGE = "registry.example/tao-pyt:test"
@@ -80,6 +85,18 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
     metadata_archive = tmp_path / "meta.tar.gz"
     images_archive.write_bytes(b"images")
     metadata_archive.write_bytes(b"metadata")
+    attestation = tmp_path / "pyt-runtime-attestation.json"
+    attestation.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft"],
+            }
+        )
+    )
 
     assert prepare.main(
         [
@@ -105,6 +122,8 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
                 "sft",
                 "--pyt-image",
             PYT_IMAGE,
+            "--pyt-runtime-attestation",
+            str(attestation),
             "--ds-image",
             DS_IMAGE,
         ]
@@ -150,6 +169,19 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
         "--gpus",
         '"device=1,3"',
     ]
+    dataset.mkdir(parents=True, exist_ok=True)
+    stage_dir = results / "zs" / "evaluate"
+    command = expected_container_command("evaluate", "baseline", persisted["config"])
+    context = action_contract.validate_action(
+        results_dir=results,
+        image_kind="pyt",
+        stage_dir=stage_dir,
+        name="evaluate",
+        pass_hf_token=False,
+        fresh_outputs=expected_fresh_outputs("evaluate", "baseline", results),
+        command=command,
+    )
+    assert context.image == "registry.example/tao-pyt@sha256:" + "a" * 64
 
 
 @pytest.mark.parametrize("value", [None, "0,1", [], [True], [0, 0], [-1]])

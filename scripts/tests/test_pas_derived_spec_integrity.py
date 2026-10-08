@@ -38,6 +38,18 @@ def _initialized_run(tmp_path: Path) -> Path:
     metadata_archive = tmp_path / "meta.tar.gz"
     images_archive.write_bytes(b"images")
     metadata_archive.write_bytes(b"metadata")
+    attestation = tmp_path / "pyt-runtime-attestation.json"
+    attestation.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft"],
+            }
+        )
+    )
     common = [
         "--workspace",
         str(workspace),
@@ -56,7 +68,15 @@ def _initialized_run(tmp_path: Path) -> Path:
         "--ds-image",
         DS_IMAGE,
     ]
-    assert prepare.main([*common, "--finetuning-method", "sft"]) == 0
+    assert prepare.main(
+        [
+            *common,
+            "--finetuning-method",
+            "sft",
+            "--pyt-runtime-attestation",
+            str(attestation),
+        ]
+    ) == 0
     assert state.main(
         [
             *common,

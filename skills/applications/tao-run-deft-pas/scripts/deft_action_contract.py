@@ -20,6 +20,7 @@ from command_contract import (
     expected_image_kind,
     expected_stage_directory,
 )
+from path_contract import safe_absolute_path
 from virtualenv_runtime import validate_tao_virtualenv
 
 
@@ -34,29 +35,6 @@ RUN_SPEC_NAMES = (
     "approval.json",
 )
 IMAGE_KINDS = frozenset(("pyt", "ds"))
-
-
-def safe_absolute_path(
-    path: pathlib.Path, name: str, *, require_exists: bool = False
-) -> pathlib.Path:
-    """Return one lexical absolute path after rejecting every symlink hop.
-
-    Resolving first and validating later loses whether the caller supplied a
-    symlink.  Keep the lexical path, normalize only ``.``/``..``, and compare it
-    with ``resolve(strict=False)`` so existing symlinks in any parent are
-    rejected even when the final path has not been created yet.
-    """
-    expanded = path.expanduser()
-    if not expanded.is_absolute():
-        raise ValueError(f"{name} must be an absolute path: {path}")
-    lexical = pathlib.Path(os.path.abspath(expanded))
-    if lexical == pathlib.Path(lexical.anchor):
-        raise ValueError(f"{name} must not be a filesystem root: {lexical}")
-    if lexical.resolve(strict=False) != lexical:
-        raise ValueError(f"{name} must not contain or traverse a symlink: {lexical}")
-    if require_exists and not lexical.exists():
-        raise ValueError(f"{name} does not exist: {lexical}")
-    return lexical
 
 
 @dataclass(frozen=True)
@@ -313,6 +291,24 @@ def validate_action(
         raise ValueError(f"state.config.{image_key} must be a non-empty approved image")
     workspace, dataset_root, config_dir = validate_runtime_paths(results_dir, config)
     platform = str(config["platform"])
+    if (
+        image_kind == "pyt"
+        and platform != "virtualenv"
+        and config.get("finetuning_method") is not None
+    ):
+        digest = config.get("pyt_image_digest")
+        if not isinstance(digest, str) or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", digest
+        ):
+            raise ValueError(
+                "state.config.pyt_image_digest must bind the approved PyTorch image"
+            )
+        repository = image.split("@", 1)[0]
+        last_slash = repository.rfind("/")
+        last_colon = repository.rfind(":")
+        if last_colon > last_slash:
+            repository = repository[:last_colon]
+        image = f"{repository}@{digest}"
     patches_dir = pathlib.Path(__file__).resolve().parent.parent / "patches"
     if not patches_dir.is_dir():
         raise ValueError(f"container compatibility patches are missing: {patches_dir}")

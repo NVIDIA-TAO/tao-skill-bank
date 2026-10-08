@@ -25,6 +25,9 @@ through deterministic scripts.
 | `init_deft_state.py` | validate config/metric inputs and create schema-v3 state once | PAS runtime |
 | `audit_deft_run.py` | read-only state, transition, evidence, and artifact audit | PAS runtime (parquet/YAML validation) |
 | `run_deft_action.py` | prepare one platform-neutral TAO bundle and finalize native job/output evidence | control Python |
+| `run_deft_docker_action.py` | packaged Docker `submit`/`status`/`logs`/`cancel` consumer with point-of-use credential checks | control Python |
+| `discover_pas_inputs.py` | bounded, non-symlink-following PAS archive discovery | system Python |
+| `run_pas_runtime_probe.py` | approved Docker probe with exact mounts and immutable image digest attestation | system Python |
 | `run_deft_cli.py` | verified TAO CLI/path adapter used only by the virtualenv platform | action-selected `pyt` or `ds` profile |
 | `run_deft_container.py` | legacy Docker-only compatibility adapter for schema-v1 runs | control Python |
 | `run_pas_stage.py` | expose bundled PAS host operations as named subcommands | PAS runtime |

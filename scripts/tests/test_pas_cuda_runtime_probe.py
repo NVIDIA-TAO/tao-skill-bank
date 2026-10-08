@@ -158,3 +158,35 @@ def test_clip_lora_probe_requires_schema_and_checkpoint_symbols():
     del runtime.merge_lora
     with pytest.raises(RuntimeError, match="merge_lora"):
         probe.probe_clip_lora_contract(_Config, runtime)
+
+
+def test_clip_lora_probe_names_missing_tower_fields():
+    @dataclass
+    class IncompleteTower:
+        mode: str = "frozen"
+        target_modules: list[str] = field(
+            default_factory=lambda: ["q_proj", "k_proj", "v_proj", "out_proj"]
+        )
+        num_last_blocks: int = 3
+        alpha: int = 16
+        dropout: float = 0.05
+
+    @dataclass
+    class IncompletePeft:
+        enabled: bool = False
+        method: str = "lora"
+        vision: IncompleteTower = field(default_factory=IncompleteTower)
+        text: IncompleteTower = field(default_factory=IncompleteTower)
+
+    @dataclass
+    class IncompleteConfig:
+        peft: IncompletePeft = field(default_factory=IncompletePeft)
+
+    runtime = SimpleNamespace(
+        LoRALinear=type("LoRALinear", (), {}),
+        inject_lora=lambda: None,
+        merge_lora=lambda: None,
+        _register_lora_checkpoint_compatibility=lambda: None,
+    )
+    with pytest.raises(RuntimeError, match=r"vision.*missing fields: rank"):
+        probe.probe_clip_lora_contract(IncompleteConfig, runtime)
