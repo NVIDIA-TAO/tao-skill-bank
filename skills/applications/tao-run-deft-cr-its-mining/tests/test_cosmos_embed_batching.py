@@ -5,8 +5,10 @@
 """Exercise bounded native commands, coverage, and failure handling without a GPU."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
+import signal
 import sys
 import tempfile
 import unittest
@@ -17,8 +19,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from batch_cosmos_embed_text import load_plan, prepare, run  # noqa: E402
-from validate_cosmos_embed_output import check_completion, file_sha256  # noqa: E402
+from batch_cosmos_embed_text import load_plan, merge_outputs, prepare, run  # noqa: E402
+from validate_cosmos_embed_output import check_completion, file_sha256, validate_completion  # noqa: E402
 
 
 class CosmosEmbedBatchingTests(unittest.TestCase):
@@ -85,7 +87,7 @@ class CosmosEmbedBatchingTests(unittest.TestCase):
 
     def test_success_preserves_duplicates_vectors_and_teardown_evidence(self):
         prepare(self.spec, 2)
-        with patch("batch_cosmos_embed_text.subprocess.run",
+        with patch("batch_cosmos_embed_text.run_child",
                    side_effect=lambda *a, **kw: self.native_output(*a, exit_code=130, **kw)) as native:
             self.assertEqual(run(self.spec), 0)
         self.assertEqual(native.call_count, 3)
@@ -98,34 +100,34 @@ class CosmosEmbedBatchingTests(unittest.TestCase):
         self.assertEqual([row["npy_row"] for row in metadata["results"]], list(range(5)))
         provenance = json.loads((self.stage / "inference/batch-provenance.json").read_text())
         self.assertEqual([entry["exit_code"] for entry in provenance["batches"]], [130, 130, 130])
-        with patch("batch_cosmos_embed_text.subprocess.run") as native:
+        with patch("batch_cosmos_embed_text.run_child") as native:
             with self.assertRaises(FileExistsError):
                 run(self.spec)
             native.assert_not_called()
 
     def test_zero_exit_and_768_dimensional_embeddings(self):
         prepare(self.spec, 2)
-        with patch("batch_cosmos_embed_text.subprocess.run",
+        with patch("batch_cosmos_embed_text.run_child",
                    side_effect=lambda *a, **kw: self.native_output(*a, dimension=768, **kw)):
             self.assertEqual(run(self.spec), 0)
         self.assertEqual(check_completion(self.spec)["embedding_shape"], [5, 768])
 
     def test_failed_child_stops_without_accepting_existing_output(self):
         prepare(self.spec, 2)
-        with patch("batch_cosmos_embed_text.subprocess.run",
+        with patch("batch_cosmos_embed_text.run_child",
                    side_effect=lambda *a, **kw: self.native_output(*a, exit_code=1, **kw)) as native:
             self.assertEqual(run(self.spec), 1)
             self.assertEqual(native.call_count, 1)
         self.assertFalse((self.stage / "inference").exists())
         self.assertEqual((self.stage / "batches/batch_001/child-exit-code.txt").read_text(), "1\n")
-        with patch("batch_cosmos_embed_text.subprocess.run") as native:
+        with patch("batch_cosmos_embed_text.run_child") as native:
             with self.assertRaises(FileExistsError):
                 run(self.spec)
             native.assert_not_called()
 
     def test_teardown_exit_without_outputs_is_not_success(self):
         prepare(self.spec, 2)
-        with patch("batch_cosmos_embed_text.subprocess.run",
+        with patch("batch_cosmos_embed_text.run_child",
                    return_value=subprocess.CompletedProcess([], 130)) as native:
             with self.assertRaises(FileNotFoundError):
                 run(self.spec)
@@ -136,7 +138,7 @@ class CosmosEmbedBatchingTests(unittest.TestCase):
         prepare(self.spec, 2)
         def corrupt(matrix, metadata):
             matrix[0, 0] = np.nan
-        with patch("batch_cosmos_embed_text.subprocess.run",
+        with patch("batch_cosmos_embed_text.run_child",
                    side_effect=lambda *a, **kw: self.native_output(*a, mutation=corrupt, **kw)) as native:
             with self.assertRaisesRegex(ValueError, "non-finite"):
                 run(self.spec)
@@ -146,7 +148,7 @@ class CosmosEmbedBatchingTests(unittest.TestCase):
         prepare(self.spec, 2)
         def corrupt(matrix, metadata):
             metadata["checkpoint"] = "/wrong/model"
-        with patch("batch_cosmos_embed_text.subprocess.run",
+        with patch("batch_cosmos_embed_text.run_child",
                    side_effect=lambda *a, **kw: self.native_output(*a, mutation=corrupt, **kw)):
             with self.assertRaisesRegex(ValueError, "checkpoint mismatch"):
                 run(self.spec)
@@ -156,7 +158,7 @@ class CosmosEmbedBatchingTests(unittest.TestCase):
         prepare(self.spec, 2)
         self.payload["inference"]["num_gpus"] = 8
         self.write_spec()
-        with patch("batch_cosmos_embed_text.subprocess.run") as native:
+        with patch("batch_cosmos_embed_text.run_child") as native:
             with self.assertRaisesRegex(ValueError, "Full spec changed"):
                 run(self.spec)
             native.assert_not_called()
@@ -170,7 +172,7 @@ class CosmosEmbedBatchingTests(unittest.TestCase):
         path.write_text(yaml.safe_dump(spec))
         plan["batches"][0]["sha256"] = file_sha256(path)
         plan_path.write_text(json.dumps(plan))
-        with patch("batch_cosmos_embed_text.subprocess.run") as native:
+        with patch("batch_cosmos_embed_text.run_child") as native:
             with self.assertRaisesRegex(ValueError, "query slice"):
                 run(self.spec)
             native.assert_not_called()
@@ -180,7 +182,7 @@ class CosmosEmbedBatchingTests(unittest.TestCase):
         plan = json.loads(plan_path.read_text())
         plan["batches"].pop()
         plan_path.write_text(json.dumps(plan))
-        with patch("batch_cosmos_embed_text.subprocess.run") as native:
+        with patch("batch_cosmos_embed_text.run_child") as native:
             with self.assertRaisesRegex(ValueError, "cover the full query list"):
                 run(self.spec)
             native.assert_not_called()
@@ -197,6 +199,25 @@ class CosmosEmbedBatchingTests(unittest.TestCase):
         self.write_spec()
         with self.assertRaisesRegex(ValueError, "mode=text"):
             prepare(self.spec, 2)
+
+    def test_cancellation_during_aggregate_commit_invalidates_completion(self):
+        prepare(self.spec, 2)
+        previous_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        def cancel_merge(*args):
+            merge_outputs(*args)
+            os.kill(os.getpid(), signal.SIGINT)
+        with patch("batch_cosmos_embed_text.run_child", side_effect=self.native_output), \
+             patch("batch_cosmos_embed_text.merge_outputs", side_effect=cancel_merge):
+            self.assertEqual(run(self.spec), 130)
+        self.assertFalse((self.stage / "inference/completion_validation.json").exists())
+        self.assertTrue((self.stage / "batch-cancellation.json").is_file())
+        for code in (0, 130):
+            with self.assertRaisesRegex(ValueError, "canceled"):
+                validate_completion(self.spec, code)
+        with self.assertRaisesRegex(ValueError, "canceled"):
+            check_completion(self.spec)
+        for sig, handler in previous_handlers.items():
+            self.assertEqual(signal.getsignal(sig), handler)
 
 
 if __name__ == "__main__":

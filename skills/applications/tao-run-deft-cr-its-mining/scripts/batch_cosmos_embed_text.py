@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import argparse
 import copy
+from contextlib import contextmanager
 import json
 from pathlib import Path
+import signal
 import subprocess
 from typing import Any
 
 import numpy as np
 
+from native_process import live_output, run_child
 from validate_cosmos_embed_output import (
     ACCEPTED_EXIT_CODES,
     check_completion,
@@ -24,6 +27,39 @@ from validate_cosmos_embed_output import (
     validate_outputs,
 )
 from workflow_common import absolute_path, atomic_write_json, load_yaml, write_yaml
+
+
+class Cancelled(Exception):
+    """A signal to the wrapper is cancellation, not native teardown success."""
+
+
+class Cancellation:
+    def __init__(self):
+        self.signal = None
+
+    def request(self, signum, _frame):
+        # Do not raise inside Popen: the child may exist before its handle returns.
+        if self.signal is None:
+            self.signal = signum
+
+    def check(self):
+        if self.signal is not None:
+            raise Cancelled()
+
+
+@contextmanager
+def cancellation_signals():
+    cancellation = Cancellation()
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        for sig in previous:
+            signal.signal(sig, cancellation.request)
+        yield cancellation
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 
 
 def text_spec(spec_path: Path) -> dict[str, Any]:
@@ -139,34 +175,53 @@ def merge_outputs(spec_path: Path, entries: list[dict[str, Any]]) -> Path:
     return validate_completion(spec_path, 0)
 
 
-def run(spec_path: Path) -> int:
-    """Run inside the approved model container; stop at the first failed child."""
-    spec_path = absolute_path(spec_path)
-    spec, entries = load_plan(spec_path)
-    stage = Path(spec["results_dir"])
-    if (stage / "inference").exists() or any(
-        (Path(entry["spec"]).parent / "container-child.log").exists() for entry in entries
-    ):
-        raise FileExistsError("Batch execution already attempted; inspect evidence before a new plan")
+def run_plan(spec_path, stage, entries, cancellation):
     outcomes = []
     for entry in entries:
+        cancellation.check()
         path = Path(entry["spec"])
         print(f"BATCH_START number={entry['number']} count={entry['count']}", flush=True)
         # The native CLI may signal its process group during torchrun teardown.
-        with (path.parent / "container-child.log").open("x", encoding="utf-8") as log:
-            child = subprocess.run(
+        with (path.parent / "container-child.log").open("xb") as log:
+            child = run_child(
                 ["cosmos-embed1", "inference", "-e", str(path)],
                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                cancellation=cancellation,
             )
         (path.parent / "child-exit-code.txt").write_text(str(child.returncode) + "\n", encoding="utf-8")
+        cancellation.check()
         if child.returncode not in ACCEPTED_EXIT_CODES:
             return child.returncode if 0 < child.returncode < 256 else 1
         completion = validate_completion(path, child.returncode)
         outcomes.append({**entry, "exit_code": child.returncode, "validation": str(completion)})
         atomic_write_json(stage / "batch-progress.json", outcomes)
         print(f"BATCH_VALIDATED number={entry['number']} exit={child.returncode}", flush=True)
+    cancellation.check()
     merge_outputs(spec_path, entries)
+    cancellation.check()
     return 0
+
+
+def run(spec_path: Path) -> int:
+    """Run inside the approved model container; stop at the first failed child."""
+    spec_path = absolute_path(spec_path)
+    spec, entries = load_plan(spec_path)
+    stage = Path(spec["results_dir"])
+    if (stage / "inference").exists() or (stage / "batch-cancellation.json").exists() or any(
+        (Path(entry["spec"]).parent / "container-child.log").exists() for entry in entries
+    ):
+        raise FileExistsError("Batch execution already attempted; inspect evidence before a new plan")
+    with live_output(), cancellation_signals() as cancellation:
+        try:
+            return run_plan(spec_path, stage, entries, cancellation)
+        except Cancelled:
+            atomic_write_json(stage / "batch-cancellation.json", {
+                "status": "canceled", "signal": cancellation.signal,
+                "full_spec_sha256": file_sha256(spec_path),
+            })
+            (stage / "inference" / "completion_validation.json").unlink(missing_ok=True)
+            print(f"BATCH_CANCELED signal={cancellation.signal}", flush=True)
+            return 128 + cancellation.signal
 
 
 def main() -> int:
