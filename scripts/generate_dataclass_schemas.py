@@ -18,6 +18,7 @@ plugin workflow must not require a `tao-core` checkout at runtime.
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib
 import json
 import logging
@@ -185,6 +186,46 @@ def filter_schema(schema: dict[str, Any], valid_actions: set[str], current_actio
     schema["default"] = {
         key: value for key, value in schema.get("default", {}).items() if key in allowed_keys
     }
+    return schema
+
+
+def filter_schema_excluded_fields(schema: dict[str, Any], excluded_fields: list[str]) -> dict[str, Any]:
+    """Omit model-declared fields from properties, defaults, and search metadata."""
+    if not isinstance(excluded_fields, list) or any(
+        not isinstance(field, str) or not field or any(not part for part in field.split("."))
+        for field in excluded_fields
+    ):
+        raise ValueError("schema_excluded_fields must be a list of nonempty dotted field paths")
+    schema = copy.deepcopy(schema)
+
+    def excluded(path: str) -> bool:
+        return any(path == field or path.startswith(field + ".") for field in excluded_fields)
+
+    def visit(node: dict[str, Any], prefix: str = "") -> None:
+        for metadata in ("default", "popular"):
+            for field in excluded_fields:
+                if not field.startswith(prefix):
+                    continue
+                parts = field[len(prefix):].split(".")
+                value = node.get(metadata)
+                for part in parts[:-1]:
+                    value = value.get(part) if isinstance(value, dict) else None
+                if isinstance(value, dict):
+                    value.pop(parts[-1], None)
+        for metadata in ("automl_disabled_parameters", "automl_default_parameters"):
+            if metadata in node:
+                node[metadata] = [path for path in node[metadata] if not excluded(path)]
+        if "required" in node:
+            node["required"] = [key for key in node["required"] if not excluded(prefix + key)]
+        properties = node.get("properties", {})
+        for key in list(properties):
+            path = prefix + key
+            if excluded(path):
+                del properties[key]
+            elif isinstance(properties[key], dict):
+                visit(properties[key], path + ".")
+
+    visit(schema)
     return schema
 
 
@@ -357,6 +398,7 @@ def generate_schema_for_action(
             "core_module": "annotations",
             "source": "tao-dataservices annotations dataclass config",
         }
+        schema = filter_schema_excluded_fields(schema, skill_config.get("schema_excluded_fields", []))
         return schema, "annotations", "convert"
 
     schema_action = ACTION_ALIASES.get(action, action)
@@ -369,6 +411,7 @@ def generate_schema_for_action(
             json_with_meta = dataclass2json_converter.dataclass_to_json(exp_config)
             schema = dataclass2json_converter.create_json_schema(json_with_meta)
             schema = filter_schema(schema, get_valid_action_keys(skill_config, core_module), schema_action)
+            schema = filter_schema_excluded_fields(schema, skill_config.get("schema_excluded_fields", []))
             if core_module == "cosmos-rl" and schema_action in {"evaluate", "inference"}:
                 schema = unwrap_cosmos_non_train_action_schema(schema, schema_action)
             if core_module == "cosmos-rl" and schema_action == "evaluate":
