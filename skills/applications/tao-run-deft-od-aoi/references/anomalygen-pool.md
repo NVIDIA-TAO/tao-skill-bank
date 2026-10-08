@@ -87,7 +87,9 @@ generation plan is passed to `tao-generate-od-defects`. Only its validated
 logical `binary_coco` output enters admission, under the cumulative synthetic
 fraction cap. Its exact relative path comes from the authoritative action
 contract; the native fine-grained COCO remains separately available as
-`native_coco`.
+`native_coco`. Resolve that relative path against the generation action's
+results directory before admission, then pass the concrete file through
+`--synthetic-coco` and the results directory through `--synthetic-images`.
 Admission removes undersized, extreme-aspect, and full-frame boxes, then
 allocates available capacity proportionally across source `dataset_id` values
 with deterministic selection.

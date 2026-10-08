@@ -16,6 +16,8 @@ tags: [application, workflow, deft, object-detection, aoi, rtdetr]
 
 # TAO DEFT OD AOI
 
+> **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
+
 This application is a disk-backed RT-DETR loop for one foreground class,
 `defect`. Its core is real-data-only; AnomalyGenNext synthesis is an optional
 route with separate preparation, generation, and admission gates.
@@ -308,9 +310,12 @@ Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
 mounting the complete checkpoint root for its `run_amp` action, then pass its
 finalized generation plan through `tao-generate-od-defects` with the same
 checkpoint root mounted at the same canonical path. Commit
-`iteration_synthesis` before training. Re-run admission with the generated
-generation root via `--generation-root`; admission resolves the declared
-logical `binary_coco` output instead of hardcoding its filename. Synthetic
+`iteration_synthesis` before training. Read the selected
+`tao-generate-od-defects` action contract and resolve
+`actions.generate.outputs.binary_coco.relative_path` against that action's
+results directory. Re-run admission with the resolved file passed through
+`--synthetic-coco` and the generation results directory passed through
+`--synthetic-images`; admission never locates a companion skill itself. Synthetic
 categories are folded to `defect`, and
 the frozen cumulative fraction cap is applied against admitted real defects.
 Commit initial admission before requesting synthesis. The stage controller
