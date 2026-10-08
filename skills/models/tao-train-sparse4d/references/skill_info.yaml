@@ -1,11 +1,7 @@
 name: tao-train-sparse4d
 network_arch: sparse4d
 automl_enabled: true
-<<<<<<< HEAD
 container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-86-multiarch  # versions-key: images.tao_toolkit.pyt
-=======
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-83-multiarch  # versions-key: images.tao_toolkit.sparse4d_pyt
->>>>>>> 4ef87ec6 ([TAO-2591][Fix] Align Sparse4D skill with current training workflows (#329))
 data_format: ovpkl
 gpu_spec_key: train.num_gpus
 schema_excluded_fields:
@@ -19,11 +15,7 @@ schema_excluded_fields:
   - dataset.canonical_2d_width
 actions:
   dataset_convert:
-<<<<<<< HEAD
     container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-83-multiarch  # versions-key: images.tao_toolkit.data_services
-=======
-    container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-80-multiarch  # versions-key: images.tao_toolkit.sparse4d_data_services
->>>>>>> 4ef87ec6 ([TAO-2591][Fix] Align Sparse4D skill with current training workflows (#329))
     command: annotations convert -e {config_path}
     config_format: yaml
     mode: config
