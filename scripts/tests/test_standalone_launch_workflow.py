@@ -37,6 +37,17 @@ def _make_bank(root, snippet):
 
 
 @pytest.mark.parametrize("path", [SETUP, PREFLIGHT])
+def test_standalone_check_accepts_real_checkout(path):
+    """The documented prerequisite paths must exist in the shipped bank."""
+    result = subprocess.run(
+        ["bash", "-c", _bank_check(path)],
+        env={**os.environ, "TAO_SKILL_BANK_PATH": str(ROOT)},
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("path", [SETUP, PREFLIGHT])
 def test_standalone_check_accepts_complete_bank(path, tmp_path):
     """Both entry points accept a checkout containing the shared helpers."""
     snippet = _bank_check(path)
