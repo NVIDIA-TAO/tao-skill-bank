@@ -29,11 +29,22 @@
 
 images:
   tao_toolkit:
+<<<<<<< HEAD
     pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-86-multiarch
     deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.3.0-rc-76-multiarch
     data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-83-multiarch
     deft_pas_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-86-multiarch
     deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-83-multiarch
+=======
+    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch
+    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch
+    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
+    # Sparse4D schemas and conversion require the TAO 7.3 runtime.
+    sparse4d_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-83-multiarch
+    sparse4d_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-80-multiarch
+    deft_pas_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.0.1-20260922T185808Z-a6a5e75
+    deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
+>>>>>>> 4ef87ec6 ([TAO-2591][Fix] Align Sparse4D skill with current training workflows (#329))
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
     cosmos_framework:   nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-framework
     cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
