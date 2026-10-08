@@ -105,6 +105,12 @@ runtime downloads without modifying the image or making all of site-packages
 writable. For another image version, verify its cache location before reusing
 this image-specific destination.
 
+Use a writable per-run results directory as the container working directory.
+With a cold Triton cache in this image, launching from a directory containing
+`specs/` can make GCC read `./specs` as a compiler spec file and fail with
+`cannot read spec file './specs': Is a directory`. Keep the inference spec's
+absolute `results_dir` unchanged; changing the working directory is sufficient.
+
 For Cosmos-Embed images that ship `protobuf==7.x`, run a small startup
 preamble before every action:
 

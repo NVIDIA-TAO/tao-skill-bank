@@ -180,6 +180,14 @@ only after successful merging. A failed child stops the run. Existing attempts
 are not overwritten or automatically retried: inspect the batch logs and use
 a fresh results directory for an approved corrected submission.
 
+Batching preserves rows and metadata, not bitwise-identical floating-point
+values: the native encoder's low-precision rounding can change with batch shape.
+Report the actual compute precision, absolute differences, and cosine similarity
+when checking batched/unbatched equivalence. If a numerical tolerance fails,
+compare native encoding of the same query slices before attributing the
+difference to merging; do not silently loosen the check. See
+[PyTorch's batched-computation accuracy notes](https://docs.pytorch.org/docs/stable/notes/numerical_accuracy.html#batched-computations-or-slice-computations).
+
 Run the wrapper inside the Linux model container: its worker ownership uses
 Linux subreaping and pidfds to stop/reap the CLI, torchrun, and workers even
 when they create separate sessions. SIGINT/SIGTERM cancels the whole attempt,
@@ -189,7 +197,8 @@ from promoting canceled outputs. Native stdout/stderr streams live through the
 platform's `logs` verb and is also retained in each `container-child.log`,
 including shutdown diagnostics. If the platform log reader stalls or closes,
 live forwarding is best-effort so cancellation cannot hang on log backpressure;
-the complete batch file records how many live bytes were omitted. Recovery uses a fresh results directory, not
+the complete batch file records how many live bytes were omitted. Recovery uses
+a fresh results directory, not
 in-place resume; previously completed batches remain available for inspection.
 
 Keep the exact container image selected by `tao-finetune-cosmos-embed` as `COSMOS_EMBED_IMAGE`. Handle every generated spec independently. Set `INFERENCE_SPEC` to that spec's absolute path and `DATASET` to its `kpi` or `train` parent dataset. Run the inference action through `tao-finetune-cosmos-embed` and the selected platform. Monitor it to a terminal state and record its exact numeric exit code as `COSMOS_EMBED_EXIT_CODE`, including when the platform classifies the job as failed. After the container exits, restore host write access if needed with the same image and the dataset directory containing that spec:
