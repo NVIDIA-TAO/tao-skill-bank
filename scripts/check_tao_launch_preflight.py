@@ -31,6 +31,29 @@ DEFAULT_GPU_SMOKE_IMAGE = os.environ.get("TAO_GPU_SMOKE_IMAGE", "ubuntu:22.04")
 DEFAULT_LOW_VRAM_THRESHOLD_GB = 50.0
 KNOWN_IMAGE_SMS = {
     "cosmos-rl": ["sm_80", "sm_90", "sm_100", "sm_103", "sm_103a", "sm_120"],
+    # TAO 7.x multi-architecture PyTorch and data-services images used by PAS.
+    # Keeping this in the shared checker makes an unsupported target fail before
+    # a workflow writes state, instead of silently skipping the gate.
+    "tao-toolkit-pyt": [
+        "sm_80",
+        "sm_86",
+        "sm_89",
+        "sm_90",
+        "sm_100",
+        "sm_103",
+        "sm_103a",
+        "sm_120",
+    ],
+    "tao-toolkit-ds": [
+        "sm_80",
+        "sm_86",
+        "sm_89",
+        "sm_90",
+        "sm_100",
+        "sm_103",
+        "sm_103a",
+        "sm_120",
+    ],
 }
 
 
@@ -65,6 +88,17 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Require at least GIB GiB free on the filesystem containing a "
             "previously supplied local --path LABEL=PATH. May be repeated."
+        ),
+    )
+    parser.add_argument(
+        "--allow-missing-path",
+        action="append",
+        default=[],
+        metavar="LABEL",
+        help=(
+            "Allow a named local --path to be an approved creation target. "
+            "Its nearest existing parent must be a writable, searchable directory, "
+            "and no existing path component may be a symlink. May be repeated."
         ),
     )
     parser.add_argument(
@@ -194,6 +228,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Allow local Docker preflight to pull the smoke image before running "
             "the GPU visibility check. Use only after user approval."
+        ),
+    )
+    parser.add_argument(
+        "--defer-container-probes",
+        action="store_true",
+        help=(
+            "Defer checks that start containers. Use during a workflow's "
+            "read-only, pre-approval discovery pass, then rerun without this "
+            "flag after approval."
         ),
     )
     parser.add_argument(
@@ -395,6 +438,47 @@ def _existing_disk_probe_path(path: Path) -> Path:
     if not candidate.exists():
         raise FileNotFoundError(path)
     return candidate
+
+
+def check_local_creation_target(label: str, path: str) -> bool:
+    """Validate a missing, approved local output root without creating it."""
+    requested = Path(path).expanduser()
+    if not requested.is_absolute():
+        print(f"Local creation target must be absolute: {label}={path}")
+        return False
+    requested = Path(os.path.abspath(requested))
+    current = Path(requested.anchor)
+    for part in requested.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            print(
+                f"Local creation target has a symlink component: {label}={requested}"
+            )
+            return False
+        if not current.exists():
+            break
+        if not current.is_dir() and current != requested:
+            print(
+                f"Local creation target has a non-directory parent: "
+                f"{label}={requested}"
+            )
+            return False
+    try:
+        parent = _existing_disk_probe_path(requested)
+    except OSError as exc:
+        print(f"Local creation target cannot resolve a parent: {label}={requested}: {exc}")
+        return False
+    if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
+        print(
+            "Local creation target parent is not writable/searchable: "
+            f"{label}={requested}, parent={parent}"
+        )
+        return False
+    print(
+        "Local creation target OK: "
+        f"{label}={requested} (missing; parent={parent} is writable/searchable)"
+    )
+    return True
 
 
 def check_free_disk_space(
@@ -1716,8 +1800,11 @@ def check_local_docker(
     low_vram_threshold_gb: float,
     require_remote_docker: bool,
     target_gpu_indices: list[str],
+    defer_container_probes: bool,
+    allow_missing_paths: set[str] | None = None,
 ) -> bool:
     ok = True
+    allow_missing_paths = allow_missing_paths or set()
     effective_target_gpu_indices = list(target_gpu_indices)
     docker_host = os.environ.get("DOCKER_HOST")
     remote_docker = docker_host_is_remote(docker_host)
@@ -1752,17 +1839,28 @@ def check_local_docker(
                 ok = False
 
             if remote_docker:
-                print(f"Remote Docker daemon requested: DOCKER_HOST={os.environ.get('DOCKER_HOST')}")
-                gpu_ok, gpus = query_docker_gpus(
-                    gpu_smoke_image, pull_smoke_image, target_gpu_indices
+                print(
+                    "Remote Docker daemon requested: "
+                    f"DOCKER_HOST={os.environ.get('DOCKER_HOST')}"
                 )
+                if not defer_container_probes:
+                    gpu_ok, gpus = query_docker_gpus(
+                        gpu_smoke_image, pull_smoke_image, target_gpu_indices
+                    )
+                else:
+                    gpu_ok, gpus = False, []
+                    print(
+                        "Remote Docker GPU/container checks deferred until approval; "
+                        "rerun without --defer-container-probes after approval."
+                    )
             else:
                 gpu_ok, gpus = query_host_gpus()
                 selection_ok, gpus = filter_target_gpus(gpus, target_gpu_indices)
                 gpu_ok = gpu_ok and selection_ok
                 if gpu_ok and not effective_target_gpu_indices:
                     effective_target_gpu_indices = [str(gpu["index"]) for gpu in gpus]
-            ok = gpu_ok and ok
+            if not (remote_docker and defer_container_probes):
+                ok = gpu_ok and ok
             if gpu_ok:
                 ok = (
                     check_gpu_memory(
@@ -1780,7 +1878,7 @@ def check_local_docker(
                     )
                     and ok
                 )
-            if gpu_ok:
+            if gpu_ok and not defer_container_probes:
                 ok = (
                     check_docker_gpu_smoke(
                         container_image,
@@ -1790,10 +1888,16 @@ def check_local_docker(
                     )
                     and ok
                 )
-            else:
+            elif gpu_ok:
                 print(
-                    "Docker GPU smoke skipped: effective GPU allocation failed validation"
+                    "Docker GPU smoke container deferred until approval; rerun with "
+                    "the --defer-container-probes flag removed after approval."
                 )
+            else:
+                if not (remote_docker and defer_container_probes):
+                    print(
+                        "Docker GPU smoke skipped: effective GPU allocation failed validation"
+                    )
 
     for label, raw_path in paths:
         path = normalize_local_path(raw_path)
@@ -1802,6 +1906,12 @@ def check_local_docker(
         if remote_docker:
             if skip_access:
                 print(f"Remote Docker path accepted without access check: {label}={path}")
+                continue
+            if defer_container_probes:
+                print(
+                    "Remote Docker bind-path check deferred until approval: "
+                    f"{label}={path}"
+                )
                 continue
             if not check_docker_bind_path(label, path, gpu_smoke_image, pull_smoke_image):
                 ok = False
@@ -1817,6 +1927,15 @@ def check_local_docker(
         if Path(path).exists():
             print(f"Local path OK: {label}={path}")
             maybe_report_json_record_count(label, path)
+        elif label in allow_missing_paths:
+            if label in required_json_fields:
+                print(
+                    f"Missing creation target cannot satisfy JSON input checks: {label}={path}"
+                )
+                ok = False
+                continue
+            ok = check_local_creation_target(label, path) and ok
+            continue
         else:
             print(f"Local path missing: {label}={path}")
             ok = False
@@ -1858,8 +1977,22 @@ def main() -> int:
     gpu_arch_allowlists = parse_gpu_arch_allowlists(args.gpu_arch_allowlist)
     effective_batch_limits = parse_effective_batch_limits(args.effective_batch_limit)
     min_free_disk_gb = parse_min_free_disk_gb(args.min_free_disk_gb)
+    allow_missing_paths = set(args.allow_missing_path)
+    unknown_missing_labels = allow_missing_paths - {label for label, _ in paths}
+    if unknown_missing_labels:
+        raise SystemExit(
+            "--allow-missing-path label(s) have no matching --path: "
+            + ", ".join(sorted(unknown_missing_labels))
+        )
     target_gpu_indices = parse_target_gpu_indices(args.target_gpu_index)
     name = platform["name"]
+    remote_docker_requested = docker_host_is_remote(os.environ.get("DOCKER_HOST"))
+    local_docker_paths = name in {"docker", "local-docker"} and not remote_docker_requested
+    if allow_missing_paths and not local_docker_paths:
+        raise SystemExit(
+            "--allow-missing-path is supported only for local Docker paths; "
+            "use the selected remote platform's native path contract"
+        )
 
     if name == "slurm":
         platform_ok = check_slurm(
@@ -1881,8 +2014,10 @@ def main() -> int:
             parse_sm_list(args.image_supported_sm),
             args.min_gpu_memory_gb,
             args.low_vram_threshold_gb,
-            name == "remote-docker" or bool(args.docker_host or os.environ.get("DOCKER_HOST")),
+            name == "remote-docker" or remote_docker_requested,
             target_gpu_indices,
+            args.defer_container_probes,
+            allow_missing_paths,
         )
     elif name == "brev":
         platform_ok = check_brev(platform, args.skip_platform_access)

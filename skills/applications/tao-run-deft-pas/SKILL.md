@@ -74,6 +74,11 @@ Use two intake phases:
    reason and depth bound, the directory in which a pair was found, and whether
    it is archive-only or mixed with extracted data.
 
+   The packaged discovery result is exclusive, not a hint. Obey its
+   `next_action`; when it requires user input, present its
+   `required_user_prompt` verbatim and do not perform any second filesystem
+   search or mention a path absent from its bounded `candidates`.
+
    Enumerate run-state files only at
    `<workspace>/results/run_*/deft_state.json`. Read the minimal identity fields
    and present a resume candidate only when `workflow` is exactly
@@ -121,7 +126,8 @@ and `text` adapter blocks; SigLIP2 attention targets are `q_proj`, `k_proj`,
 `v_proj`, and `out_proj`. Full-parameter SFT is selected with
 `--finetuning-method sft`: it writes `peft.enabled: false` and makes both
 encoders trainable. Never represent encoder freezing as LoRA or silently fall
-back between methods. Probe a changed image's schema before approval and stop
+back between methods. Inspect a changed image's identity before approval; run
+its container-starting schema/capability probe only after approval and stop
 if it does not expose this complete PEFT contract.
 
 The authoritative parameter contract is the nested dataclass schema in
@@ -131,6 +137,10 @@ options of a DEFT parameter. Do not infer an undocumented field or bypass its
 metadata constraint. Config preparation, initialization, audit, and every
 host-side stage validate the materialized bundle through that same schema;
 the `pas` YAML section is validated through the typed PAS configuration model.
+The fixed LoRA adapter shape is separately typed in
+`scripts/finetuning_contract.py` because it materializes into the TAO spec,
+not `deft_config.yaml`; approval, state, audit, and reporting bind its rank and
+alpha.
 
 If required information remains missing after full discovery, ask one
 consolidated follow-up. A normal invocation should need no knowledge of stage
@@ -143,7 +153,9 @@ Perform only read-only discovery before approval: resolve paths, inspect file
 metadata and archives, check process-environment variable presence, inspect
 local images, inspect GPUs, and audit an existing run. Credentials come only
 from the launching process environment; never open or source a credential file,
-and never print, grep, copy, or echo a credential value. If a required variable
+and never print, grep, copy, or echo a credential value. Use only the packaged
+`scripts/check_pas_credentials.py` presence checker for credential discovery;
+do not author an environment-inspection command. If a required variable
 is absent, tell the user which name
 to export in the shell that launches the agent; never ask for its value in
 chat. Do not inspect credential-file metadata when no credential is needed. If
@@ -287,6 +299,10 @@ the exact iteration's `nvidia_pas_metrics_aggregate.csv`; the result records
 its source path and is re-derived during commit and audit. Checkpoint ranking
 and best-run reporting follow the approved operator (`>=`/`>` chooses the
 higher value, `<=`/`<` the lower), not a hard-coded metric convention.
+Every committed result also records its value and operator-directed change
+against baseline and the previous round. For iterN the same evidence is bound
+into `iteration_summary.json`, so an improvement or regression remains visible
+in canonical JSON and audit output even before the HTML report is rendered.
 
 Successful completion is exactly one of:
 

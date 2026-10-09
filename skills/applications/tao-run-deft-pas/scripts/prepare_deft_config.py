@@ -12,10 +12,12 @@ paths, so later tool calls do not depend on a previous ``cd`` or ``export``.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
 import tempfile
 from typing import Any
@@ -24,6 +26,7 @@ import yaml
 
 from metric_contract import validate_contract
 from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
+from finetuning_contract import expected_lora_record, materialize_peft
 from virtualenv_runtime import resolve_virtualenv_profiles
 
 
@@ -96,21 +99,60 @@ def _existing_path(path: pathlib.Path, name: str, *, directory: bool) -> pathlib
     return resolved
 
 
-def _validate_lora_attestation(path: pathlib.Path, image: str) -> None:
+@dataclasses.dataclass(frozen=True)
+class RuntimeAttestation:
+    """Validated immutable capability evidence for the approved PyTorch image."""
+
+    image_ref: str
+    image_digest: str
+    finetuning_methods: tuple[str, ...]
+    clip_lora: dict[str, Any] | None
+
+
+def _validate_pyt_runtime_attestation(
+    path: pathlib.Path, image: str, finetuning_method: str
+) -> RuntimeAttestation:
     attestation_path = _existing_path(
-        path, "--lora-capability-attestation", directory=False
+        path, "--pyt-runtime-attestation", directory=False
     )
     attestation = json.loads(attestation_path.read_text())
     if not isinstance(attestation, dict):
-        raise ValueError("LoRA capability attestation root must be an object")
+        raise ValueError("PyTorch runtime attestation root must be an object")
+    if attestation.get("schema_version") != "1":
+        raise ValueError("PyTorch runtime attestation schema_version must be 1")
     if attestation.get("status") != "PASS" or attestation.get("image_ref") != image:
-        raise ValueError("LoRA capability attestation does not pass for --pyt-image")
+        raise ValueError("PyTorch runtime attestation does not pass for --pyt-image")
+    digest = attestation.get("image_digest")
+    if not isinstance(digest, str) or not re.fullmatch(
+        r"sha256:[0-9a-f]{64}", digest
+    ):
+        raise ValueError(
+            "PyTorch runtime attestation lacks an immutable image_digest"
+        )
+    methods = attestation.get("finetuning_methods")
+    if (
+        not isinstance(methods, list)
+        or any(method not in {"sft", "lora"} for method in methods)
+        or len(methods) != len(set(methods))
+        or finetuning_method not in methods
+    ):
+        raise ValueError(
+            "PyTorch runtime attestation does not support the approved "
+            f"fine-tuning method {finetuning_method}"
+        )
 
     contract = attestation.get("clip_lora")
+    if finetuning_method == "sft":
+        return RuntimeAttestation(
+            image_ref=image,
+            image_digest=digest,
+            finetuning_methods=tuple(methods),
+            clip_lora=contract if isinstance(contract, dict) else None,
+        )
     if not isinstance(contract, dict):
-        raise ValueError("LoRA capability attestation lacks the CLIP contract")
+        raise ValueError("PyTorch runtime attestation lacks the CLIP LoRA contract")
     if contract.get("checkpoint_behavior") != "register-and-merge":
-        raise ValueError("LoRA capability attestation lacks checkpoint behavior")
+        raise ValueError("PyTorch runtime attestation lacks LoRA checkpoint behavior")
     required_symbols = {
         "LoRALinear",
         "inject_lora",
@@ -119,14 +161,14 @@ def _validate_lora_attestation(path: pathlib.Path, image: str) -> None:
     }
     runtime_symbols = contract.get("runtime_symbols")
     if not isinstance(runtime_symbols, list) or set(runtime_symbols) != required_symbols:
-        raise ValueError("LoRA capability attestation lacks runtime symbols")
+        raise ValueError("PyTorch runtime attestation lacks LoRA runtime symbols")
     schema = contract.get("schema")
     if (
         not isinstance(schema, dict)
         or schema.get("method") != "lora"
         or not isinstance(schema.get("enabled"), bool)
     ):
-        raise ValueError("LoRA capability attestation lacks the PEFT schema")
+        raise ValueError("PyTorch runtime attestation lacks the PEFT schema")
     expected_targets = ["q_proj", "k_proj", "v_proj", "out_proj"]
     required_fields = {
         "mode",
@@ -144,8 +186,14 @@ def _validate_lora_attestation(path: pathlib.Path, image: str) -> None:
             or block.get("target_modules") != expected_targets
         ):
             raise ValueError(
-                f"LoRA capability attestation lacks the {tower} adapter contract"
+                f"PyTorch runtime attestation lacks the {tower} LoRA adapter contract"
             )
+    return RuntimeAttestation(
+        image_ref=image,
+        image_digest=digest,
+        finetuning_methods=tuple(methods),
+        clip_lora=contract,
+    )
 
 
 def _python_tree_sha256(root: pathlib.Path) -> str:
@@ -273,10 +321,18 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--replay-fraction must be in [0, 1]")
     if args.knn_metric not in {"cosine", "euclidean"}:
         raise ValueError("--knn-metric must be cosine or euclidean")
-    if args.finetuning_method == "lora":
-        if args.lora_capability_attestation is None:
-            raise ValueError("LoRA requires --lora-capability-attestation")
-        _validate_lora_attestation(args.lora_capability_attestation, args.pyt_image)
+    pyt_attestation = None
+    if args.platform != "virtualenv":
+        if args.pyt_runtime_attestation is None:
+            raise ValueError(
+                "container platforms require --pyt-runtime-attestation for the "
+                "approved fine-tuning method"
+            )
+        pyt_attestation = _validate_pyt_runtime_attestation(
+            args.pyt_runtime_attestation,
+            args.pyt_image,
+            args.finetuning_method,
+        )
     # ``gpu_ids`` is an allocation in the launcher/host namespace. Container
     # runtimes expose that allocation as a dense zero-based CUDA namespace, so
     # TAO must never receive the host ordinals directly.
@@ -362,24 +418,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     tao.setdefault("model", {}).update(
         {"freeze_vision_encoder": False, "freeze_text_encoder": False}
     )
-    if args.finetuning_method == "lora":
-        tower = {
-            "mode": "lora",
-            "target_modules": ["q_proj", "k_proj", "v_proj", "out_proj"],
-            "num_last_blocks": 3,
-            "rank": 8,
-            "alpha": 16,
-            "dropout": 0.05,
-        }
-        tao["peft"] = {
-            "enabled": True,
-            "method": "lora",
-            "train_logit_calibration": True,
-            "vision": dict(tower),
-            "text": dict(tower),
-        }
-    else:
-        tao["peft"] = {"enabled": False}
+    tao["peft"] = materialize_peft(args.finetuning_method)
     tao["dataset"].setdefault("train", {}).update(
         {"batch_size": args.train_batch_size}
     )
@@ -422,10 +461,11 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     from pas_deft.config import PasDeftConfig
 
     PasDeftConfig(str(config_dir / "deft_config.yaml"))
+    lora_rank, lora_alpha = expected_lora_record(args.finetuning_method)
     _atomic_json(
         config_dir / "approval.json",
         {
-            "schema_version": "4",
+            "schema_version": "6",
             "workflow": "tao-run-deft-pas",
             "platform": args.platform,
             "docker_remote": args.docker_remote,
@@ -442,11 +482,17 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "metadata_archive": str(metadata_archive),
             "checksums_file": str(checksums_file) if checksums_file else None,
             "requires_hf_token": args.requires_hf_token,
+            "finetuning_method": args.finetuning_method,
+            "lora_rank": lora_rank,
+            "lora_alpha": lora_alpha,
             "max_iterations": args.max_iterations,
             "host_gpu_ids": host_gpu_ids,
             "container_gpu_ids": container_gpu_ids,
             "metric_contract": metric_contract,
             "pyt_image": args.pyt_image,
+            "pyt_image_digest": (
+                pyt_attestation.image_digest if pyt_attestation is not None else None
+            ),
             "ds_image": args.ds_image,
         },
     )
@@ -468,6 +514,12 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             else None
         ),
         "requires_hf_token": args.requires_hf_token,
+        "finetuning_method": args.finetuning_method,
+        "lora_rank": lora_rank,
+        "lora_alpha": lora_alpha,
+        "pyt_image_digest": (
+            pyt_attestation.image_digest if pyt_attestation is not None else None
+        ),
         "pas_deft_bundle_sha256": runtime_sha256,
         "eval_split": args.eval_split,
         "queries_per_slice": args.queries_per_slice,
@@ -478,7 +530,6 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "val_batch_size": args.val_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "text_embed_model": args.text_embed_model,
-        "finetuning_method": args.finetuning_method,
         "approval_manifest": str(config_dir / "approval.json"),
     }
 
@@ -536,7 +587,16 @@ def _parser() -> argparse.ArgumentParser:
         default="lora",
         help="Fine-tuning method (default: lora). SFT explicitly disables PEFT.",
     )
-    parser.add_argument("--lora-capability-attestation", type=pathlib.Path)
+    parser.add_argument(
+        "--pyt-runtime-attestation",
+        "--lora-capability-attestation",
+        dest="pyt_runtime_attestation",
+        type=pathlib.Path,
+        help=(
+            "Digest-bound PyTorch runtime/capability attestation. The former "
+            "--lora-capability-attestation spelling remains as a compatibility alias."
+        ),
+    )
     parser.add_argument(
         "--pyt-image",
         required=True,

@@ -49,9 +49,10 @@ import tempfile
 import yaml
 
 from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
+from finetuning_contract import validate_peft_record
 from virtualenv_runtime import resolve_virtualenv_profiles
 
-from metric_contract import validate_contract
+from metric_contract import METRIC_EVIDENCE_VERSION, validate_contract
 
 
 WORKFLOW = "tao-run-deft-pas"
@@ -253,6 +254,9 @@ def _load_run_config(args: argparse.Namespace) -> dict:
             "namespace for the approved host GPU allocation"
         )
     approval_version = approval.get("schema_version")
+    finetuning_method = None
+    lora_rank = None
+    lora_alpha = None
     expected_approval = {
         "schema_version": approval_version,
         "workflow": WORKFLOW,
@@ -275,7 +279,39 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "pyt_image": args.pyt_image,
         "ds_image": args.ds_image,
     }
-    if approval_version == "4":
+    if approval_version in {"5", "6"}:
+        finetuning_method = approval.get("finetuning_method")
+        if finetuning_method not in {"lora", "sft"}:
+            raise ValueError(
+                "approval.json finetuning_method must be lora or sft"
+            )
+        image_digest = approval.get("pyt_image_digest")
+        if args.platform == "virtualenv":
+            if image_digest is not None:
+                raise ValueError(
+                    "approval.json pyt_image_digest must be null for virtualenv"
+                )
+        elif not isinstance(image_digest, str) or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", image_digest
+        ):
+            raise ValueError(
+                "approval.json pyt_image_digest must bind the container runtime"
+            )
+        expected_approval["finetuning_method"] = finetuning_method
+        if approval_version == "6":
+            lora_rank = approval.get("lora_rank")
+            lora_alpha = approval.get("lora_alpha")
+            expected_approval["lora_rank"] = lora_rank
+            expected_approval["lora_alpha"] = lora_alpha
+        expected_approval["pyt_image_digest"] = image_digest
+        expected_approval["platform"] = args.platform
+        expected_approval["docker_remote"] = args.docker_remote
+        expected_approval["virtualenvs"] = (
+            {name: str(path) for name, path in args.virtualenvs.items()}
+            if args.virtualenvs is not None
+            else None
+        )
+    elif approval_version == "4":
         expected_approval["platform"] = args.platform
         expected_approval["docker_remote"] = args.docker_remote
         expected_approval["virtualenvs"] = (
@@ -306,7 +342,7 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         expected_approval.pop("pas_deft_bundle_sha256")
     else:
         raise ValueError(
-            "approval.json schema_version must be 2, 3, or 4"
+            "approval.json schema_version must be 2, 3, 4, 5, or 6"
         )
     if approval != expected_approval:
         raise ValueError(
@@ -412,6 +448,30 @@ def _load_run_config(args: argparse.Namespace) -> dict:
             "prepared image_embed_spec.model must match text_embed_spec.model "
             "for the shared embedding checkpoint"
         )
+    finetuning_method = approval.get("finetuning_method")
+    if approval_version in {"5", "6"}:
+        peft = tao.get("peft")
+        if not isinstance(peft, dict):
+            raise ValueError("prepared tao_spec.peft must be an object")
+        actual_method = (
+            "lora"
+            if peft.get("enabled") is True and peft.get("method") == "lora"
+            else "sft"
+            if peft == {"enabled": False}
+            else None
+        )
+        if actual_method != finetuning_method:
+            raise ValueError(
+                "prepared tao_spec PEFT configuration does not match approval.json "
+                "finetuning_method"
+            )
+        if approval_version == "6":
+            validate_peft_record(
+                peft,
+                method=finetuning_method,
+                lora_rank=lora_rank,
+                lora_alpha=lora_alpha,
+            )
     text_embed_model_path = text_embed.get("model_path")
     if (
         not isinstance(text_embed_model_path, str)
@@ -449,6 +509,10 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "text_lr": float(optim.get("text_lr")),
         **batch_sizes,
         "text_embed_model": text_embed_model,
+        "finetuning_method": finetuning_method,
+        "lora_rank": lora_rank,
+        "lora_alpha": lora_alpha,
+        "pyt_image_digest": approval.get("pyt_image_digest"),
         "continual_dataset": typed.training.continual_dataset,
         "continual_model": typed.training.continual_model,
         "visualize": typed.visualization.enabled,
@@ -470,6 +534,10 @@ def build_state(args: argparse.Namespace) -> dict:
         "max_iterations": args.max_iterations,
         "current_iteration": 0,
         "gate_met": False,
+        # Versioned independently so schema-v3 runs created by older plugin
+        # revisions remain auditable while new runs require durable per-round
+        # regression evidence.
+        "metric_evidence_version": METRIC_EVIDENCE_VERSION,
         # The canonical contract shape record_metric_result.py and
         # metric_contract.contract_from_state consume.
         "metric_contract": dict(args.metric_contract),

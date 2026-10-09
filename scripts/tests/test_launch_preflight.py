@@ -3,6 +3,7 @@
 
 """Focused tests for launch-preflight GPU architecture handling."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,49 @@ def test_normalize_gpu_arch_accepts_arch_specific_forms(value, expected):
 def test_cosmos_image_allowlist_includes_compute_capability_variant():
     supported = set(preflight.KNOWN_IMAGE_SMS["cosmos-rl"])
     assert {"sm_103", "sm_103a"} <= supported
+
+
+def test_pas_image_families_have_a_shared_checker_architecture_gate():
+    assert preflight.known_supported_sms(
+        "nvcr.io/nvstaging/tao/tao-toolkit-pyt:test", []
+    )
+    assert preflight.known_supported_sms(
+        "nvcr.io/nvstaging/tao/tao-toolkit-ds:test", []
+    )
+
+
+def test_docker_container_probe_is_deferred_when_preapproval_requests_it(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        preflight,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                '{"nvidia": {}}\n'
+                if command[:2] == ["docker", "info"] and "--format" in command
+                else ""
+            ),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(preflight, "query_host_gpus", lambda **_kwargs: (True, _host_gpus()[:1]))
+    monkeypatch.setattr(
+        preflight,
+        "check_docker_gpu_smoke",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("pre-approval check must not start a container")
+        ),
+    )
+    assert preflight.check_local_docker(
+        [], {}, 20, False,
+        "nvcr.io/nvstaging/tao/tao-toolkit-pyt:test",
+        "ubuntu:22.04", False, [], None, 50.0, False, [], True,
+    )
+    assert "deferred until approval" in capsys.readouterr().out
 
 
 def test_architecture_specific_target_matches_family_target():
@@ -151,6 +195,90 @@ def test_free_disk_requirement_passes_for_existing_parent(monkeypatch, tmp_path,
         [("results", str(output))], {"results": 256}, skip_access=False
     )
     assert "Free-disk OK" in capsys.readouterr().out
+
+
+def test_local_docker_accepts_missing_approved_creation_target(tmp_path, capsys):
+    target = tmp_path / "new" / "workspace"
+    assert preflight.check_local_docker(
+        [("workspace", str(target))],
+        {},
+        20,
+        True,
+        None,
+        "ubuntu:22.04",
+        False,
+        [],
+        None,
+        50.0,
+        False,
+        [],
+        True,
+        {"workspace"},
+    )
+    assert not target.exists()
+    assert "Local creation target OK" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("docker_host", "is_local"),
+    [
+        (None, True),
+        ("unix:///var/run/docker.sock", True),
+        ("/var/run/docker.sock", True),
+        ("npipe:////./pipe/docker_engine", True),
+        ("ssh://gpu.example", False),
+        ("tcp://gpu.example:2376", False),
+    ],
+)
+def test_creation_target_cli_uses_docker_endpoint_scope(
+    tmp_path, docker_host, is_local
+):
+    target = tmp_path / "new" / "workspace"
+    environment = os.environ.copy()
+    if docker_host is None:
+        environment.pop("DOCKER_HOST", None)
+    else:
+        environment["DOCKER_HOST"] = docker_host
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(Path(preflight.__file__)),
+            "--skill-bank",
+            str(Path(__file__).resolve().parents[2]),
+            "--platform",
+            "docker",
+            "--path",
+            f"workspace={target}",
+            "--allow-missing-path",
+            "workspace",
+            "--skip-platform-access",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    if is_local:
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert "Local creation target OK" in completed.stdout
+    else:
+        assert completed.returncode != 0
+        assert "supported only for local Docker paths" in completed.stderr
+    assert not target.exists()
+
+
+def test_missing_creation_target_rejects_symlinked_parent(tmp_path, capsys):
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+
+    assert not preflight.check_local_creation_target(
+        "workspace", str(linked_parent / "workspace")
+    )
+    assert "symlink component" in capsys.readouterr().out
 
 
 def test_free_disk_requirement_rejects_insufficient_capacity(monkeypatch, tmp_path, capsys):

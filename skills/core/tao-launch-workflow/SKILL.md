@@ -28,6 +28,11 @@ tags:
 
 Use this skill before launching any TAO workflow or model action.
 
+For direct invocation, run the complete-checkout check in
+`references/platform-preflight.md` before Step 0 or any helper. Individual
+skill installs lack shared scripts; stop if the check fails. Use its verified
+`TAO_SKILL_BANK_PATH` for every helper.
+
 ## Step 0 — Execution Mode: Card Packs (check first)
 
 Before running a multi-stage application workflow inside this conversation,
@@ -114,8 +119,12 @@ platform skills); nothing else is platform-specific.
   uploads). Then lint the assembled command with `redact_secrets.py lint` and
   **open the record and launch, in that order**:
   ```bash
-  JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform <p> --image <img> \
-    --network-arch <arch> --action <action> --storage-tier <A|B|C> --results-root <root>)
+  BANK="$TAO_SKILL_BANK_PATH"
+  if ! JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform <p> --image <img> \
+    --network-arch <arch> --action <action> --storage-tier <A|B|C> --results-root <root>); then
+    echo "TAO job-record creation failed; do not submit" >&2; exit 1
+  fi
+  [ -n "$JOB_ID" ] || { echo "TAO job-record returned no ID; do not submit" >&2; exit 1; }
   # <native launch, naming the backend object after $JOB_ID>
   "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING --backend-ref <ref>
   ```
@@ -228,14 +237,15 @@ Before creating specs, runner scripts, workspaces, logs, state files, or
 submitting a job, resolve the image for the selected model/action:
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/resolve_tao_image.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} \
+"$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" \
+  --skill-bank "$TAO_SKILL_BANK_PATH" \
   --model <network> --action <action> --backend <auto-or-explicit> \
   --workload <workload-hint> --format text
 ```
 
-If the helper is unavailable, read `skills/models/<network>/config.json`
-directly. Resolve image fields in this order:
+For manual inspection, read the packaged
+`$TAO_SKILL_BANK_PATH/skills/models/<network>/references/skill_info.yaml`.
+If the helper is unavailable, stop before launch. Resolve image fields in this order:
 
 1. `backend_contracts.<selected-backend>.container_image`, when present
 2. `actions.<action>.container_image`

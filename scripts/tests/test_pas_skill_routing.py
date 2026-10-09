@@ -65,3 +65,28 @@ def test_clip_and_pas_require_one_explicit_finetuning_method_choice():
     assert "method=<full-parameter SFT | LoRA>" in preflight
     assert "| fine-tuning method | `LoRA`;" in preflight
     assert '--finetuning-method "$FINETUNING_METHOD"' in preflight
+
+
+def test_pas_preflight_keeps_prerequisites_and_side_effect_gates_executable():
+    root = REPO_ROOT / "skills/applications/tao-run-deft-pas"
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    preflight = (root / "references/preflight.md").read_text(encoding="utf-8")
+
+    assert "Inspect a changed image's identity before approval" in skill
+    assert "container-starting schema/capability probe only after approval" in skill
+    for prerequisite in ("python3-venv", "python3-pip", "jsonschema"):
+        assert prerequisite in preflight
+    assert '--min-free-disk-gb workspace=256' in preflight
+    assert "--defer-container-probes" in preflight
+    assert "discover_pas_inputs.py" in preflight
+    assert "required_user_prompt" in preflight
+    assert "check_pas_credentials.py" in preflight
+    assert "CREATION_TARGET_ARGS+=(--allow-missing-path workspace)" in preflight
+    assert 'case "${DOCKER_HOST:-}" in' in preflight
+    assert '""|unix://*|npipe://*|/var/run/docker.sock)' in preflight
+    assert "run_pas_runtime_probe.py" in preflight
+    assert "/probe/check_pas_cuda_runtime.py:ro" in preflight
+    assert "/attestation:rw" in preflight
+    assert 'echo "$NGC_KEY"' not in preflight
+    assert "env | grep" not in preflight
+    assert "printenv" in preflight and "Do not run" in preflight

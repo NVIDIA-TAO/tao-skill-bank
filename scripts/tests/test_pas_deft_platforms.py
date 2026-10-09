@@ -33,6 +33,7 @@ from deft_action_contract import (  # noqa: E402
     validate_tao_virtualenv,
 )
 from command_contract import (  # noqa: E402
+    file_sha256,
     expected_container_command,
     expected_fresh_outputs,
     expected_image_kind,
@@ -41,6 +42,7 @@ from command_contract import (  # noqa: E402
 
 
 PLATFORMS = ("docker", "slurm", "kubernetes", "brev", "virtualenv")
+CONTAINER_PLATFORMS = ("docker", "slurm", "kubernetes", "brev")
 PYT_IMAGE = "registry.example/tao-pyt:test"
 DS_IMAGE = "registry.example/tao-ds:test"
 SPEC_NAMES = (
@@ -69,6 +71,23 @@ DATASET_ACTIONS = {
     "viz_mined_embed",
     "viz_previous_embed",
 }
+
+
+def _runtime_attestation(tmp_path: Path) -> Path:
+    path = tmp_path / "pyt-runtime-attestation.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 @pytest.fixture(autouse=True)
@@ -541,6 +560,146 @@ def test_finalize_binds_native_job_record_and_fresh_output(tmp_path, platform):
         required_platform=platform,
     ) == evidence
     assert errors == []
+
+
+@pytest.mark.parametrize("platform", CONTAINER_PLATFORMS)
+@pytest.mark.parametrize("finetuning_method", ("lora", "sft"))
+def test_pyt_digest_identity_survives_prepare_finalize_and_commit(
+    tmp_path, platform, finetuning_method
+):
+    """NVBug 6902540: container platforms commit the attested PyT digest."""
+    _, results, _, _, _ = _write_fixture(tmp_path, platform)
+    state_path = results / "deft_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    digest = "sha256:" + "a" * 64
+    state["config"].update(
+        {"finetuning_method": finetuning_method, "pyt_image_digest": digest}
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    phase_root = results / "zs"
+    stage = expected_stage_directory("evaluate", "baseline", results)
+    outputs = expected_fresh_outputs("evaluate", "baseline", results)
+    eval_config = phase_root / "specs" / "eval_config.yaml"
+    eval_config.parent.mkdir(parents=True)
+    eval_config.write_text("evaluate:\n  batch_size: 1\n", encoding="utf-8")
+    # Some CI overlay filesystems expose coarser mtimes than time.time_ns().
+    # Anchor the synthetic status at the produced file's observed timestamp so
+    # this identity test preserves the real freshness invariant without a
+    # filesystem-resolution race.
+    started_ns = eval_config.stat().st_mtime_ns
+    host_log = eval_config.parent / "eval-config.log"
+    host_log.write_text("eval config prepared\n", encoding="utf-8")
+    host_status = eval_config.parent / "eval-config.host.status.json"
+    host_status.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "workflow": "tao-run-deft-pas",
+                "kind": "host",
+                "name": "eval-config",
+                "attempt": 1,
+                "started_ns": started_ns,
+                "finished_at": "2026-10-09T00:00:00+00:00",
+                "status": "ok",
+                "exit_code": 0,
+                "log_path": str(host_log),
+                "fresh_outputs": [str(eval_config)],
+                "fresh_output_sha256": {
+                    str(eval_config): file_sha256(eval_config)
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    command = expected_container_command("evaluate", "baseline", state["config"])
+    request_path, request = action.prepare(
+        argparse.Namespace(
+            results_dir=results,
+            image="pyt",
+            stage_dir=stage,
+            name="evaluate",
+            pass_hf_token=False,
+            fresh_output=outputs,
+            command=command,
+        )
+    )
+    expected_image = "registry.example/tao-pyt@" + digest
+    assert request["record_image"] == expected_image
+    assert request["workload_image"] == expected_image
+    results_scope = (
+        _attest_remote(request_path, request)
+        if platform in {"slurm", "kubernetes", "brev"}
+        else str(stage)
+    )
+    outputs[0].parent.mkdir(parents=True, exist_ok=True)
+    outputs[0].write_text("metric,value\naccuracy,1.0\n", encoding="utf-8")
+    outputs[1].write_text("Evaluate finished successfully\n", encoding="utf-8")
+    Path(request["log_path"]).write_text("evaluate completed\n", encoding="utf-8")
+    record_path, record = _open_job_record(
+        request_path,
+        request,
+        job_id=f"pas-lora-evaluate-{platform}",
+        results_scope=results_scope,
+    )
+    action.bind_job(argparse.Namespace(request=request_path, job_record=record_path))
+    _finish_job_record(record_path, record)
+    status_path, returncode = action.finalize(
+        argparse.Namespace(
+            request=request_path,
+            job_record=record_path,
+            native_exit_code=0,
+        )
+    )
+    assert returncode == 0
+
+    phase = {"status": "complete", "metric_result": {"value": 1.0}}
+    commit_stage._apply_success(  # noqa: SLF001
+        state,
+        phase,
+        "evaluate",
+        argparse.Namespace(
+            eval_config=eval_config,
+            eval_config_status=host_status,
+            metrics_aggregate_csv=outputs[0],
+            eval_status_json=outputs[1],
+            eval_command_status=status_path,
+        ),
+        results,
+        "baseline",
+    )
+    assert phase["eval_command_status"] == str(status_path)
+    state["iterations"] = {"baseline": phase}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    report = audit_deft_run.audit(results)
+    assert not any(
+        "state.iterations.baseline.eval_command_status.image must" in error
+        for error in report["errors"]
+    )
+
+
+def test_runtime_image_contract_rejects_disagreeing_approved_digest():
+    config = {
+        "platform": "docker",
+        "finetuning_method": "lora",
+        "pyt_image": "registry.example/tao-pyt@sha256:" + "a" * 64,
+        "pyt_image_digest": "sha256:" + "b" * 64,
+    }
+    with pytest.raises(ValueError, match="disagrees with pyt_image_digest"):
+        action_contract.expected_runtime_image(config, "pyt")
+
+
+def test_virtualenv_runtime_image_does_not_require_a_container_digest():
+    config = {
+        "platform": "virtualenv",
+        "finetuning_method": "lora",
+        "pyt_image": "tao-pyt-virtualenv",
+        "pyt_image_digest": None,
+    }
+    assert (
+        action_contract.expected_runtime_image(config, "pyt")
+        == config["pyt_image"]
+    )
 
 
 def test_successful_action_status_prevents_relaunch(tmp_path):
@@ -1713,6 +1872,11 @@ def test_config_approval_immutably_binds_selected_platform(tmp_path, platform):
             "--ds-image",
             DS_IMAGE,
             *(
+                ["--pyt-runtime-attestation", str(_runtime_attestation(tmp_path))]
+                if platform != "virtualenv"
+                else []
+            ),
+            *(
                 [
                     "--pyt-virtualenv",
                     str(virtualenvs["pyt"]),
@@ -1726,7 +1890,13 @@ def test_config_approval_immutably_binds_selected_platform(tmp_path, platform):
     )
     report = prepare_config.materialize(args)
     approval = json.loads(Path(report["approval_manifest"]).read_text(encoding="utf-8"))
-    assert approval["schema_version"] == "4"
+    assert approval["schema_version"] == "6"
+    assert approval["finetuning_method"] == "sft"
+    assert approval["lora_rank"] is None
+    assert approval["lora_alpha"] is None
+    assert approval["pyt_image_digest"] == (
+        None if platform == "virtualenv" else "sha256:" + "a" * 64
+    )
     assert approval["platform"] == platform
     assert approval["docker_remote"] is False
     assert approval["virtualenvs"] == (
@@ -1768,6 +1938,8 @@ def test_config_approval_immutably_binds_remote_docker_mode(tmp_path):
             PYT_IMAGE,
             "--ds-image",
             DS_IMAGE,
+            "--pyt-runtime-attestation",
+            str(_runtime_attestation(tmp_path)),
         ]
     )
     report = prepare_config.materialize(args)
