@@ -49,6 +49,7 @@ import tempfile
 import yaml
 
 from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
+from finetuning_contract import validate_peft_record
 from virtualenv_runtime import resolve_virtualenv_profiles
 
 from metric_contract import METRIC_EVIDENCE_VERSION, validate_contract
@@ -254,6 +255,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         )
     approval_version = approval.get("schema_version")
     finetuning_method = None
+    lora_rank = None
+    lora_alpha = None
     expected_approval = {
         "schema_version": approval_version,
         "workflow": WORKFLOW,
@@ -276,7 +279,7 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "pyt_image": args.pyt_image,
         "ds_image": args.ds_image,
     }
-    if approval_version == "5":
+    if approval_version in {"5", "6"}:
         finetuning_method = approval.get("finetuning_method")
         if finetuning_method not in {"lora", "sft"}:
             raise ValueError(
@@ -295,6 +298,11 @@ def _load_run_config(args: argparse.Namespace) -> dict:
                 "approval.json pyt_image_digest must bind the container runtime"
             )
         expected_approval["finetuning_method"] = finetuning_method
+        if approval_version == "6":
+            lora_rank = approval.get("lora_rank")
+            lora_alpha = approval.get("lora_alpha")
+            expected_approval["lora_rank"] = lora_rank
+            expected_approval["lora_alpha"] = lora_alpha
         expected_approval["pyt_image_digest"] = image_digest
         expected_approval["platform"] = args.platform
         expected_approval["docker_remote"] = args.docker_remote
@@ -334,7 +342,7 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         expected_approval.pop("pas_deft_bundle_sha256")
     else:
         raise ValueError(
-            "approval.json schema_version must be 2, 3, 4, or 5"
+            "approval.json schema_version must be 2, 3, 4, 5, or 6"
         )
     if approval != expected_approval:
         raise ValueError(
@@ -441,7 +449,7 @@ def _load_run_config(args: argparse.Namespace) -> dict:
             "for the shared embedding checkpoint"
         )
     finetuning_method = approval.get("finetuning_method")
-    if approval_version == "5":
+    if approval_version in {"5", "6"}:
         peft = tao.get("peft")
         if not isinstance(peft, dict):
             raise ValueError("prepared tao_spec.peft must be an object")
@@ -456,6 +464,13 @@ def _load_run_config(args: argparse.Namespace) -> dict:
             raise ValueError(
                 "prepared tao_spec PEFT configuration does not match approval.json "
                 "finetuning_method"
+            )
+        if approval_version == "6":
+            validate_peft_record(
+                peft,
+                method=finetuning_method,
+                lora_rank=lora_rank,
+                lora_alpha=lora_alpha,
             )
     text_embed_model_path = text_embed.get("model_path")
     if (
@@ -495,6 +510,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         **batch_sizes,
         "text_embed_model": text_embed_model,
         "finetuning_method": finetuning_method,
+        "lora_rank": lora_rank,
+        "lora_alpha": lora_alpha,
         "pyt_image_digest": approval.get("pyt_image_digest"),
         "continual_dataset": typed.training.continual_dataset,
         "continual_model": typed.training.continual_model,

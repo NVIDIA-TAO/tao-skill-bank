@@ -91,6 +91,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--allow-missing-path",
+        action="append",
+        default=[],
+        metavar="LABEL",
+        help=(
+            "Allow a named local --path to be an approved creation target. "
+            "Its nearest existing parent must be a writable, searchable directory, "
+            "and no existing path component may be a symlink. May be repeated."
+        ),
+    )
+    parser.add_argument(
         "--json-required-field",
         action="append",
         default=[],
@@ -427,6 +438,47 @@ def _existing_disk_probe_path(path: Path) -> Path:
     if not candidate.exists():
         raise FileNotFoundError(path)
     return candidate
+
+
+def check_local_creation_target(label: str, path: str) -> bool:
+    """Validate a missing, approved local output root without creating it."""
+    requested = Path(path).expanduser()
+    if not requested.is_absolute():
+        print(f"Local creation target must be absolute: {label}={path}")
+        return False
+    requested = Path(os.path.abspath(requested))
+    current = Path(requested.anchor)
+    for part in requested.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            print(
+                f"Local creation target has a symlink component: {label}={requested}"
+            )
+            return False
+        if not current.exists():
+            break
+        if not current.is_dir() and current != requested:
+            print(
+                f"Local creation target has a non-directory parent: "
+                f"{label}={requested}"
+            )
+            return False
+    try:
+        parent = _existing_disk_probe_path(requested)
+    except OSError as exc:
+        print(f"Local creation target cannot resolve a parent: {label}={requested}: {exc}")
+        return False
+    if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
+        print(
+            "Local creation target parent is not writable/searchable: "
+            f"{label}={requested}, parent={parent}"
+        )
+        return False
+    print(
+        "Local creation target OK: "
+        f"{label}={requested} (missing; parent={parent} is writable/searchable)"
+    )
+    return True
 
 
 def check_free_disk_space(
@@ -1749,8 +1801,10 @@ def check_local_docker(
     require_remote_docker: bool,
     target_gpu_indices: list[str],
     defer_container_probes: bool,
+    allow_missing_paths: set[str] | None = None,
 ) -> bool:
     ok = True
+    allow_missing_paths = allow_missing_paths or set()
     effective_target_gpu_indices = list(target_gpu_indices)
     docker_host = os.environ.get("DOCKER_HOST")
     remote_docker = docker_host_is_remote(docker_host)
@@ -1873,6 +1927,15 @@ def check_local_docker(
         if Path(path).exists():
             print(f"Local path OK: {label}={path}")
             maybe_report_json_record_count(label, path)
+        elif label in allow_missing_paths:
+            if label in required_json_fields:
+                print(
+                    f"Missing creation target cannot satisfy JSON input checks: {label}={path}"
+                )
+                ok = False
+                continue
+            ok = check_local_creation_target(label, path) and ok
+            continue
         else:
             print(f"Local path missing: {label}={path}")
             ok = False
@@ -1914,8 +1977,22 @@ def main() -> int:
     gpu_arch_allowlists = parse_gpu_arch_allowlists(args.gpu_arch_allowlist)
     effective_batch_limits = parse_effective_batch_limits(args.effective_batch_limit)
     min_free_disk_gb = parse_min_free_disk_gb(args.min_free_disk_gb)
+    allow_missing_paths = set(args.allow_missing_path)
+    unknown_missing_labels = allow_missing_paths - {label for label, _ in paths}
+    if unknown_missing_labels:
+        raise SystemExit(
+            "--allow-missing-path label(s) have no matching --path: "
+            + ", ".join(sorted(unknown_missing_labels))
+        )
     target_gpu_indices = parse_target_gpu_indices(args.target_gpu_index)
     name = platform["name"]
+    remote_docker_requested = docker_host_is_remote(os.environ.get("DOCKER_HOST"))
+    local_docker_paths = name in {"docker", "local-docker"} and not remote_docker_requested
+    if allow_missing_paths and not local_docker_paths:
+        raise SystemExit(
+            "--allow-missing-path is supported only for local Docker paths; "
+            "use the selected remote platform's native path contract"
+        )
 
     if name == "slurm":
         platform_ok = check_slurm(
@@ -1937,9 +2014,10 @@ def main() -> int:
             parse_sm_list(args.image_supported_sm),
             args.min_gpu_memory_gb,
             args.low_vram_threshold_gb,
-            name == "remote-docker" or bool(args.docker_host or os.environ.get("DOCKER_HOST")),
+            name == "remote-docker" or remote_docker_requested,
             target_gpu_indices,
             args.defer_container_probes,
+            allow_missing_paths,
         )
     elif name == "brev":
         platform_ok = check_brev(platform, args.skip_platform_access)

@@ -46,7 +46,10 @@ def test_preapproval_discovery_runs_without_site_packages(tmp_path):
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout)["selection_reason"] == "none-found"
+    report = json.loads(completed.stdout)
+    assert report["selection_reason"] == "none-found"
+    assert report["next_action"] == "request-archive-location"
+    assert report["required_user_prompt"] == discovery.NO_CANDIDATE_PROMPT
 
 
 def test_discovery_includes_depth_two_but_never_depth_three(tmp_path):
@@ -61,6 +64,25 @@ def test_discovery_includes_depth_two_but_never_depth_three(tmp_path):
     paths = {item["path"] for item in result["candidates"]}
     assert str(home / "pas" / "one" / "two") in paths
     assert str(home / "pas" / "one" / "other" / "three") not in paths
+
+
+def test_none_found_decision_forbids_agent_search_beyond_the_bound(tmp_path):
+    root = tmp_path / "root"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    out_of_bounds = root / "too" / "deep" / "export"
+    _pair(out_of_bounds)
+
+    result = discovery.discover(
+        workspace=workspace,
+        home=tmp_path / "home",
+        archive_root=root,
+    )
+
+    assert result["candidates"] == []
+    assert result["next_action"] == "request-archive-location"
+    assert result["required_user_prompt"] == discovery.NO_CANDIDATE_PROMPT
+    assert str(out_of_bounds) not in json.dumps(result)
 
 
 def test_discovery_does_not_follow_symlinked_directories(tmp_path):
@@ -92,6 +114,8 @@ def test_multiple_or_mixed_candidates_are_never_selected_by_search_order(tmp_pat
 
     assert result["selection"] is None
     assert result["selection_reason"] == "user-choice-required"
+    assert result["next_action"] == "request-archive-choice"
+    assert result["required_user_prompt"] == discovery.AMBIGUOUS_CANDIDATE_PROMPT
     assert {item["type"] for item in result["candidates"]} == {
         "archive-only",
         "archive-with-extracted-data",
