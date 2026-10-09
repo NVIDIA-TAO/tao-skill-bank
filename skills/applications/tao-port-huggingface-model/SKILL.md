@@ -15,7 +15,7 @@ description: >
   classification, object detection, semantic / instance / panoptic
   segmentation, zero-shot detection, and depth estimation.
 license: Apache-2.0
-compatibility: Requires Python 3.10+, NVIDIA driver, CUDA 13.0+, docker + nvidia-container-toolkit, an NGC API key (`docker login nvcr.io`), an HF_TOKEN, and access to the TAO Toolkit container images on `nvcr.io` for `tao-pytorch`, `tao-deploy`, and (optionally) `tao-dataservices` — Phase 0 asks the user for the exact image references and prepares them locally as `tao-pytorch-base:latest`, `tao-deploy-base:latest`, `tao-dataservices-base:latest`. Local clones of `tao-core`, `tao-pytorch`, `tao-deploy`,...
+compatibility: Requires Python 3.10+, NVIDIA driver, CUDA 13.0+, docker + nvidia-container-toolkit, an NGC API key (`docker login nvcr.io`), an HF_TOKEN, and access to the TAO Toolkit container images on `nvcr.io` for `tao-pytorch`, `tao-deploy`, and (optionally) `tao-dataservices` — Phase 0 asks the user for the exact image references and prepares them locally as `tao-pytorch-base:latest`, `tao-deploy-base:latest`, `tao-dataservices-base:latest`. Local clones of `tao-core`, `tao-pytorch`, `tao-deploy`, ...
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
