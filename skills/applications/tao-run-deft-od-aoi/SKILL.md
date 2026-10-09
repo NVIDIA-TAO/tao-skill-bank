@@ -55,7 +55,9 @@ scripts/prepare_deft_od_aoi_sources.py \
 `--check-only` runs without a container. Materialization must run in the pinned
 TAO Data Services image because it delegates each role's canonical COCO merge
 to the existing `annotations merge` action. The application then validates the
-merged role contracts before emitting `sources.json`.
+merged role contracts before emitting `sources.json`. Include `--gpus` when
+launching the materialization container, as documented in
+`references/source-manifest.md`.
 
 The user-facing manifest calls the held-out input `benchmark`. The second
 command maps it to the existing internal `kpi` role and emits `sources.json`

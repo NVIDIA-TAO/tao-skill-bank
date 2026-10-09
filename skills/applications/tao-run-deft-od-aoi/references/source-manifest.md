@@ -61,6 +61,12 @@ scripts/prepare_deft_od_aoi_sources.py \
   --output-dir /new/results/normalized --link-mode symlink
 ```
 
+**Every TAO Data Services task invocation needs `--gpus`, including the
+CPU-bound ones.** The current launcher calls `nvidia-smi -L` before dispatch,
+so `annotations merge` fails without GPU access even though the merge itself
+performs no GPU work. Include `--gpus` when launching the materialization
+container.
+
 Use `--link-mode copy` to create a self-contained, portable normalized dataset.
 Use the default symbolic-link mode when the normalized view should continue to
 reference the original files without duplicating image data, which saves disk
