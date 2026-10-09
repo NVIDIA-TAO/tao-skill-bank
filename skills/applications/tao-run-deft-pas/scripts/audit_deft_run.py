@@ -44,6 +44,7 @@ from command_contract import (
 )
 from deft_action_contract import (
     SUPPORTED_PLATFORMS,
+    expected_runtime_image,
     platform_evidence_error,
     remote_freshness_attested,
     validate_tao_virtualenv,
@@ -2008,7 +2009,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         status_names[field], label, config
                     )
                     required_kind = expected_image_kind(status_names[field])
-                    required_image = config.get(f"{required_kind}_image")
+                    required_image = expected_runtime_image(config, required_kind)
                     required_hf = expected_hf_forwarding(status_names[field], config)
                 except ValueError as exc:
                     errors.append(

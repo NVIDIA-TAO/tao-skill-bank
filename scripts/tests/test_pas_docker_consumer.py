@@ -306,6 +306,8 @@ def test_runtime_probe_uses_digest_image_and_exact_probe_mount(tmp_path):
     assert f"{probe_path}:/probe/check_pas_cuda_runtime.py:ro" in command
     assert f"{output.parent}:/attestation:rw" in command
     assert "--require-clip-lora" in command
+    assert "USER=tao" in command
+    assert "LOGNAME=tao" in command
 
 
 def test_failed_runtime_probe_cannot_leave_a_stale_passing_attestation(
