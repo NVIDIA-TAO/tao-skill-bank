@@ -37,7 +37,11 @@ from command_contract import (
     expected_hf_forwarding,
     expected_image_kind,
 )
-from deft_action_contract import platform_evidence_error, remote_freshness_attested
+from deft_action_contract import (
+    expected_runtime_image,
+    platform_evidence_error,
+    remote_freshness_attested,
+)
 from metric_contract import relative_metric_summary
 
 
@@ -563,7 +567,7 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         or payload.get("status") != "ok"
         or payload.get("exit_code") != 0
         or payload.get("image_kind") != expected_image_kind("train")
-        or payload.get("image") != state_config.get("pyt_image")
+        or payload.get("image") != expected_runtime_image(state_config, "pyt")
         or payload.get("command") != expected_command
         or payload.get("command_sha256") != command_sha256(expected_command)
         or payload.get("passed_hf_token")

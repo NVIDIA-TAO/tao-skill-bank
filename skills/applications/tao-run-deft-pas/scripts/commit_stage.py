@@ -41,7 +41,11 @@ from command_contract import (
     expected_image_kind,
     validate_content_bound_outputs,
 )
-from deft_action_contract import platform_evidence_error, remote_freshness_attested
+from deft_action_contract import (
+    expected_runtime_image,
+    platform_evidence_error,
+    remote_freshness_attested,
+)
 from log_stage import append_stage, next_seq
 from metric_contract import relative_metric_summary
 from pas_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
@@ -686,7 +690,7 @@ def _apply_success(
                     "evaluate", iter_label, config
                 ),
                 required_image_kind=expected_image_kind("evaluate"),
-                required_image=config["pyt_image"],
+                required_image=expected_runtime_image(config, "pyt"),
                 required_hf_forwarding=expected_hf_forwarding("evaluate", config),
                 required_platform=config["platform"],
             ),
@@ -1091,7 +1095,7 @@ def _apply_success(
             required_name="train",
             required_command=expected_container_command("train", iter_label, config),
             required_image_kind=expected_image_kind("train"),
-            required_image=config["pyt_image"],
+            required_image=expected_runtime_image(config, "pyt"),
             required_hf_forwarding=expected_hf_forwarding("train", config),
             required_platform=config["platform"],
         )
