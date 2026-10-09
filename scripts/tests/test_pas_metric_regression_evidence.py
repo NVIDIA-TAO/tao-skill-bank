@@ -273,6 +273,26 @@ def _write_metric_result(
     return csv_path, result_path
 
 
+def _write_mining_stats(results: Path, iteration: int) -> Path:
+    mining = results / f"iter_{iteration}" / "mining"
+    mining.mkdir(parents=True, exist_ok=True)
+    output = mining / "mined_stats.json"
+    output.write_text(
+        json.dumps(
+            {
+                "target_query_count": 10_000,
+                "selected_count": 10_000,
+                "selection_shortfall": 0,
+                "mode": "novel_then_fill",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return output
+
+
 def _materialize_run(tmp_path: Path) -> tuple[Path, Path]:
     workspace = tmp_path / "workspace"
     results = workspace / "results" / "run"
@@ -375,6 +395,7 @@ def test_user_facing_iteration_summary_records_regression_without_html(
         )
     )
     _write_metric_result(results, "iter1", 0.1349624854096809)
+    _write_mining_stats(results, 1)
 
     exit_code = run_pas_stage.main(
         [

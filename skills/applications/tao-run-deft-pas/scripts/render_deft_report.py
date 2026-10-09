@@ -145,6 +145,50 @@ def _phase_dir(results_dir: pathlib.Path, label: str) -> pathlib.Path | None:
     return None
 
 
+def _mining_summary_html(
+    summary_path: pathlib.Path,
+    *,
+    label: str,
+    notes: list[str],
+) -> str:
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReportError(f"cannot read {summary_path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ReportError(f"iteration summary must be an object: {summary_path}")
+    mining = payload.get("mining")
+    if mining is None:
+        return "—"
+    if not isinstance(mining, dict):
+        raise ReportError(f"iteration summary mining must be an object: {summary_path}")
+
+    counts: dict[str, int] = {}
+    for field in ("target_query_count", "selected_count", "shortfall"):
+        value = mining.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ReportError(
+                f"iteration summary mining.{field} must be a non-negative integer: "
+                f"{summary_path}"
+            )
+        counts[field] = value
+
+    selected = counts["selected_count"]
+    target = counts["target_query_count"]
+    shortfall = counts["shortfall"]
+    lines = [f"{selected} / {target}"]
+    if shortfall:
+        lines.append(f'<strong class="shortfall">{shortfall} short</strong>')
+        notes.append(
+            f"{label} mined {selected} of {target} requested samples "
+            f"({shortfall} short)."
+        )
+    mode = str(mining.get("mode") or "")
+    if mode:
+        lines.append(f"<code>{html.escape(mode)}</code>")
+    return "<br>".join(lines)
+
+
 def _format_value(value: Any) -> str:
     if value is None:
         return "—"
@@ -431,10 +475,16 @@ def _render_html(
                 continue
             artifact_paths = _collect_paths(info, base=results_dir)
             phase = _phase_dir(results_dir, label)
+            mining_html = "—"
             if phase is not None:
                 summary_path = phase / "iteration_summary.json"
                 if summary_path.exists():
                     artifact_paths.append(("iteration_summary", summary_path))
+                    mining_html = _mining_summary_html(
+                        summary_path,
+                        label=label,
+                        notes=notes,
+                    )
             artifact_paths = _dedupe_paths(artifact_paths)
             if artifact_paths:
                 items = "".join(_path_html(name, path) for name, path in artifact_paths)
@@ -454,6 +504,7 @@ def _render_html(
                     html.escape(_format_value(info.get("status"))),
                     html.escape(_format_value(info.get("stage_completed"))),
                     html.escape(metric_text),
+                    mining_html,
                     artifacts_html,
                 ]
             )
@@ -512,7 +563,7 @@ section {{ background:var(--card); border:1px solid var(--line); border-radius:1
 .banner {{ border-left:7px solid var(--accent); }} .banner.failed {{ border-left-color:var(--bad); }} .banner.success {{ border-left-color:var(--good); }} .banner.neutral {{ border-left-color:var(--warn); }}
 .status {{ font-size:22px; font-weight:750; }} .muted,.empty {{ color:var(--muted); }} .meta {{ display:flex; gap:16px; flex-wrap:wrap; margin-top:8px; }}
 .table-wrap {{ overflow:auto; }} table {{ width:100%; border-collapse:collapse; }} th,td {{ border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top; }} th {{ color:var(--muted); font-weight:650; white-space:nowrap; }}
-code {{ overflow-wrap:anywhere; }} a {{ color:var(--accent); }} ul.paths {{ margin:8px 0 0; padding-left:20px; }} .field,.best {{ font-weight:700; }} .best,.path-ok {{ color:var(--good); }} .path-missing {{ color:var(--bad); font-weight:650; }}
+code {{ overflow-wrap:anywhere; }} a {{ color:var(--accent); }} ul.paths {{ margin:8px 0 0; padding-left:20px; }} .field,.best {{ font-weight:700; }} .best,.path-ok {{ color:var(--good); }} .path-missing,.shortfall {{ color:var(--bad); font-weight:650; }}
 footer {{ color:var(--muted); margin:18px 2px; }}
 </style>
 </head>
@@ -531,7 +582,7 @@ footer {{ color:var(--muted); margin:18px 2px; }}
   {_table(["Iteration", "Value", "Δ baseline", "Δ previous", "Gate", "Evidence"], kpi_rows, empty="No successfully committed evaluate result yet.")}
 </section>
 <section><h2>Iterations and evidence</h2>
-  {_table(["Iteration", "Status", "Last stage", "KPI", "Artifacts"], iteration_rows, empty="No iteration state recorded.")}
+  {_table(["Iteration", "Status", "Last stage", "KPI", "Mining selected / requested", "Artifacts"], iteration_rows, empty="No iteration state recorded.")}
 </section>
 <section><h2>Stage timeline</h2>
   {_table(["Seq", "Iteration", "Stage", "Status", "Duration", "Summary"], timeline_rows, empty="No stage events committed yet.")}
