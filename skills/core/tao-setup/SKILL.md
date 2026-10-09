@@ -29,7 +29,20 @@ run this skill first.
 
 ## Quick Start
 
+Individual skill installs do not include the shared `scripts/` helpers. Obtain
+a complete TAO skill bank checkout at the same release ref as the installed
+skills, then verify it before using any shared helper. If the checkout is
+elsewhere, set `TAO_SKILL_BANK_PATH` to its root. Reuse a plugin-provided path
+when present. If no checkout exists, obtain it with user approval, for example
+`git clone --branch <installed-release-ref> --single-branch https://github.com/NVIDIA-TAO/tao-skill-bank.git <bank-dir>`.
+Point `TAO_SKILL_BANK_PATH` at that checkout and stop if the helper check fails.
+
 ```bash
+export TAO_SKILL_BANK_PATH="${TAO_SKILL_BANK_PATH:-$HOME/tao-skill-bank}"
+for item in versions.yaml scripts/resolve_tao_model.py scripts/resolve_tao_image.py scripts/check_tao_launch_preflight.py scripts/redact_secrets.py scripts/tao_job_record.py skills/models skills/platform; do
+  [ -e "$TAO_SKILL_BANK_PATH/$item" ] || { echo "Incomplete TAO skill bank: missing $item under $TAO_SKILL_BANK_PATH" >&2; exit 1; }
+done
+
 set -a; source /path/to/.env; set +a   # omit if already exported
 
 # 1. Host preflight — most TAO skills dispatch docker containers on a GPU host.
