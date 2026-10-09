@@ -122,6 +122,12 @@ def adopted_descendants():
         signal_pidfd(probe, 0)
     finally:
         os.close(probe)
+    children_file = Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children")
+    if not children_file.exists():
+        raise RuntimeError(
+            "Native worker ownership requires /proc task children support "
+            "(CONFIG_PROC_CHILDREN)"
+        )
     if children(os.getpid()):
         raise RuntimeError("Native worker ownership requires a dedicated process without existing children")
     libc = ctypes.CDLL(None, use_errno=True)
@@ -171,10 +177,18 @@ def send_signal(pid, start, signum):
 
 def stop_and_reap(child, collect, drain, signum):
     """Bound graceful shutdown, drain its logs, then kill/reap remaining workers."""
+    def owned_processes():
+        owned = collect()
+        # The direct CLI remains ours even if /proc descendant discovery
+        # degrades after the pre-launch capability check.
+        if (child_info := identity(child.pid)) is not None:
+            owned[child.pid] = child_info
+        return owned
+
     started = time.monotonic()
     signaled = set()
     while True:
-        owned = collect()
+        owned = owned_processes()
         force = time.monotonic() - started >= 5
         for pid, (start, state) in owned.items():
             if state != "Z" and (force or (pid, start) not in signaled):
@@ -188,7 +202,7 @@ def stop_and_reap(child, collect, drain, signum):
                 except ChildProcessError:
                     pass  # Its launcher has not exited/adopted it yet.
         drain(0.05, suppress_errors=True)
-        if not collect():
+        if not owned_processes():
             break
         if time.monotonic() - started > 10:
             raise RuntimeError("Native workers did not stop after SIGKILL")

@@ -34,8 +34,8 @@ def media_match_key(value: str) -> str:
     path = normalize_media_path(value)
     try:
         return str(Path(path).resolve(strict=True))
-    except (FileNotFoundError, NotADirectoryError):
-        # Remote-only paths can still be joined by their original spelling.
+    except (OSError, RuntimeError):
+        # Remote, unreadable, or looping paths can still be joined lexically.
         return path
 
 

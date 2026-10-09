@@ -21,7 +21,7 @@ import yaml
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 from batch_cosmos_embed_text import Cancellation, prepare  # noqa: E402
-from native_process import run_child, send_signal  # noqa: E402
+from native_process import run_child, send_signal, stop_and_reap  # noqa: E402
 from validate_cosmos_embed_output import check_completion, validate_completion  # noqa: E402
 
 
@@ -207,6 +207,28 @@ class BatchProcessLifecycleTests(unittest.TestCase):
                               stderr=subprocess.STDOUT, start_new_session=True,
                               cancellation=Cancellation())
                 popen.assert_not_called()
+
+    def test_missing_proc_children_support_fails_before_launch(self):
+        with patch("native_process.Path.exists", return_value=False):
+            with patch("native_process.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(RuntimeError, "CONFIG_PROC_CHILDREN"):
+                    run_child([sys.executable, "-c", "pass"], stdout=io.BytesIO(),
+                              stderr=subprocess.STDOUT, start_new_session=True,
+                              cancellation=Cancellation())
+                popen.assert_not_called()
+
+    def test_direct_cli_is_stopped_when_descendant_discovery_degrades(self):
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        try:
+            stop_and_reap(child, lambda: {}, lambda *_args, **_kwargs: False, signal.SIGTERM)
+            self.assertEqual(child.returncode, -signal.SIGTERM)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
 
     def test_python_without_pidfd_open_uses_real_libc_api(self):
         with patch("native_process.os.pidfd_open", None, create=True), \

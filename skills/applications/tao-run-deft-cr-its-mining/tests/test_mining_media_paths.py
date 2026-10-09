@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -94,6 +95,13 @@ class MiningMediaPathsTests(unittest.TestCase):
         missing = str(self.root / "remote-only" / "clip.mp4")
         self.assertEqual(media_match_key(missing), missing)
         self.assertEqual(media_match_key(self.video), str(self.real.resolve()))
+
+    def test_unresolvable_path_keeps_lexical_matching(self):
+        path = str(self.root / "restricted" / "clip.mp4")
+        for error in (PermissionError("root-squash"), RuntimeError("symlink loop")):
+            with self.subTest(error=type(error).__name__), \
+                    patch("prepare_nearest_neighbor_mining.Path.resolve", side_effect=error):
+                self.assertEqual(media_match_key(path), path)
 
 
 if __name__ == "__main__":
