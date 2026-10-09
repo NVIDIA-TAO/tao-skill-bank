@@ -41,6 +41,15 @@ def _write_iteration_summary(
             mined_pairs_file=str(mining / "mined_pairs.json"),
             training_checkpoint="/results/iter_4/train/best/model.pth",
             next_checkpoint_path="/results/iter_5/train/best/model.pth",
+            metric={
+                "schema_version": "1",
+                "iter_label": "iter5",
+                "metric_name": "Rank-1",
+                "query_type": "medium",
+                "op": ">=",
+                "target": None,
+                "value": 0.5,
+            },
             mining_stats_file=str(stats_path),
         )
     )
@@ -128,6 +137,12 @@ def test_iteration_summary_stage_passes_canonical_stats_path(
 ):
     iteration = tmp_path / "iter_3"
     iteration.mkdir()
+    evaluate = iteration / "evaluate"
+    evaluate.mkdir()
+    (evaluate / "metric_result.json").write_text(
+        json.dumps({"iter_label": "iter3", "value": 0.5}),
+        encoding="utf-8",
+    )
     observed: dict[str, object] = {}
 
     def fake_write_iteration_summary(**kwargs):
@@ -143,6 +158,12 @@ def test_iteration_summary_stage_passes_canonical_stats_path(
         lambda *_: SimpleNamespace(),
     )
     monkeypatch.setattr(run_pas_stage, "_iter_dir", lambda *_: iteration)
+    monkeypatch.setattr(run_pas_stage, "_state", lambda *_: {})
+    monkeypatch.setattr(
+        run_pas_stage,
+        "relative_metric_summary",
+        lambda *_args, **_kwargs: {"iter_label": "iter3", "value": 0.5},
+    )
     monkeypatch.setattr(
         run_pas_stage,
         "_training_checkpoint",
@@ -165,6 +186,7 @@ def test_iteration_summary_stage_passes_canonical_stats_path(
     assert observed["mining_stats_file"] == str(
         iteration / "mining" / "mined_stats.json"
     )
+    assert observed["metric"] == {"iter_label": "iter3", "value": 0.5}
 
 
 def test_loop_report_surfaces_mining_shortfall(tmp_path: Path):

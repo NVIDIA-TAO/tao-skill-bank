@@ -1661,6 +1661,7 @@ def write_iteration_summary(
     mined_pairs_file: str,
     training_checkpoint: str,
     next_checkpoint_path: str,
+    metric: dict[str, object],
     experiment_id: str = "",
     mining_stats_file: str = "",
 ) -> str:
@@ -1676,6 +1677,7 @@ def write_iteration_summary(
         mined_pairs_file:     Path to the final mined pairs JSON.
         training_checkpoint:  Checkpoint used as input for this iteration's training.
         next_checkpoint_path: Expected path of the best checkpoint produced by training.
+        metric:               Canonical metric value and relative-change evidence.
         experiment_id:        Optional unique ID for this experiment run.
         mining_stats_file:    Optional path to this iteration's
                                ``mined_stats.json``. When supplied, its
@@ -1699,6 +1701,7 @@ def write_iteration_summary(
         "mined_parquet": mined_parquet,
         "mined_pairs_file": mined_pairs_file,
         "eval_results_dir": experiment_dir,
+        "metric": metric,
     }
 
     if mining_stats_file:
