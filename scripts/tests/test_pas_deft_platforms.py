@@ -582,8 +582,12 @@ def test_pyt_digest_identity_survives_prepare_finalize_and_commit(
     outputs = expected_fresh_outputs("evaluate", "baseline", results)
     eval_config = phase_root / "specs" / "eval_config.yaml"
     eval_config.parent.mkdir(parents=True)
-    started_ns = time.time_ns()
     eval_config.write_text("evaluate:\n  batch_size: 1\n", encoding="utf-8")
+    # Some CI overlay filesystems expose coarser mtimes than time.time_ns().
+    # Anchor the synthetic status at the produced file's observed timestamp so
+    # this identity test preserves the real freshness invariant without a
+    # filesystem-resolution race.
+    started_ns = eval_config.stat().st_mtime_ns
     host_log = eval_config.parent / "eval-config.log"
     host_log.write_text("eval config prepared\n", encoding="utf-8")
     host_status = eval_config.parent / "eval-config.host.status.json"
