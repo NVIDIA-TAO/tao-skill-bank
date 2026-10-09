@@ -74,6 +74,11 @@ Use two intake phases:
    reason and depth bound, the directory in which a pair was found, and whether
    it is archive-only or mixed with extracted data.
 
+   The packaged discovery result is exclusive, not a hint. Obey its
+   `next_action`; when it requires user input, present its
+   `required_user_prompt` verbatim and do not perform any second filesystem
+   search or mention a path absent from its bounded `candidates`.
+
    Enumerate run-state files only at
    `<workspace>/results/run_*/deft_state.json`. Read the minimal identity fields
    and present a resume candidate only when `workflow` is exactly
@@ -132,6 +137,10 @@ options of a DEFT parameter. Do not infer an undocumented field or bypass its
 metadata constraint. Config preparation, initialization, audit, and every
 host-side stage validate the materialized bundle through that same schema;
 the `pas` YAML section is validated through the typed PAS configuration model.
+The fixed LoRA adapter shape is separately typed in
+`scripts/finetuning_contract.py` because it materializes into the TAO spec,
+not `deft_config.yaml`; approval, state, audit, and reporting bind its rank and
+alpha.
 
 If required information remains missing after full discovery, ask one
 consolidated follow-up. A normal invocation should need no knowledge of stage
@@ -144,7 +153,9 @@ Perform only read-only discovery before approval: resolve paths, inspect file
 metadata and archives, check process-environment variable presence, inspect
 local images, inspect GPUs, and audit an existing run. Credentials come only
 from the launching process environment; never open or source a credential file,
-and never print, grep, copy, or echo a credential value. If a required variable
+and never print, grep, copy, or echo a credential value. Use only the packaged
+`scripts/check_pas_credentials.py` presence checker for credential discovery;
+do not author an environment-inspection command. If a required variable
 is absent, tell the user which name
 to export in the shell that launches the agent; never ask for its value in
 chat. Do not inspect credential-file metadata when no credential is needed. If

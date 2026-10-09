@@ -28,6 +28,7 @@ import prepare_deft_config as prepare  # noqa: E402
 import render_deft_report  # noqa: E402
 import run_pas_stage  # noqa: E402
 from command_contract import expected_fresh_outputs  # noqa: E402
+from finetuning_contract import LoraAdapterParameters  # noqa: E402
 from pas_deft.config import (  # noqa: E402
     DeftExperimentConfig,
     PasDeftConfig,
@@ -159,6 +160,9 @@ def _init_command(results: Path, dataset: Path, approval: dict) -> list[str]:
 
 
 def test_lora_is_default_and_sft_explicitly_disables_peft(tmp_path):
+    fields = {field.name: field for field in dataclasses.fields(LoraAdapterParameters)}
+    assert fields["rank"].metadata["valid_min"] == 1
+    assert fields["alpha"].metadata["description"]
     _, results, _ = _materialize(tmp_path / "lora")
     lora = _yaml(results / "config" / "tao_spec.yaml")
     assert lora["peft"]["enabled"] is True
@@ -166,6 +170,12 @@ def test_lora_is_default_and_sft_explicitly_disables_peft(tmp_path):
     assert lora["peft"]["vision"]["target_modules"] == [
         "q_proj", "k_proj", "v_proj", "out_proj"
     ]
+    lora_approval = json.loads(
+        (results / "config" / "approval.json").read_text(encoding="utf-8")
+    )
+    assert lora_approval["schema_version"] == "6"
+    assert lora_approval["lora_rank"] == 8
+    assert lora_approval["lora_alpha"] == 16
 
     _, results, _ = _materialize(
         tmp_path / "sft", "--finetuning-method", "sft"
@@ -174,6 +184,11 @@ def test_lora_is_default_and_sft_explicitly_disables_peft(tmp_path):
     assert sft["peft"] == {"enabled": False}
     assert sft["model"]["freeze_vision_encoder"] is False
     assert sft["model"]["freeze_text_encoder"] is False
+    sft_approval = json.loads(
+        (results / "config" / "approval.json").read_text(encoding="utf-8")
+    )
+    assert sft_approval["lora_rank"] is None
+    assert sft_approval["lora_alpha"] is None
 
 
 def test_lora_stops_before_config_without_matching_image_attestation(tmp_path):
@@ -195,6 +210,25 @@ def test_lora_rejects_attestation_for_another_image_before_config(tmp_path):
     with pytest.raises(ValueError, match="does not pass for --pyt-image"):
         prepare.materialize(prepare._parser().parse_args(argv))  # noqa: SLF001
     assert not (results / "config").exists()
+    assert not (results / "deft_state.json").exists()
+
+
+def test_lora_approval_shape_must_match_both_materialized_towers(tmp_path):
+    _, results, dataset = _materialize(tmp_path)
+    approval_path = results / "config" / "approval.json"
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval["lora_rank"] = 4
+    approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8")
+
+    initialized = subprocess.run(
+        _init_command(results, dataset, approval),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert initialized.returncode == 2
+    assert "rank/alpha record does not match" in initialized.stderr
     assert not (results / "deft_state.json").exists()
 
 
@@ -375,6 +409,8 @@ def test_test_split_survives_state_initialization_and_audit(tmp_path):
     assert state["config"]["queries_per_slice"] == 50
     assert state["config"]["text_embed_model"] == "SigLIP"
     assert state["config"]["finetuning_method"] == "lora"
+    assert state["config"]["lora_rank"] == 8
+    assert state["config"]["lora_alpha"] == 16
     assert state["config"]["pyt_image_digest"] == "sha256:" + "a" * 64
     assert state["config"]["visualize"] is False
     assert state["config"]["visualize_embeddings"] is False
@@ -418,7 +454,11 @@ def test_report_renders_the_durable_finetuning_method(tmp_path):
             "op": ">=",
             "target": None,
         },
-        "config": {"finetuning_method": "lora"},
+        "config": {
+            "finetuning_method": "lora",
+            "lora_rank": 8,
+            "lora_alpha": 16,
+        },
         "iterations": {},
     }
     document, _, _ = render_deft_report._render_html(  # noqa: SLF001
@@ -435,6 +475,8 @@ def test_report_renders_the_durable_finetuning_method(tmp_path):
     )
     assert "finetuning_method" in document
     assert ">lora<" in document
+    assert "lora_rank" in document and ">8<" in document
+    assert "lora_alpha" in document and ">16<" in document
 
 
 def test_schema_v3_approval_remains_valid_as_local_docker(tmp_path):
@@ -446,6 +488,8 @@ def test_schema_v3_approval_remains_valid_as_local_docker(tmp_path):
     approval.pop("docker_remote")
     approval.pop("virtualenvs")
     approval.pop("finetuning_method")
+    approval.pop("lora_rank")
+    approval.pop("lora_alpha")
     approval.pop("pyt_image_digest")
     approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8")
 
@@ -473,6 +517,42 @@ def test_schema_v3_approval_remains_valid_as_local_docker(tmp_path):
     )
     assert audit.returncode == 0, audit.stderr
     assert "DEFT_RUN_STATUS=IN_PROGRESS" in audit.stdout
+
+
+def test_schema_v5_approval_remains_valid_without_new_lora_record_fields(tmp_path):
+    _, results, dataset = _materialize(tmp_path)
+    approval_path = results / "config" / "approval.json"
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval["schema_version"] = "5"
+    approval.pop("lora_rank")
+    approval.pop("lora_alpha")
+    approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8")
+
+    initialized = subprocess.run(
+        _init_command(results, dataset, approval),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert initialized.returncode == 0, initialized.stderr
+    state = json.loads((results / "deft_state.json").read_text(encoding="utf-8"))
+    assert state["config"]["finetuning_method"] == "lora"
+    assert state["config"]["lora_rank"] is None
+    assert state["config"]["lora_alpha"] is None
+    audited = subprocess.run(
+        [
+            sys.executable,
+            str(PAS_SCRIPTS / "audit_deft_run.py"),
+            "--results-dir",
+            str(results),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert audited.returncode == 0, audited.stderr
+    assert "DEFT_RUN_STATUS=IN_PROGRESS" in audited.stdout
 
 
 @pytest.mark.parametrize(

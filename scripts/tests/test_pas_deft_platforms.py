@@ -1890,8 +1890,10 @@ def test_config_approval_immutably_binds_selected_platform(tmp_path, platform):
     )
     report = prepare_config.materialize(args)
     approval = json.loads(Path(report["approval_manifest"]).read_text(encoding="utf-8"))
-    assert approval["schema_version"] == "5"
+    assert approval["schema_version"] == "6"
     assert approval["finetuning_method"] == "sft"
+    assert approval["lora_rank"] is None
+    assert approval["lora_alpha"] is None
     assert approval["pyt_image_digest"] == (
         None if platform == "virtualenv" else "sha256:" + "a" * 64
     )

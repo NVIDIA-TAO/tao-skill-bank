@@ -27,6 +27,14 @@ EXTRACTED_MARKERS = (
     "rebuild.py",
     "train_pairs.json",
 )
+NO_CANDIDATE_PROMPT = (
+    "No PAS archive pair was found within the approved search bounds. "
+    "Provide the archive root or the exact paths to images_raw.tar and meta.tar.gz."
+)
+AMBIGUOUS_CANDIDATE_PROMPT = (
+    "Multiple PAS archive candidates are within the approved search bounds. "
+    "Select one reported archive root or provide the exact archive file paths."
+)
 
 
 @dataclass(frozen=True)
@@ -141,6 +149,8 @@ def _explicit_pair(images: pathlib.Path, metadata: pathlib.Path) -> dict:
         "candidates": [asdict(candidate)],
         "selection": str(images.parent),
         "selection_reason": "user-supplied",
+        "next_action": "use-selected-archive-pair",
+        "required_user_prompt": None,
         "broad_home_repository_search": False,
     }
 
@@ -194,17 +204,25 @@ def discover(
     if len(ordered) == 1 and len(archive_only) == 1:
         selection = archive_only[0].path
         selection_reason = "sole-archive-only"
+        next_action = "use-selected-archive-pair"
+        required_user_prompt = None
     elif not ordered:
         selection = None
         selection_reason = "none-found"
+        next_action = "request-archive-location"
+        required_user_prompt = NO_CANDIDATE_PROMPT
     else:
         selection = None
         selection_reason = "user-choice-required"
+        next_action = "request-archive-choice"
+        required_user_prompt = AMBIGUOUS_CANDIDATE_PROMPT
     return {
         "search_roots": [asdict(item) for item in reports],
         "candidates": [asdict(item) for item in ordered],
         "selection": selection,
         "selection_reason": selection_reason,
+        "next_action": next_action,
+        "required_user_prompt": required_user_prompt,
         "broad_home_repository_search": False,
     }
 
