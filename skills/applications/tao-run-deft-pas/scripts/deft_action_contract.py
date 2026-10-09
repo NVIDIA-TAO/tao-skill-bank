@@ -65,6 +65,49 @@ class ActionContext:
     fresh_outputs: list[pathlib.Path]
 
 
+def expected_runtime_image(config: dict[str, Any], image_kind: str) -> str:
+    """Resolve the immutable runtime image recorded by a PAS action.
+
+    The approved PyTorch image remains a human-readable tag in the run config,
+    while container actions execute and record the attested RepoDigest.  Keep
+    that translation in one contract helper so prepare, commit, audit, and
+    checkpoint publication all validate the same identity.
+    """
+    if image_kind not in IMAGE_KINDS:
+        raise ValueError(f"unsupported image kind: {image_kind!r}")
+    image_key = "pyt_image" if image_kind == "pyt" else "ds_image"
+    image = str(config.get(image_key, "")).strip()
+    if not image:
+        raise ValueError(f"state.config.{image_key} must be a non-empty approved image")
+    if (
+        image_kind != "pyt"
+        or config.get("platform") == "virtualenv"
+        or config.get("finetuning_method") is None
+    ):
+        return image
+
+    digest = config.get("pyt_image_digest")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise ValueError(
+            "state.config.pyt_image_digest must bind the approved PyTorch image"
+        )
+    reference, separator, reference_digest = image.rpartition("@")
+    if separator:
+        if reference_digest != digest:
+            raise ValueError(
+                "state.config.pyt_image digest disagrees with pyt_image_digest"
+            )
+        image = reference
+    repository = image
+    last_slash = repository.rfind("/")
+    last_colon = repository.rfind(":")
+    if last_colon > last_slash:
+        repository = repository[:last_colon]
+    if not repository:
+        raise ValueError("state.config.pyt_image must include an image repository")
+    return f"{repository}@{digest}"
+
+
 def atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
     """Write JSON atomically without leaving a partial evidence file."""
     import tempfile
@@ -283,32 +326,9 @@ def validate_action(
     config = state.get("config")
     if not isinstance(config, dict):
         raise ValueError("state.config must be an object")
-    if image_kind not in IMAGE_KINDS:
-        raise ValueError(f"unsupported image kind: {image_kind!r}")
-    image_key = "pyt_image" if image_kind == "pyt" else "ds_image"
-    image = str(config.get(image_key, "")).strip()
-    if not image:
-        raise ValueError(f"state.config.{image_key} must be a non-empty approved image")
+    image = expected_runtime_image(config, image_kind)
     workspace, dataset_root, config_dir = validate_runtime_paths(results_dir, config)
     platform = str(config["platform"])
-    if (
-        image_kind == "pyt"
-        and platform != "virtualenv"
-        and config.get("finetuning_method") is not None
-    ):
-        digest = config.get("pyt_image_digest")
-        if not isinstance(digest, str) or not re.fullmatch(
-            r"sha256:[0-9a-f]{64}", digest
-        ):
-            raise ValueError(
-                "state.config.pyt_image_digest must bind the approved PyTorch image"
-            )
-        repository = image.split("@", 1)[0]
-        last_slash = repository.rfind("/")
-        last_colon = repository.rfind(":")
-        if last_colon > last_slash:
-            repository = repository[:last_colon]
-        image = f"{repository}@{digest}"
     patches_dir = pathlib.Path(__file__).resolve().parent.parent / "patches"
     if not patches_dir.is_dir():
         raise ValueError(f"container compatibility patches are missing: {patches_dir}")
