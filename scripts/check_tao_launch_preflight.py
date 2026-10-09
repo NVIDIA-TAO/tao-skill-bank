@@ -1986,9 +1986,8 @@ def main() -> int:
         )
     target_gpu_indices = parse_target_gpu_indices(args.target_gpu_index)
     name = platform["name"]
-    local_docker_paths = name in {"docker", "local-docker"} and not docker_host_is_remote(
-        os.environ.get("DOCKER_HOST")
-    )
+    remote_docker_requested = docker_host_is_remote(os.environ.get("DOCKER_HOST"))
+    local_docker_paths = name in {"docker", "local-docker"} and not remote_docker_requested
     if allow_missing_paths and not local_docker_paths:
         raise SystemExit(
             "--allow-missing-path is supported only for local Docker paths; "
@@ -2015,7 +2014,7 @@ def main() -> int:
             parse_sm_list(args.image_supported_sm),
             args.min_gpu_memory_gb,
             args.low_vram_threshold_gb,
-            name == "remote-docker" or bool(args.docker_host or os.environ.get("DOCKER_HOST")),
+            name == "remote-docker" or remote_docker_requested,
             target_gpu_indices,
             args.defer_container_probes,
             allow_missing_paths,

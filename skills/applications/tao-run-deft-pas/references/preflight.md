@@ -204,9 +204,13 @@ Run this section only after required intake is resolved.
      done
    fi
    CREATION_TARGET_ARGS=()
-   if [[ "$PLATFORM" == docker && -z "${DOCKER_HOST:-}" ]]; then
-     CREATION_TARGET_ARGS+=(--allow-missing-path workspace)
-   fi
+   case "${DOCKER_HOST:-}" in
+     ""|unix://*|npipe://*|/var/run/docker.sock)
+       if [[ "$PLATFORM" == docker ]]; then
+         CREATION_TARGET_ARGS+=(--allow-missing-path workspace)
+       fi
+       ;;
+   esac
    "${TAO_SKILL_BANK_PATH:?}/scripts/check_tao_launch_preflight.py" \
      --skill-bank "$TAO_SKILL_BANK_PATH" --platform "$PLATFORM" \
      --container-image "$PAS_PYT_IMAGE" \

@@ -3,6 +3,7 @@
 
 """Focused tests for launch-preflight GPU architecture handling."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -216,6 +217,56 @@ def test_local_docker_accepts_missing_approved_creation_target(tmp_path, capsys)
     )
     assert not target.exists()
     assert "Local creation target OK" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("docker_host", "is_local"),
+    [
+        (None, True),
+        ("unix:///var/run/docker.sock", True),
+        ("/var/run/docker.sock", True),
+        ("npipe:////./pipe/docker_engine", True),
+        ("ssh://gpu.example", False),
+        ("tcp://gpu.example:2376", False),
+    ],
+)
+def test_creation_target_cli_uses_docker_endpoint_scope(
+    tmp_path, docker_host, is_local
+):
+    target = tmp_path / "new" / "workspace"
+    environment = os.environ.copy()
+    if docker_host is None:
+        environment.pop("DOCKER_HOST", None)
+    else:
+        environment["DOCKER_HOST"] = docker_host
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(Path(preflight.__file__)),
+            "--skill-bank",
+            str(Path(__file__).resolve().parents[2]),
+            "--platform",
+            "docker",
+            "--path",
+            f"workspace={target}",
+            "--allow-missing-path",
+            "workspace",
+            "--skip-platform-access",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    if is_local:
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert "Local creation target OK" in completed.stdout
+    else:
+        assert completed.returncode != 0
+        assert "supported only for local Docker paths" in completed.stderr
+    assert not target.exists()
 
 
 def test_missing_creation_target_rejects_symlinked_parent(tmp_path, capsys):
