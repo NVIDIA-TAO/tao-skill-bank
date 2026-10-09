@@ -691,6 +691,7 @@ def iteration_summary(args: argparse.Namespace) -> dict[str, Any]:
             mined_pairs_file=str(current / "mining" / "mined_pairs.json"),
             training_checkpoint=_training_checkpoint(cfg, args.iter_num),
             next_checkpoint_path=f"/results/iter_{args.iter_num}/train/best/clip_best_val_t2i_mAP.pth",
+            mining_stats_file=str(current / "mining" / "mined_stats.json"),
         )
     ).resolve()
     _require([output])
