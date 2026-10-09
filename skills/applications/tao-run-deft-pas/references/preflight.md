@@ -40,7 +40,12 @@ questions:
    When the user supplied exact file paths, pass `--images-archive` and
    `--metadata-archive` instead of `--archive-root`. This command, rather than
    an agent-authored filesystem search, is authoritative for depth and symlink
-   handling.
+   handling. Its `next_action` is mandatory. When it returns
+   `request-archive-location` or `request-archive-choice`, present
+   `required_user_prompt` verbatim and stop archive discovery. After invoking
+   this command, do not run `find`, `fd`, `locate`, `rg --files`, recursive
+   `ls`, glob/rglob, `os.walk`, or any other filesystem search for PAS
+   archives. Never name, suggest, or offer a path absent from its `candidates`.
 
    - If the user supplied both archive file paths, require the exact names
      `images_raw.tar` and `meta.tar.gz`, a shared non-symlink parent, and two
@@ -198,10 +203,15 @@ Run this section only after required intake is resolved.
        TARGET_GPU_ARGS+=(--target-gpu-index "$GPU_ID")
      done
    fi
+   CREATION_TARGET_ARGS=()
+   if [[ "$PLATFORM" == docker && -z "${DOCKER_HOST:-}" ]]; then
+     CREATION_TARGET_ARGS+=(--allow-missing-path workspace)
+   fi
    "${TAO_SKILL_BANK_PATH:?}/scripts/check_tao_launch_preflight.py" \
      --skill-bank "$TAO_SKILL_BANK_PATH" --platform "$PLATFORM" \
      --container-image "$PAS_PYT_IMAGE" \
-     --path "workspace=$WORKSPACE" --min-free-disk-gb workspace=256 \
+     --path "workspace=$WORKSPACE" "${CREATION_TARGET_ARGS[@]}" \
+     --min-free-disk-gb workspace=256 \
      --gpu-min-count "$NUM_GPUS" "${TARGET_GPU_ARGS[@]}" \
      --defer-container-probes
    ```
@@ -225,7 +235,26 @@ Run this section only after required intake is resolved.
    platform. Image acquisition and CUDA jobs remain planned actions until
    approval.
 5. Check only whether credentials required by the selected platform and model
-   exist in the current process environment. Never open or source a credential
+   exist in the current process environment. Use the packaged presence-only
+   checker; never improvise a shell expansion or inspect the environment:
+
+   ```bash
+   CREDENTIAL_ARGS=(--optional HF_TOKEN)
+   if [ "$IMAGE_ACQUISITION_REQUIRES_NGC" = true ]; then
+     CREDENTIAL_ARGS+=(--required NGC_KEY)
+   else
+     CREDENTIAL_ARGS+=(--optional NGC_KEY)
+   fi
+   python3 "$SKILL_ROOT/scripts/check_pas_credentials.py" \
+     "${CREDENTIAL_ARGS[@]}"
+   ```
+
+   Add the selected platform's required environment-variable names with
+   `--required` and conditionally relevant names with `--optional`. The checker
+   reports only each name plus `set` or `missing` and exits nonzero when a
+   required variable is absent. Do not run `env`, `printenv`, `set`, `grep` on
+   environment output, `echo` with a variable expansion, or any command whose
+   output can contain a credential value. Never open or source a credential
    file, and never print, grep, copy, inspect, or echo a credential value. This
    can include `NGC_KEY`, `HF_TOKEN`,
    `BREV_API_TOKEN`, SLURM connection variables, Kubernetes context variables,
@@ -282,6 +311,7 @@ hardware, pool size, and accumulated data can change this substantially.
 | metric | `Rank-1`, query type `medium`, operator `>=`, no target |
 | training epochs | `1` per iteration |
 | fine-tuning method | `LoRA`; ask once and allow explicit `full-parameter SFT` selection |
+| LoRA adapter shape | rank `8`, alpha `16`; fixed by the typed fine-tuning contract and recorded for LoRA runs |
 | GPU shape | `num_gpus=1`, `gpu_ids=0` |
 | mining | budget `10000`, top-N `25`, cosine distance |
 | gap generation | `256` queries per slice; query types `easy,medium` |
@@ -325,6 +355,7 @@ Run
         max_iterations=<N> (source=<user | derived from approved time budget>)
   train: epochs=<N> (source=<user | template | default>);
          method=<full-parameter SFT | LoRA> (source=<user | default>);
+         lora_rank=<8 | n/a>; lora_alpha=<16 | n/a> (source=fixed by workflow);
          num_gpus=<N> (source=<user | default>);
          gpu_ids=<list> (source=<user | default>)
   mining: budget=<N> (source=<user | template | default>);
@@ -446,8 +477,9 @@ For a new run, perform the following in order.
    hashes, use a source checkout as runtime, or weaken the acquisition
    boundary. Never expose credentials or silently substitute a platform.
 
-2. Rerun the shared checker with the same arguments except for
-   `--defer-container-probes`, then run an image-specific CUDA framework smoke
+2. Rerun the shared checker with the same arguments, including the local-Docker
+   `CREATION_TARGET_ARGS`, except for `--defer-container-probes`, then run an
+   image-specific CUDA framework smoke
    using the exact approved resource
    shape. GPU enumeration or `nvidia-smi` inside a container is not sufficient:
    it can succeed when the image's PyTorch/CUDA build cannot initialize against

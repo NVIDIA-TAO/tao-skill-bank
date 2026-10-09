@@ -196,6 +196,40 @@ def test_free_disk_requirement_passes_for_existing_parent(monkeypatch, tmp_path,
     assert "Free-disk OK" in capsys.readouterr().out
 
 
+def test_local_docker_accepts_missing_approved_creation_target(tmp_path, capsys):
+    target = tmp_path / "new" / "workspace"
+    assert preflight.check_local_docker(
+        [("workspace", str(target))],
+        {},
+        20,
+        True,
+        None,
+        "ubuntu:22.04",
+        False,
+        [],
+        None,
+        50.0,
+        False,
+        [],
+        True,
+        {"workspace"},
+    )
+    assert not target.exists()
+    assert "Local creation target OK" in capsys.readouterr().out
+
+
+def test_missing_creation_target_rejects_symlinked_parent(tmp_path, capsys):
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+
+    assert not preflight.check_local_creation_target(
+        "workspace", str(linked_parent / "workspace")
+    )
+    assert "symlink component" in capsys.readouterr().out
+
+
 def test_free_disk_requirement_rejects_insufficient_capacity(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         preflight.shutil,

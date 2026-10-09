@@ -56,6 +56,7 @@ from metric_contract import (
     relative_metric_summary,
     validate_contract,
 )
+from finetuning_contract import validate_peft_record
 from pas_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
 from parse_pas_metrics import build_result
 
@@ -1144,6 +1145,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     )
 
             approval_path = config_dir_path / "approval.json"
+            approval = None
             approval_value = config.get("approval_manifest")
             if (
                 not approval_value
@@ -1181,10 +1183,13 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         "pyt_image": config.get("pyt_image"),
                         "ds_image": config.get("ds_image"),
                     }
-                    if approval_version == "5":
+                    if approval_version in {"5", "6"}:
                         expected_approval["finetuning_method"] = config.get(
                             "finetuning_method"
                         )
+                        if approval_version == "6":
+                            expected_approval["lora_rank"] = config.get("lora_rank")
+                            expected_approval["lora_alpha"] = config.get("lora_alpha")
                         expected_approval["pyt_image_digest"] = config.get(
                             "pyt_image_digest"
                         )
@@ -1226,8 +1231,8 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         and config.get("virtualenv") is None
                     ):
                         errors.append(
-                            "approval manifest schema must be version 5; versions 2, "
-                            "3, and 4 are accepted for legacy runs"
+                            "approval manifest schema must be version 6; versions 2, "
+                            "3, 4, and 5 are accepted for legacy runs"
                         )
                     else:
                         expected_approval.pop("pas_deft_bundle_sha256")
@@ -1309,6 +1314,21 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         tao_optim = _config_section(
                             tao_train, "optim", "tao_spec.train", errors
                         )
+                        approval_version_for_peft = (
+                            approval.get("schema_version")
+                            if isinstance(approval, dict)
+                            else None
+                        )
+                        if approval_version_for_peft == "6":
+                            try:
+                                validate_peft_record(
+                                    tao_payload.get("peft"),
+                                    method=config.get("finetuning_method"),
+                                    lora_rank=config.get("lora_rank"),
+                                    lora_alpha=config.get("lora_alpha"),
+                                )
+                            except ValueError as exc:
+                                errors.append(f"approved PEFT contract is invalid: {exc}")
                         eval_pairs_path = pathlib.Path(
                             typed_config.pas.eval_pairs_source_file
                             if typed_config is not None

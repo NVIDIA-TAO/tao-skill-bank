@@ -26,6 +26,7 @@ import yaml
 
 from metric_contract import validate_contract
 from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
+from finetuning_contract import expected_lora_record, materialize_peft
 from virtualenv_runtime import resolve_virtualenv_profiles
 
 
@@ -417,24 +418,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     tao.setdefault("model", {}).update(
         {"freeze_vision_encoder": False, "freeze_text_encoder": False}
     )
-    if args.finetuning_method == "lora":
-        tower = {
-            "mode": "lora",
-            "target_modules": ["q_proj", "k_proj", "v_proj", "out_proj"],
-            "num_last_blocks": 3,
-            "rank": 8,
-            "alpha": 16,
-            "dropout": 0.05,
-        }
-        tao["peft"] = {
-            "enabled": True,
-            "method": "lora",
-            "train_logit_calibration": True,
-            "vision": dict(tower),
-            "text": dict(tower),
-        }
-    else:
-        tao["peft"] = {"enabled": False}
+    tao["peft"] = materialize_peft(args.finetuning_method)
     tao["dataset"].setdefault("train", {}).update(
         {"batch_size": args.train_batch_size}
     )
@@ -477,10 +461,11 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     from pas_deft.config import PasDeftConfig
 
     PasDeftConfig(str(config_dir / "deft_config.yaml"))
+    lora_rank, lora_alpha = expected_lora_record(args.finetuning_method)
     _atomic_json(
         config_dir / "approval.json",
         {
-            "schema_version": "5",
+            "schema_version": "6",
             "workflow": "tao-run-deft-pas",
             "platform": args.platform,
             "docker_remote": args.docker_remote,
@@ -498,6 +483,8 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "checksums_file": str(checksums_file) if checksums_file else None,
             "requires_hf_token": args.requires_hf_token,
             "finetuning_method": args.finetuning_method,
+            "lora_rank": lora_rank,
+            "lora_alpha": lora_alpha,
             "max_iterations": args.max_iterations,
             "host_gpu_ids": host_gpu_ids,
             "container_gpu_ids": container_gpu_ids,
@@ -528,6 +515,8 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "requires_hf_token": args.requires_hf_token,
         "finetuning_method": args.finetuning_method,
+        "lora_rank": lora_rank,
+        "lora_alpha": lora_alpha,
         "pyt_image_digest": (
             pyt_attestation.image_digest if pyt_attestation is not None else None
         ),
