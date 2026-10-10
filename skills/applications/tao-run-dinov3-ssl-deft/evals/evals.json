@@ -19,12 +19,13 @@
     "question": "Use the DINOv3 SSL DEFT workflow with my unlabeled AOI targets. Explain the user interfaces and the two shipped strategies without running anything.",
     "expected_skill": "tao-run-dinov3-ssl-deft",
     "expected_script": null,
-    "ground_truth": "Select tao-run-dinov3-ssl-deft, describe the conversational skill, YAML/CLI, and bare Python layers, and identify GRIT-score and multi-task round-robin as the two first-class strategies over one concrete controller.",
+    "ground_truth": "Select tao-run-dinov3-ssl-deft, describe the conversational skill, YAML/CLI, and bare Python layers, and identify GRIT-score and multi-task round-robin as the two strategies over one concrete controller. GRIT-score has a built-in scorer; multi-task round-robin needs the user's own score adapter because DS ships none.",
     "expected_behavior": [
       "Identifies tao-run-dinov3-ssl-deft",
       "Describes conversational, config/CLI, and Python interfaces",
       "States that all interfaces call one concrete controller",
       "Names grit_score and multi_task_round_robin",
+      "States that multi_task_round_robin needs a user-supplied score adapter",
       "Does not claim GRIT is calibrated uncertainty",
       "Does not run commands"
     ]

@@ -368,11 +368,15 @@ def run(args):
     for name in paths:
         results = output / name
         results.mkdir()
+        (results / ".home").mkdir()
         container = "deft-ci-" + uuid.uuid4().hex
         argv = ["docker", "run", "--rm", "--pull=never", "--name", container,
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "--gpus", args.gpus, "--shm-size=8g", "--entrypoint", "python",
                 "-e", "PYTHONDONTWRITEBYTECODE=1",
+                # Host UIDs are often absent from the image's passwd; torch's
+                # getpass and caches need a name and a writable home.
+                "-e", "USER=tao", "-e", "LOGNAME=tao", "-e", "HOME=/results/.home",
                 "--mount", f"type=bind,src={inputs},dst=/inputs,readonly",
                 "--mount", f"type=bind,src={results},dst=/results",
                 image_ids[images[name]], "/inputs/driver.py", "inside", "--repo", name, "--suite", args.suite]

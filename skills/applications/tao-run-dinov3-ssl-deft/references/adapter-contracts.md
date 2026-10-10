@@ -17,7 +17,10 @@ processor snapshot for source and target and keep their embeddings fixed across 
 Prepare separate source and target Parquets with unique absolute `filepath`,
 globally unique `sample_id`, matching `path`, and `storage_type: file` columns.
 Targets also need `task` and `role` (`query` or `reference`), with reference rows
-for each query task. Preserve the intended source/query/reference splits.
+for each query task. For `grit-score`, each task needs more than `settling_k`
+(default 50) references and more than the largest `view_ks` value (default 32)
+queries; `validate` rejects smaller cohorts. Preserve the intended
+source/query/reference splits.
 The producer preserves extra columns; duplicate filepaths must be removed before
 its metadata join. Archive members require an explicitly prepared file view.
 
@@ -81,6 +84,13 @@ This gives image/archive provenance without materializing or hashing every
 individual image in a large pool.
 
 ## Task Scoring
+
+DS ships a scorer only for GRIT. `multi-task-round-robin` needs the user's own
+score adapter, because weakness comes from the user's task heads and labels.
+The packaged recipe names the placeholder `/path/to/customer_score_adapter`;
+every command that loads the config (`validate`, `plan`, `run`, `resume`, ...)
+rejects it. If the user has no adapter that meets
+the contract below, offer `grit-score` instead.
 
 Custom score adapters must declare `actions.score.implementation_files`; custom
 evaluators must declare `actions.evaluate.implementation_files`. These lists are
