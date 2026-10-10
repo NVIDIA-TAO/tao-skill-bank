@@ -22,8 +22,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install pre-commit
-        run: pip install pre-commit
+      - name: Install test dependencies
+        run: pip install pre-commit pytest
+
+      - name: Require a new plugin cache key for PAS skill changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python scripts/check_pas_plugin_version.py --base-ref "${BASE_SHA}"
+
+      - name: Run PAS reopened-bug regression tests
+        run: |
+          python -m pytest -q \
+            scripts/tests/test_pas_control_prereqs.py \
+            scripts/tests/test_pas_plugin_version.py \
+            scripts/tests/test_pas_input_discovery.py \
+            scripts/tests/test_pas_skill_routing.py \
+            scripts/tests/test_release_install_contract.py
 
       - name: Run pre-commit on the pull request's changed files
         env:

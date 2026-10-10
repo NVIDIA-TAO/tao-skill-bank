@@ -76,6 +76,14 @@ def test_pas_preflight_keeps_prerequisites_and_side_effect_gates_executable():
     assert "container-starting schema/capability probe only after approval" in skill
     for prerequisite in ("python3-venv", "python3-pip", "jsonschema"):
         assert prerequisite in preflight
+    assert "with stdlib venv/ensurepip and pip for control" in skill
+    assert "check_pas_control_prereqs.py" in preflight
+    assert preflight.index("check_pas_control_prereqs.py") < preflight.index(
+        "## Approval summary"
+    )
+    assert "control prerequisites:" in preflight
+    assert "status=<ready | blocked>" in preflight
+    assert "do not ask for run approval" in preflight
     assert '--min-free-disk-gb workspace=256' in preflight
     assert "--defer-container-probes" in preflight
     assert "discover_pas_inputs.py" in preflight
@@ -90,3 +98,16 @@ def test_pas_preflight_keeps_prerequisites_and_side_effect_gates_executable():
     assert 'echo "$NGC_KEY"' not in preflight
     assert "env | grep" not in preflight
     assert "printenv" in preflight and "Do not run" in preflight
+
+
+def test_pas_archive_discovery_is_the_first_and_only_root_inspection():
+    root = REPO_ROOT / "skills/applications/tao-run-deft-pas"
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    preflight = (root / "references/preflight.md").read_text(encoding="utf-8")
+
+    assert "first and only operation allowed" in skill
+    assert "Before it runs" in skill and "After it runs" in skill
+    assert "must be the first and only" in preflight
+    assert "before the command" in preflight
+    assert "Before or after\n   this command" in preflight
+    assert "including in a\n   prompt suggestion" in preflight
