@@ -24,6 +24,15 @@ filesystem semantics merely because the platform name is `docker`. Before full
 preflight, do only bounded, lightweight discovery that can reduce user
 questions:
 
+**Archive capability boundary:** from the moment the request supplies a data
+or archive location, do not inspect or enumerate that location with any tool.
+The `discover_pas_inputs.py` command in step 2 must be the first and only
+operation that reads its contents. In particular, do not run `find`, `fd`,
+`locate`, `rg --files`, `ls`, Glob, Read, `os.walk`, `rglob`, or an
+agent-authored Python probe before the command. The same prohibition remains
+after it returns. Passing the supplied path lexically as an argument is not an
+inspection.
+
 1. Resolve an explicitly named workspace or the conventional `~/workspace`
    candidate without creating it.
 2. Resolve the archive root with the packaged read-only implementation of the
@@ -42,10 +51,10 @@ questions:
    an agent-authored filesystem search, is authoritative for depth and symlink
    handling. Its `next_action` is mandatory. When it returns
    `request-archive-location` or `request-archive-choice`, present
-   `required_user_prompt` verbatim and stop archive discovery. After invoking
-   this command, do not run `find`, `fd`, `locate`, `rg --files`, recursive
-   `ls`, glob/rglob, `os.walk`, or any other filesystem search for PAS
-   archives. Never name, suggest, or offer a path absent from its `candidates`.
+   `required_user_prompt` verbatim and stop archive discovery. Before or after
+   this command, never run another filesystem search for PAS archives. Never
+   name, suggest, or offer a path absent from its `candidates`, including in a
+   prompt suggestion.
 
    - If the user supplied both archive file paths, require the exact names
      `images_raw.tar` and `meta.tar.gz`, a shared non-symlink parent, and two
@@ -151,6 +160,21 @@ Run this section only after required intake is resolved.
    below a workspace data directory (for example
    `$WORKSPACE/data/pas_v31_tao_ft`), not directly below `WORKSPACE`. Neither
    may contain the other, and approved paths may not traverse symlinks.
+   Run the packaged, non-mutating control-Python check now, before platform
+   image acquisition, workspace creation, or the approval request:
+
+   ```bash
+   python3 "$SKILL_ROOT/scripts/check_pas_control_prereqs.py" --python python3
+   ```
+
+   Use its `approval_summary` verbatim in the approval summary. A nonzero exit
+   with `next_action=request-host-prerequisites` is a read-only preflight
+   blocker: present `required_user_prompt` and do not ask for run approval.
+   Never replace this check with an attempted venv creation, package install,
+   or network bootstrap. On Debian/Ubuntu the helper reports `python3-venv`
+   for missing venv/ensurepip support and `python3-pip` for missing pip, with
+   one exact `sudo apt install -y ...` command containing only the missing
+   packages.
 2. Resolve either one identity-filtered PAS run directory from initial intake,
    or a new path such as `<workspace>/results/run_<UTC timestamp>`. Never select
    among multiple PAS runs by guessing; summarize the candidates or ask once.
@@ -401,7 +425,13 @@ Inputs
                         status=<available | acquire after approval>)
   virtualenv profiles: pyt=<absolute path | n/a>; ds=<absolute path | n/a>;
                        ABI/packages/entrypoints/imports/pip/CUDA=<pass | fail | n/a>
-  control environment: <absolute path>; distinct from execution profiles=<true | false>
+  control prerequisites: python>=3.9=<pass | missing>;
+                         venv/ensurepip=<pass | missing>;
+                         pip=<pass | missing>;
+                         status=<ready | blocked>;
+                         remediation=<none | packaged helper result>
+  control environment: <absolute planned/existing path>;
+                       distinct from execution profiles=<true | false>
   storage/staging: tier=<A | B | C>; compute targets=<resolved platform paths>
   workspace capacity: free=<GiB>; required>=256 GiB; status=<pass | fail>
   GPUs: <selected host IDs or platform allocation> (source=<user | default>);
@@ -422,18 +452,20 @@ Label every configurable parameter source, including defaulted parameters; do
 not limit source labels to overrides. Use `user`, `template`, `default`,
 `discovery: <checked-root reason>`, `fixed by workflow`, `versions.yaml`, or
 `derived from approved time budget` as applicable. If the user changes a row
-after approval, show only the changed rows and wait for approval again.
+after approval, show only the changed rows and wait for approval again. If the
+control-prerequisite row is blocked, show the summary as blocked and request
+the reported host remediation instead of requesting approval.
 
 ## Approved initialization
 
 For a new run, perform the following in order.
 
-1. Verify the native host prerequisites before creating the control
-   environment: `python3`, the distro's `python3-venv` support, and `pip` must
-   be present. A missing `venv`/`ensurepip` implementation is a blocker and the
-   remediation package is `python3-venv` (plus `python3-pip` when pip is
-   absent); name it explicitly rather than failing later inside step 3.
-   Then follow the selected platform skill's approved image/runtime acquisition.
+1. Require the pre-approval `check_pas_control_prereqs.py` result to be
+   `ready=true`; rerun that same read-only helper if the host may have changed.
+   This is a point-of-use verification, not the first discovery of Python,
+   venv/ensurepip, or pip. If it is now blocked, stop before any pull or write
+   and present its exact remediation. Then follow the selected platform
+   skill's approved image/runtime acquisition.
    Docker and Brev acquire the approved images through Docker; SLURM converts and
    caches both images as SQSH before allocating GPUs; Kubernetes makes both
    images pullable by the namespace. Virtualenv uses two immutable execution
