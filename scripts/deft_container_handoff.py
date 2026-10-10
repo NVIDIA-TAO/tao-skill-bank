@@ -18,8 +18,10 @@ compiled-extension compatibility; packaged checks and release QA are separate.
 """
 
 import argparse
+import contextlib
 from dataclasses import asdict, fields
 import importlib
+import io
 import json
 import os
 from pathlib import Path
@@ -35,6 +37,8 @@ REPOS = ("tao-skill-bank", "tao-pytorch", "tao-data-services")
 SKILL = "skills/applications/tao-run-dinov3-ssl-deft"
 INPUTS = Path("/inputs")
 RESULTS = Path("/results")
+# Minimum DS preflight contract that screens sources against a held-out benchmark.
+BENCHMARK_ISOLATION_CONTRACT = 1
 TEST_TOOLS = ("pytest==8.1.1", "pre-commit==4.6.2", "pylint==4.0.5",
               "pydocstyle==6.3.0", "flake8==7.3.0")
 
@@ -85,6 +89,7 @@ def regression_commands(repo, python):
         ]]
     return [pytest + [
         "tests/mining/test_dinov3_refinement.py",
+        "tests/mining/test_dinov3_benchmark.py",
         "tests/mining/test_dinov3_ann_audit.py",
         "tests/mining/test_dinov3_dense_store.py",
         "tests/mining/dinov3_workflow",
@@ -129,6 +134,60 @@ def source_environment(repo, root, venv):
     return env
 
 
+def fresh_start_check():
+    """Reject an installed TAO PyTorch that resumes from an empty checkpoint path."""
+    initialize = importlib.import_module("nvidia_tao_pytorch.core.initialize_experiments")
+    os.environ.setdefault("TAO_VISIBLE_DEVICES", "0")
+    with tempfile.TemporaryDirectory() as results:
+        train = {
+            "num_epochs": 1, "validation_interval": 1, "checkpoint_interval": 1, "seed": -1,
+            "cudnn": {"benchmark": False, "deterministic": False},
+            "resume_training_checkpoint_path": "",
+        }
+        resume, _ = initialize.initialize_train_experiment(
+            {"results_dir": results, "train": train}, auto_resume=False
+        )
+    if resume is not None:
+        raise RuntimeError(f"Installed TAO PyTorch resumes from {resume!r} instead of starting fresh")
+
+
+def benchmark_isolation_check():
+    """Reject an installed DS that seals a renamed copy of a held-out sample."""
+    pd = importlib.import_module("pandas")
+    refinement = importlib.import_module("nvidia_tao_ds.mining.dinov3.internal.refinement")
+    with tempfile.TemporaryDirectory() as root:
+        root = Path(root)
+        sidecar = root / "benchmark.parquet"
+        pd.DataFrame({"sample_id": ["held-out"], "acquisition_unit_id": ["held-out-unit"],
+                      "content_sha256": ["a" * 64]}).to_parquet(sidecar, index=False)
+
+        def materialize(name, content_sha256):
+            delta = root / f"{name}.parquet"
+            pd.DataFrame({"sample_id": [name], "acquisition_unit_id": [f"{name}-unit"],
+                          "content_sha256": [content_sha256], "storage_type": ["file"],
+                          "path": [f"/data/{name}.jpg"]}).to_parquet(delta, index=False)
+            output = root / name
+            with contextlib.redirect_stdout(io.StringIO()):
+                # The data action's own CLI, so the guard flag is checked too.
+                refinement.main(["materialize", "--delta", str(delta), "--output-dir", str(output),
+                                 "--benchmark-acquisition-units", str(sidecar)])
+            return output
+
+        try:
+            output = materialize("renamed", "a" * 64)
+        except ValueError as error:
+            if "overlaps the sealed benchmark" not in str(error):
+                raise
+            sealed = [name for name in ("_SUCCESS", "artifact.json")
+                      if (root / "renamed" / name).exists()]
+            if sealed:
+                raise RuntimeError(f"Installed DS sealed a rejected manifest: {sealed}") from error
+        else:
+            raise RuntimeError(f"Installed DS materialized a renamed benchmark copy: {output}")
+        if not (materialize("clean", "b" * 64) / "_SUCCESS").exists():
+            raise RuntimeError("Installed DS did not seal a manifest disjoint from the benchmark")
+
+
 def packaged_check(repo, require_gpu_faiss=False):
     """Check the installed image, without importing a mounted source checkout."""
     if repo == "tao-core":
@@ -158,6 +217,7 @@ def packaged_check(repo, require_gpu_faiss=False):
         print("PACKAGED_RUNTIME_CHECK_PASSED", flush=True)
         return 0
     modules = (["nvidia_tao_ds.mining.dinov3.internal.refinement",
+                "nvidia_tao_ds.mining.dinov3.benchmark",
                 "nvidia_tao_ds.mining.dinov3.workflow.cli",
                 "nvidia_tao_ds.mining.dinov3.workflow.native_actions",
                 "nvidia_tao_pytorch.ssl.dinov3.scripts.train",
@@ -175,12 +235,23 @@ def packaged_check(repo, require_gpu_faiss=False):
         preflight = importlib.import_module(
             "nvidia_tao_ds.mining.dinov3.workflow.cli"
         )
-        if preflight.main(["preflight", "--gpu"]) != 0:
+        report = io.StringIO()
+        with contextlib.redirect_stdout(report):
+            status = preflight.main(["preflight", "--gpu"])
+        output = report.getvalue()
+        print(output, end="", flush=True)
+        if status != 0:
             raise RuntimeError("Data Services DINOv3 GPU preflight failed")
+        # The report is the last indented JSON object preflight prints.
+        contracts = json.loads(output[output.rfind("\n{\n") + 1:]).get("contracts", {})
+        if contracts.get("benchmark_isolation", 0) < BENCHMARK_ISOLATION_CONTRACT:
+            raise RuntimeError("Data Services image predates held-out benchmark isolation")
+        benchmark_isolation_check()
     else:
         import torch
         if not torch.cuda.is_available():
             raise RuntimeError("Container CUDA is unavailable")
+    fresh_start_check()
     if require_gpu_faiss:
         import faiss
         import numpy as np
