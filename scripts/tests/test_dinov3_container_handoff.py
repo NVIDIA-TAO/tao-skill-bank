@@ -62,6 +62,38 @@ def test_source_info_uses_full_feature_merge_base(tmp_path, monkeypatch):
 
 
 
+def git(cwd, *argv):
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *argv],
+        cwd=cwd, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def test_source_info_ignores_submodule_pointer_bumps(tmp_path):
+    """git archive exports no gitlinks, so the manifest must not list them."""
+    git(tmp_path, "init", "-q", "-b", "main")
+    # A clone keeps an empty directory for an uninitialized submodule.
+    (tmp_path / "tao-core").mkdir()
+    (tmp_path / "feature.py").write_text("old\n")
+    git(tmp_path, "add", "feature.py")
+    git(tmp_path, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},tao-core")
+    git(tmp_path, "commit", "--no-gpg-sign", "-qm", "base")
+    git(tmp_path, "checkout", "-qb", "release")
+    (tmp_path / "feature.py").write_text("new\n")
+    git(tmp_path, "add", "feature.py")
+    git(tmp_path, "update-index", "--cacheinfo", f"160000,{'2' * 40},tao-core")
+    git(tmp_path, "commit", "--no-gpg-sign", "-qm", "release")
+    assert git(tmp_path, "diff", "--name-only", "main", "HEAD").splitlines() == ["feature.py", "tao-core"]
+    assert handoff.source_info(tmp_path, "main")["changed_files"] == ["feature.py"]
+
+
+def test_source_environment_keeps_container_home(tmp_path, monkeypatch):
+    """Pre-commit's golang hooks cache under HOME; the harness sets a writable one."""
+    monkeypatch.setenv("HOME", "/tmp")
+    env = handoff.source_environment("tao-core", tmp_path, tmp_path / "venv")
+    assert env["HOME"] == "/tmp"
+
+
 def test_dirty_checkout_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(handoff, "capture", lambda *_: " M source.py")
     with pytest.raises(ValueError, match="Commit or stash"):
@@ -130,6 +162,8 @@ def test_packaged_default_does_not_require_optional_faiss(monkeypatch, repo):
     isolation_checks = []
     monkeypatch.setattr(handoff.importlib, "import_module", installed)
     monkeypatch.setattr(handoff, "benchmark_isolation_check", lambda: isolation_checks.append(True))
+    contract_checks = []
+    monkeypatch.setattr(handoff, "workflow_contract_check", lambda: contract_checks.append(True))
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True)))
     monkeypatch.setitem(sys.modules, "faiss", None)
     monkeypatch.setenv("TAO_VISIBLE_DEVICES", "0")
@@ -140,6 +174,7 @@ def test_packaged_default_does_not_require_optional_faiss(monkeypatch, repo):
     )
     assert preflight_calls == expected_calls
     assert isolation_checks == [True] * len(expected_calls)
+    assert contract_checks == [True] * len(expected_calls)
     with pytest.raises(ModuleNotFoundError, match="faiss"):
         handoff.packaged_check(repo, require_gpu_faiss=True)
 
@@ -180,6 +215,42 @@ def installed_materialize(seal_renamed=False, seal_rejected=False, skip_clean_se
     modules = {"pandas": SimpleNamespace(DataFrame=DataFrame),
                "nvidia_tao_ds.mining.dinov3.internal.refinement": SimpleNamespace(main=main)}
     return modules.__getitem__
+
+
+def installed_workflow(tmp_path, *, rejects=True, error="DS ships no multi-task score adapter", exit_code=143):
+    """Fake DS workflow modules: the recipe, its validation and the cancel exit code."""
+    recipe = tmp_path / "multi_task_round_robin.yaml"
+    recipe.write_text("actions: {score: {command: [/path/to/customer_score_adapter]}}\n")
+
+    def from_dict(value):
+        assert value["actions"]["score"]["command"] == ["/path/to/customer_score_adapter"]
+        if rejects:
+            raise ValueError(error)
+
+    modules = {
+        "nvidia_tao_ds.mining.dinov3.workflow.cli": SimpleNamespace(
+            RECIPES={"multi-task-round-robin": recipe}, CANCELED_EXIT_CODE=exit_code),
+        "nvidia_tao_ds.mining.dinov3.workflow.config": SimpleNamespace(
+            WorkflowConfig=SimpleNamespace(from_dict=from_dict)),
+    }
+    return modules.__getitem__
+
+
+def test_workflow_contract_check_accepts_image_with_ds_59(monkeypatch, tmp_path):
+    monkeypatch.setattr(handoff.importlib, "import_module", installed_workflow(tmp_path))
+    handoff.workflow_contract_check()
+
+
+@pytest.mark.parametrize("image,message", [
+    ({"rejects": False}, "accepts the multi-task recipe's placeholder"),
+    ({"error": "Missing configured inputs: ['score_implementation_0']"}, "another reason"),
+    ({"exit_code": None}, "does not exit 143"),
+])
+def test_workflow_contract_check_rejects_older_images(monkeypatch, tmp_path, image, message):
+    """DS release/7.3.0 at rc-90 predates #59: it accepts the placeholder and exits 0 after cancel."""
+    monkeypatch.setattr(handoff.importlib, "import_module", installed_workflow(tmp_path, **image))
+    with pytest.raises(RuntimeError, match=message):
+        handoff.workflow_contract_check()
 
 
 def test_benchmark_isolation_check_accepts_guarded_image(monkeypatch):
@@ -307,6 +378,9 @@ def test_execution_pins_images_preserves_sources_and_cleans_up(tmp_path, monkeyp
         assert any(part.startswith("sha256:") for part in argv)
         assert cleanup[-1] == argv[argv.index("--name") + 1]
         assert argv[argv.index("--user") + 1] == f"{handoff.os.getuid()}:{handoff.os.getgid()}"
+        # The mapped UID may have no passwd entry in the image.
+        environment = {argv[index + 1] for index, part in enumerate(argv) if part == "-e"}
+        assert {"USER=tao", "LOGNAME=tao", "HOME=/tmp"} <= environment
         assert ("--require-gpu-faiss" in argv) == require_gpu_faiss
     summary = json.loads((tmp_path / "output/summary.json").read_text())
     assert set(summary["exit_codes"].values()) == ({124} if timeout else {0})
@@ -347,6 +421,25 @@ def test_inside_reconstructs_real_git_diff_from_archives(tmp_path, monkeypatch):
     assert any("pre_commit" in argv for argv in calls)
     assert any("pytest" in argv for argv in calls)
     assert json.loads((results / "checks.json").read_text())["exit_codes"] == [0, 0]
+
+
+def test_inside_names_paths_when_snapshot_diff_differs(tmp_path, monkeypatch):
+    inputs, results = tmp_path / "inputs", tmp_path / "results"
+    inputs.mkdir()
+    results.mkdir()
+    monkeypatch.setattr(handoff, "INPUTS", inputs)
+    monkeypatch.setattr(handoff, "RESULTS", results)
+    name = "tao-pytorch"
+    for suffix, content in (("-base", b"old\n"), ("", b"new\n")):
+        with tarfile.open(inputs / f"{name}{suffix}.tar", "w") as archive:
+            entry = tarfile.TarInfo("feature.py")
+            entry.size = len(content)
+            archive.addfile(entry, io.BytesIO(content))
+    (inputs / "manifest.json").write_text(json.dumps({
+        "repos": {name: {"changed_files": ["feature.py", "tao-core"]}}
+    }))
+    with pytest.raises(RuntimeError, match=r"missing \['tao-core'\], unexpected \[\]"):
+        handoff.inside(name, "source")
 
 
 def test_source_mode_rejects_packaged_only_flag(tmp_path):
