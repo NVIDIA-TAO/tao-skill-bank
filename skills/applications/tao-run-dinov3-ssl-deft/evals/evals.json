@@ -1,5 +1,20 @@
 [
   {
+    "id": "tao-run-dinov3-ssl-deft-benchmark-isolation",
+    "question": "My held-out benchmark has copies in the unlabeled source pool under different sample IDs. I am not enabling evaluation yet. Can I safely mine and train? Explain the required inputs and failure behavior without running commands.",
+    "expected_skill": "tao-run-dinov3-ssl-deft",
+    "expected_script": null,
+    "ground_truth": "Require a benchmark_acquisition_units sidecar with sample_id, acquisition units and content_sha256 (also carried by targets, source and inherited manifests), which an image with the DS fix enforces independent of evaluation by excluding matches and failing closed, without detecting undeclared near-duplicates.",
+    "expected_behavior": [
+      "Does not rely on sample ID inequality to prove disjointness",
+      "Requires the benchmark identity sidecar even with evaluation disabled",
+      "Requires acquisition-unit and content-hash metadata for the claimed protection",
+      "Explains fail-closed handling of missing identities and contaminated parent history",
+      "Distinguishes data isolation checks from training-quality evaluation",
+      "Does not run commands"
+    ]
+  },
+  {
     "id": "tao-run-dinov3-ssl-deft-layered-interface",
     "question": "Use the DINOv3 SSL DEFT workflow with my unlabeled AOI targets. Explain the user interfaces and the two shipped strategies without running anything.",
     "expected_skill": "tao-run-dinov3-ssl-deft",

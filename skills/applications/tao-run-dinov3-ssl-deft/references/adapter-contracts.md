@@ -210,8 +210,7 @@ Inspect the durable event and prepared `refinement_input.yaml` for each round.
 These diagnostics require an image containing the Data Services
 [schedule-warning fix](https://github.com/NVIDIA-TAO/tao-data-services/pull/56).
 Older images emit no warning; the manual sizing check is the only check there.
-Merge this guidance after that implementation, and retain the existing packaged
-release-readiness checks before offering a launch.
+Retain the packaged release-readiness checks before offering a launch.
 
 For example, 768 rows, batch size 16, one GPU and two passes give 96 updates;
 1536 rows give 192. The shipped ViT-B spec's 10000-step LR warm-ups and
@@ -277,6 +276,57 @@ FAISS so the reference index remains resident instead of being recopied for
 every query block.
 
 ## Runtime and provenance contracts
+
+### Held-out benchmark isolation
+
+This protection requires a DS image that contains the
+[benchmark-isolation change](https://github.com/NVIDIA-TAO/tao-data-services/pull/57).
+Older images accept the identity sidecar but never screen the source pool, so
+benchmark rows can be mined into training without an error. Check this before
+`validate`: `preflight` must report `"contracts": {"benchmark_isolation": 1}`
+or a later version. If the field is missing or lower, stop before launch and
+do not claim isolation.
+
+Whenever a held-out benchmark is declared, provide `data.benchmark_acquisition_units`
+as a nonempty Parquet identity table, even when evaluation is disabled. An empty
+path is rejected. Without a held-out benchmark, omit both
+`data.benchmark_manifest` and `data.benchmark_acquisition_units`.
+The table must contain `sample_id` and `data.acquisition_unit_column` (default
+`acquisition_unit_id`). Use `sample_id` as the acquisition-unit column only
+when each sample really is an independent acquisition unit. A source store
+whose `id_column` is not `sample_id` cannot use that column as the unit, because
+mined rows carry it as `sample_id`. To exclude byte-identical copies with
+different IDs/units, also supply `content_sha256`. No DS producer writes it per
+row (`register_embedding_store` hashes shard files), so declare it only when the
+embedding job writes it next to `path`; otherwise tell the user that renamed
+copies are not excluded.
+The evaluator's `data.benchmark_manifest` remains opaque; it is not the
+identity table used for mining exclusions.
+
+Targets, every source shard and inherited training manifests must contain each
+declared identity column with non-null, nonempty values; declaring
+`content_sha256` makes it mandatory on all of them. IDs and units are strings
+or integers, compared exactly and case-sensitively after surrounding whitespace
+is removed. SHA-256 values use 64 hexadecimal digits, optionally prefixed with
+`sha256:`, and compare case-insensitively. Produce these identities before
+registering the immutable source store. `validate` fails closed on missing
+metadata before any stage runs, rather than silently reducing protection to ID
+equality. Content hashes are trusted metadata, not recomputed from image bytes
+at run time; acquisition-unit grouping must correctly represent the held-out split.
+
+Any matching sample ID, acquisition unit, or declared content hash excludes
+the source row before exact or indexed selection. Cumulative materialization
+rejects overlap before publishing its artifact seal. Parent history, cached
+training inputs and adopted balanced views are checked as well: contaminated
+history is rejected, not silently edited after its checkpoint was trained.
+This protects the declared identities; it cannot identify undeclared semantic
+near-duplicates. The original base checkpoint's training history also remains
+the user's responsibility.
+Explicitly enabled `scope: diagnostic_replay` evaluation is not held-out
+evaluation and permits overlap when no held-out identity sidecar is declared.
+An explicitly supplied `benchmark_acquisition_units` always activates the
+protection, regardless of evaluation scope. Disabling evaluation does not
+disable protection for a declared benchmark.
 
 When evaluation is enabled, round 0 evaluates the immutable base checkpoint.
 Every later metrics payload must have the exact same unique `(task, name)`,
@@ -348,6 +398,8 @@ adaptive target cohort and benchmark-unit manifest are disjoint.
 
 With `scope: diagnostic_replay`, overlap is allowed for operational feedback,
 but the output is not held-out evidence and must be labeled accordingly.
+Omit the held-out identity sidecar for replay-only evaluation; changing scope
+does not override an explicitly declared benchmark isolation constraint.
 
 ## Continuation
 
@@ -388,7 +440,8 @@ meaning as exact search.
 An optional `actions.search.backend: custom` plus `command` remains available
 for customer indexes. It receives queries, the registered embedding-store
 manifest, cumulative exclusion manifest, mining thresholds, and output
-directory. Both indexed implementations publish:
+directory. The exclusion manifest includes held-out benchmark rows; an adapter
+that returns them causes materialization to reject the round. Both indexed implementations publish:
 
 - `neighbors.parquet`
 - `search_summary.json`
