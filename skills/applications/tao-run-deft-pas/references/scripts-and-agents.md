@@ -27,6 +27,7 @@ through deterministic scripts.
 | `run_deft_action.py` | prepare one platform-neutral TAO bundle and finalize native job/output evidence | control Python |
 | `run_deft_docker_action.py` | packaged Docker `submit`/`status`/`logs`/`cancel` consumer with point-of-use credential checks | control Python |
 | `discover_pas_inputs.py` | bounded, non-symlink-following PAS archive discovery | system Python |
+| `check_pas_control_prereqs.py` | read-only Python 3.9, venv/ensurepip, and pip readiness report with host remediation | system Python |
 | `check_pas_credentials.py` | value-free required/optional credential presence report | system Python |
 | `run_pas_runtime_probe.py` | approved Docker probe with exact mounts and immutable image digest attestation | system Python |
 | `run_deft_cli.py` | verified TAO CLI/path adapter used only by the virtualenv platform | action-selected `pyt` or `ds` profile |

@@ -13,10 +13,10 @@ description: >
   Do not use for standalone CLIP training, one-off evaluation or embedding,
   generic k-NN mining, or AOI/ChangeNet DEFT workflows.
 license: Apache-2.0 AND CC-BY-4.0
-compatibility: Requires one supported TAO execution platform (Docker, SLURM, Kubernetes, Brev, or virtualenv), accessible NVIDIA GPUs, the two PAS dataset export archives, and Python 3.9+ for control; virtualenv execution additionally requires the documented CPython 3.12 pyt and ds profiles.
+compatibility: Requires one supported TAO execution platform (Docker, SLURM, Kubernetes, Brev, or virtualenv), accessible NVIDIA GPUs, the two PAS dataset export archives, and Python 3.9+ with stdlib venv/ensurepip and pip for control; virtualenv execution additionally requires the documented CPython 3.12 pyt and ds profiles.
 metadata:
   author: NVIDIA Corporation
-  version: "0.4.0"
+  version: "0.4.1"
 allowed-tools: Read Bash Write
 tags:
 - application
@@ -47,6 +47,14 @@ Virtualenv execution uses separate immutable `pyt` and `ds` runtime profiles;
 the workspace control `.venv` is not an execution runtime.
 
 ## Entry Contract
+
+The archive-location boundary is active as soon as the user supplies a data
+root, archive root, or archive file path. The first and only operation allowed
+to enumerate or inspect that location's contents is the packaged
+`scripts/discover_pas_inputs.py` invocation. Before it runs, do not use Bash,
+Read, Glob, list-directory tools, or agent-authored Python to inspect the
+location. After it runs, do not perform a second search. This is a capability
+boundary for the entire intake, not an ordering suggestion inside preflight.
 
 `tao-deft-pas` and `tao-run-deft-pas` select this same workflow. If the user
 did not choose a platform, ask once among Docker, SLURM, Kubernetes, Brev, and
@@ -164,7 +172,9 @@ file and warn about group/other readability.
 
 Show the summary defined in `references/preflight.md`, including every
 parameter and source, planned file creation/extraction, image pulls, estimated
-runtime, and resume status. Wait for explicit approval before registry login or
+runtime, resume status, and the packaged control-Python prerequisite result.
+Missing Python, venv/ensurepip, or pip blocks approval with the reported host
+package remediation. Wait for explicit approval before registry login or
 pulls, platform submit, package installation, archive extraction, config/state
 creation, or any write under the workspace.
 
