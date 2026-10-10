@@ -307,8 +307,12 @@ def test_execution_pins_images_preserves_sources_and_cleans_up(tmp_path, monkeyp
         assert any(part.startswith("sha256:") for part in argv)
         assert cleanup[-1] == argv[argv.index("--name") + 1]
         assert argv[argv.index("--user") + 1] == f"{handoff.os.getuid()}:{handoff.os.getgid()}"
+        # The mapped UID may have no passwd entry in the image.
+        environment = {argv[index + 1] for index, part in enumerate(argv) if part == "-e"}
+        assert {"USER=tao", "LOGNAME=tao", "HOME=/results/.home"} <= environment
         assert ("--require-gpu-faiss" in argv) == require_gpu_faiss
     summary = json.loads((tmp_path / "output/summary.json").read_text())
+    assert all((tmp_path / "output" / repo / ".home").is_dir() for repo in summary["repos"])
     assert set(summary["exit_codes"].values()) == ({124} if timeout else {0})
     assert ("tao-core" in summary["repos"]) == include_core
     assert summary["require_gpu_faiss"] == require_gpu_faiss

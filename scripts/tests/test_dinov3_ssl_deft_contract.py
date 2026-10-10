@@ -167,6 +167,44 @@ def test_benchmark_isolation_evaluation_requires_identity_metadata():
     assert "stock DS image" not in skill
 
 
+def test_multitask_recipe_is_offered_only_with_a_user_score_adapter():
+    """DS ships no multi-task scorer; the skill must not present it as turnkey."""
+    skill = (SKILL / "SKILL.md").read_text()
+    assert "DS ships no multi-task scorer" in skill
+    assert "adapter-contracts.md#task-scoring" in skill
+    assert "`implementation_files`" in skill.split("## Approval contract")[1]
+    contracts = (SKILL / "references/adapter-contracts.md").read_text()
+    assert "/path/to/customer_score_adapter" in contracts
+    assert "offer `grit-score` instead" in contracts
+    source = os.environ.get("TAO_DATA_SERVICES_SOURCE")
+    if not source:
+        if os.environ.get("TAO_DEFT_REQUIRE_SCHEMA_PARITY") == "1":
+            pytest.fail("TAO_DATA_SERVICES_SOURCE is required for recipe parity")
+        return
+    recipe = yaml.safe_load((Path(source) / "nvidia_tao_ds/mining/dinov3/workflow/recipes"
+                             / "multi_task_round_robin.yaml").read_text())
+    assert recipe["actions"]["score"]["command"][0] == "/path/to/customer_score_adapter"
+
+
+def test_docker_launch_maps_scratch_and_checks_the_allocation_before_approval():
+    """The packaged GRIT recipe needs TAO_LOCAL_SCRATCH; preflight must see the config."""
+    text = (SKILL / "references/tao-container-integration.md").read_text()
+    runtime = next(line for line in text.splitlines() if line.startswith("DEFT_RUNTIME=("))
+    assert "TAO_LOCAL_SCRATCH=" in runtime
+    assert "preflight /deft/run.yaml --gpu" in text
+    assert text.index("preflight /deft/run.yaml --gpu") < text.index("plan /deft/run.yaml")
+    assert "resolve_tao_image.py --skill-bank ." in text
+    skill = (SKILL / "SKILL.md").read_text()
+    assert "`preflight <config> --gpu`" in skill
+    assert "TAO_LOCAL_SCRATCH" in skill
+    source = os.environ.get("TAO_DATA_SERVICES_SOURCE")
+    if source:
+        recipe = yaml.safe_load((Path(source) / "nvidia_tao_ds/mining/dinov3/workflow/recipes"
+                                 / "grit_score.yaml").read_text())
+        scratch = recipe["actions"]["score"]["resources"]["local_scratch"]["path_environment"]
+        assert f"{scratch}=" in runtime
+
+
 def test_application_contract_declares_shared_paths_dynamic_output_and_cancel():
     info = yaml.safe_load(
         (SKILL / "references" / "skill_info.yaml").read_text(encoding="utf-8")
