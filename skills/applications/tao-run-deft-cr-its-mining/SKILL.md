@@ -218,6 +218,9 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 
 **No target embeddings matched**: Check that `gaps/predictions.json` and gap-analysis `video_id` paths match the KPI LLaVA media paths used during embedding preparation. Text mode also requires the question text to match after removing `<video>` and trailing “Answer with yes or no.”
 
+Mining compares visible symlink targets without rewriting inputs. For remote-only
+media, prepare on the execution host or use identical path spellings.
+
 **Mined neighbors do not join to train lookup**: Confirm every mined `filepath` exists in `embedding_parquets/train/embeddings.parquet`. Its `modality` determines whether the path must match train `lookup.parquet` `filepath` for text or `video_path` for video.
 
 **Run directory looks nested under `results/<run.name>`**: This is expected. `run.name` is the run directory name under `<deft_workspace>/results`; all baseline, embedding, and iteration artifacts are nested there.
