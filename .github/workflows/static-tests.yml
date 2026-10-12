@@ -54,7 +54,7 @@ jobs:
           node-version: '24'
 
       - name: Install test dependencies
-        run: pip install pandas pyarrow pyyaml numpy matplotlib pillow pytest
+        run: pip install pandas pyarrow pyyaml numpy matplotlib pillow pytest huggingface_hub
 
       - name: Pi adapter guard tests
         run: |
