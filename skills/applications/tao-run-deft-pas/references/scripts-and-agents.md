@@ -29,6 +29,7 @@ through deterministic scripts.
 | `discover_pas_inputs.py` | bounded, non-symlink-following PAS archive discovery | system Python |
 | `check_pas_control_prereqs.py` | read-only Python 3.9, venv/ensurepip, and pip readiness report with host remediation | system Python |
 | `check_pas_credentials.py` | value-free required/optional credential presence report | system Python |
+| `classify_pas_image_acquisition.py` | deterministic platform-native image-availability and NGC-requirement report | system Python |
 | `run_pas_runtime_probe.py` | approved Docker probe with exact mounts and immutable image digest attestation | system Python |
 | `run_deft_cli.py` | verified TAO CLI/path adapter used only by the virtualenv platform | action-selected `pyt` or `ds` profile |
 | `run_deft_container.py` | legacy Docker-only compatibility adapter for schema-v1 runs | control Python |

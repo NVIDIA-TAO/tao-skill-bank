@@ -248,6 +248,89 @@ def test_audit_text_surfaces_the_round_regression_without_html(capsys):
     assert "delta_previous=-0.0122682 (regressed)" in output
 
 
+def test_completion_result_includes_normalized_state_and_explicit_no_warnings(
+    tmp_path: Path, capsys
+):
+    results = tmp_path / "results"
+    state = {
+        "loop_stop_reason": "max_iterations",
+        "iterations": {
+            "baseline": {"status": "complete"},
+            "iter1": {
+                "status": "complete",
+                "best_ckpt_path": str(
+                    results / "iter_1/train/best/clip_best_val_t2i_mAP.pth"
+                ),
+                "pretrained_state": str(
+                    results / "iter_1/pretrained/model_state.pth"
+                ),
+            },
+        },
+    }
+    gate = {
+        "metric_name": "Rank-1",
+        "query_type": "medium",
+        "op": ">=",
+        "target": None,
+    }
+    candidates = [
+        ("baseline", _result("baseline", 0.147)),
+        ("iter1", _result("iter1", 0.153)),
+    ]
+    completion = audit_deft_run._completion_result(  # noqa: SLF001
+        state=state,
+        results_dir=results,
+        gate=gate,
+        metric_candidates=candidates,
+        best_label="iter1",
+        best_result=candidates[1][1],
+        warnings=[],
+        require_complete=True,
+    )
+
+    assert completion == {
+        "stop_reason": "max_iterations",
+        "metric_contract": gate,
+        "baseline": {"label": "baseline", "value": 0.147},
+        "best": {"label": "iter1", "value": 0.153},
+        "checkpoint_iteration": "iter1",
+        "best_raw_checkpoint": str(
+            results / "iter_1/train/best/clip_best_val_t2i_mAP.pth"
+        ),
+        "normalized_state": str(results / "iter_1/pretrained/model_state.pth"),
+        "completed_iterations": ["iter1"],
+        "completed_iteration_count": 1,
+        "warnings": [],
+        "html_report": str(results / "DEFT_Loop_Report.html"),
+        "require_complete": "PASS",
+    }
+
+    audit_deft_run._print_text(  # noqa: SLF001
+        {
+            "status": "COMPLETE",
+            "results_dir": str(results),
+            "current_iteration": 1,
+            "max_iterations": 1,
+            "log_entries": 9,
+            "gate_met": False,
+            "last_committed": None,
+            "metric_gate": gate,
+            "best_iteration": "iter1",
+            "best_metric_result": candidates[1][1],
+            "metric_results": [],
+            "completion_result": completion,
+            "next_action": "done",
+            "required_reference": None,
+            "warnings": [],
+            "errors": [],
+        }
+    )
+    output = capsys.readouterr().out
+    assert '"normalized_state":' in output
+    assert '"warnings": []' in output
+    assert '"require_complete": "PASS"' in output
+
+
 def _write_metric_result(
     results: Path,
     label: str,

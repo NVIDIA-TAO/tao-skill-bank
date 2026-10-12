@@ -20,6 +20,8 @@ from typing import Iterator
 
 
 ARCHIVE_NAMES = ("images_raw.tar", "meta.tar.gz")
+TEXT_AUXILIARY_SUFFIXES = frozenset({".adoc", ".md", ".prompt", ".rst", ".txt"})
+TEXT_AUXILIARY_PREFIXES = ("instruction", "notice", "readme")
 EXTRACTED_MARKERS = (
     "images_raw",
     "images",
@@ -55,6 +57,16 @@ class Candidate:
     images_size: int
     metadata_archive: str
     metadata_size: int
+    auxiliary_text_files: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True)
+class AuxiliaryTextFile:
+    """Metadata-only notice for a text file that agents must not interpret."""
+
+    path: str
+    size: int
+    handling: str = "not-read-untrusted-data"
 
 
 def _absolute(path: pathlib.Path) -> pathlib.Path:
@@ -111,6 +123,35 @@ def _candidate(
     if candidate_type is None:
         return None
     images, metadata = (directory / name for name in ARCHIVE_NAMES)
+    auxiliary_text_files: list[dict[str, object]] = []
+    try:
+        entries = sorted(os.scandir(directory), key=lambda item: item.name)
+    except (OSError, PermissionError):
+        entries = []
+    for entry in entries:
+        name = entry.name.casefold()
+        try:
+            is_regular_file = entry.is_file(follow_symlinks=False)
+            is_symlink = entry.is_symlink()
+        except OSError:
+            continue
+        if (
+            not is_regular_file
+            or is_symlink
+            or entry.name in ARCHIVE_NAMES
+            or (
+                pathlib.Path(name).suffix not in TEXT_AUXILIARY_SUFFIXES
+                and not name.startswith(TEXT_AUXILIARY_PREFIXES)
+            )
+        ):
+            continue
+        try:
+            size = entry.stat(follow_symlinks=False).st_size
+        except OSError:
+            continue
+        auxiliary_text_files.append(
+            asdict(AuxiliaryTextFile(path=str(directory / entry.name), size=size))
+        )
     return Candidate(
         path=str(directory),
         found_under=str(root),
@@ -120,6 +161,7 @@ def _candidate(
         images_size=images.stat().st_size,
         metadata_archive=str(metadata),
         metadata_size=metadata.stat().st_size,
+        auxiliary_text_files=tuple(auxiliary_text_files),
     )
 
 
@@ -139,13 +181,7 @@ def _explicit_pair(images: pathlib.Path, metadata: pathlib.Path) -> dict:
             "non-symlink parent"
         )
     return {
-        "search_roots": [
-            asdict(
-                SearchRoot(
-                    str(images.parent), "user-supplied-pair", "0", "searched"
-                )
-            )
-        ],
+        "search_roots": [],
         "candidates": [asdict(candidate)],
         "selection": str(images.parent),
         "selection_reason": "user-supplied",
