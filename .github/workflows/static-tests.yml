@@ -66,3 +66,6 @@ jobs:
 
       - name: DEFT AOI card helper tests
         run: python -m unittest discover -s skills/applications/tao-run-deft-aoi/tests -p 'test_card_*.py'
+
+      - name: Cosmos DEFT workflow tests
+        run: python -m unittest discover -s skills/applications/tao-run-deft-cr-its-mining/tests -p 'test_*.py'
