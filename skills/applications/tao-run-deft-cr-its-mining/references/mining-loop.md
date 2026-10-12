@@ -59,7 +59,7 @@ Use the reported stage; do not infer resume position from directory names or rer
 
 Resolve `images.tao_toolkit.deft_cosmos_reason` from the installed skill bank's `versions.yaml` and keep the resulting literal image URI as `DEFT_COSMOS_REASON_IMAGE`. Do not substitute `images.tao_toolkit.cosmos_rl` or any image selected by another skill.
 
-Generate Cosmos Reason TOMLs only with this workflow's bundled helpers. `prepare_cosmos_reason_train.py` loads `cosmos_reason.base_train_toml`, and `prepare_cosmos_reason_evaluate.py` loads `cosmos_reason.base_evaluate_toml`; when the user does not provide custom base TOMLs, initialization copies the bundled files from `assets/` and points `workflow.yaml` at them. Do not load templates from `tao-finetune-cosmos-reason` or invoke its planner or action bundle.
+Generate Cosmos Reason TOMLs only with this workflow's bundled helpers. `prepare_cosmos_reason_train.py` loads `cosmos_reason.base_train_toml`, and `prepare_cosmos_reason_evaluate.py` loads `cosmos_reason.base_evaluate_toml`; when the user does not provide custom base TOMLs, initialization copies the bundled files from `assets/` and points `workflow.yaml` at them. Baseline preparation may reuse only the model skill's packaged conversion helper as described below; do not load its templates or invoke its planner or action bundle.
 
 The pinned runtime commands are:
 
@@ -69,6 +69,8 @@ cosmos-rl-evaluate --config <evaluate.toml>
 ```
 
 Before the first Cosmos Reason launch, inspect `DEFT_COSMOS_REASON_IMAGE` through the selected platform and require `cosmos-rl`, `cosmos-rl-evaluate`, and `/opt/cosmos_rl/tao_sft_example.py` to exist. Stop with a runtime-contract error if any is missing. Do not invoke `cosmos_workflow.py`, inspect `skill_info.yaml` for a replacement command, derive the hook from `cosmos_rl.__file__`, or submit a model-skill action bundle.
+
+Use the exact image for a CUDA initialization probe before its first GPU action. The probe must initialize `libcuda.so.1` and require `torch.cuda.is_available()`; `nvidia-smi` alone is insufficient. If Docker reports `CUDA_ERROR_SYSTEM_DRIVER_MISMATCH (803)` while the host GPU probe succeeds, inspect the image's declared `LD_LIBRARY_PATH`, remove only entries rooted at `/usr/local/cuda/compat`, and rerun the exact-image probe with that value. Carry the sanitized value into every Cosmos Reason train/evaluate submission only when this second probe passes. Do not remove unrelated library paths, disable strict GPU video decoding, or fall back to CPU. If either the host probe or sanitized exact-image probe fails, stop with an infrastructure error instead of launching the workflow.
 
 Run every Cosmos Reason train/evaluate action through the selected platform skill with the pinned commands above and the TOML prepared by this workflow. Confirm the submitted job records `DEFT_COSMOS_REASON_IMAGE` before launch. For local or remote single-node Docker, select `tao-run-on-docker`; do not construct a competing unmanaged Docker launch. Require its submitted container command to include `--ipc=host --ulimit memlock=-1 --ulimit stack=67108864`. Kubernetes or Slurm must provide equivalent shared-memory and memlock resources. Keep the platform job id and use the platform's status and log operations until the job reaches a terminal state.
 
@@ -91,6 +93,10 @@ TAO_STATUS_FILE=$CONTAINER_STAGE_DIR/.tao-status/$TAO_JOB_ID/status.json
 ```
 
 Confirm the submitted job contains the mount and all three environment variables before launch; otherwise the TAO status decorator may fall back to writing `./results` under the image's unwritable `/workspace` directory.
+
+## Baseline Model Preparation
+
+Before baseline evaluation, read `references/cosmos-reason-model-preparation.md` and run `prepare_cosmos_reason_model.py`. The raw baseline may be a complete Qwen3-VL checkpoint or a native Cosmos3 Omni checkpoint, but the stage must produce `$RUN_DIR/baseline/model_preparation.json` with `status=ready`. Log that manifest as `prepare_cosmos_reason_model`. All later baseline checkpoint selection is read from this manifest; do not patch a TOML with the raw Omni source path.
 
 ## Baseline Evaluation
 
@@ -298,7 +304,7 @@ When `mining.mine_unique_only` is false, do not run the command; append a `recor
 
 Nearest-neighbor output contains only selected source filepaths. The preparation script joins those paths back to the train embeddings parquet to recover each source row's modality, writes `$RUN_DIR/iter_<N>/mining/mined_train_annotations.json`, accumulates it into `$RUN_DIR/iter_<N>/train/train_annotations.json`, and writes `$RUN_DIR/iter_<N>/train/specs/train.toml`. A text source path selects its corresponding train question; a video source path selects every train annotation row whose `video_path` matches. Output records preserve the source `annotation_id` as their LLaVA `id` and are deduplicated by that stable id.
 
-Iteration 1 trains on mined annotations only; `train_dataset.annotations_path` remains a mining source pool and is not inserted directly. Later iterations accumulate the previous iteration's assembled annotations. Iteration 1 starts from `cosmos_reason.baseline_model_path`. Later iterations use the checkpoint recorded in the previous iteration's generated evaluate TOML only when `cosmos_reason.continual_model: true`; otherwise they start from the baseline. Preparation counts the assembled annotations and calculates expected optimizer steps from `train.epoch`, `train.train_batch_per_replica`, `policy.parallelism.dp_shard_size`, `dp_replicate_size`, and `train.train_policy.dataloader_drop_last` (which defaults to `true` when absent). If the result is zero, stop before launch, report the values, and tell the user that the training parameters likely need tuning for that iteration's dataset size and GPU count.
+Iteration 1 trains on mined annotations only; `train_dataset.annotations_path` remains a mining source pool and is not inserted directly. Later iterations accumulate the previous iteration's assembled annotations. Iteration 1 starts from the prepared checkpoint recorded in `baseline/model_preparation.json`. Later iterations use the checkpoint recorded in the previous iteration's generated evaluate TOML only when `cosmos_reason.continual_model: true`; otherwise they start from that same prepared baseline. Preparation counts the assembled annotations and calculates expected optimizer steps from `train.epoch`, `train.train_batch_per_replica`, `policy.parallelism.dp_shard_size`, `dp_replicate_size`, and `train.train_policy.dataloader_drop_last` (which defaults to `true` when absent). If the result is zero, stop before launch, report the values, and tell the user that the training parameters likely need tuning for that iteration's dataset size and GPU count.
 
 6. **Train Cosmos Reason**: run the pinned `cosmos-rl --config <train.toml> /opt/cosmos_rl/tao_sft_example.py` command with `$RUN_DIR/iter_<N>/train/specs/train.toml`. Keep monitoring the submitted job until it reaches terminal success. Do not infer completion from checkpoint files appearing during training. After terminal success, require the final structured status or training log to report at least one completed optimizer step. If it reports zero, stop before checkpoint discovery or evaluation, tell the user the parameters likely need tuning, and ask how to proceed. Then restore host write access before checkpoint discovery or evaluation preparation:
 
@@ -367,6 +373,7 @@ This writes `$RUN_DIR/bcq_accuracy_report.md` and `$RUN_DIR/bcq_accuracy_summary
 | --- | --- |
 | `validate_workflow` | `verify_workflow_yaml.py` exits successfully. |
 | `initialize_workflow` | `$RUN_DIR/workflow.yaml` and `$RUN_DIR/deft_state.json` exist. |
+| `prepare_cosmos_reason_model` | `baseline/model_preparation.json` records `status=ready` and successful pinned-runtime validation. |
 | `baseline_evaluate` | The evaluate job exits successfully, exactly one baseline `results.json` is found, and `baseline/evaluate/bcq_accuracy_metrics.json` exists. |
 | `prepare_cosmos_embed_inference` | Each dataset has a lookup parquet and either all required Cosmos Embed specs or a staged combined embedding Parquet. |
 | `cosmos_embed` | Every generated inference spec has a current `completion_validation.json`; validated exit `130` is recorded as a teardown warning, and all other nonzero exits fail. |

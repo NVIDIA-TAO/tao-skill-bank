@@ -54,7 +54,7 @@ jobs:
           node-version: '24'
 
       - name: Install test dependencies
-        run: pip install pandas pyarrow pyyaml numpy matplotlib pillow
+        run: pip install pandas pyarrow pyyaml numpy matplotlib pillow pytest
 
       - name: Pi adapter guard tests
         run: |
@@ -69,3 +69,6 @@ jobs:
 
       - name: Cosmos DEFT workflow tests
         run: python -m unittest discover -s skills/applications/tao-run-deft-cr-its-mining/tests -p 'test_*.py'
+
+      - name: Cosmos Reason model helper tests
+        run: python -m pytest -q skills/models/tao-finetune-cosmos-reason/tests
