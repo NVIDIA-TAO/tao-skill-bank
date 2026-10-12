@@ -276,7 +276,9 @@ Run this section only after required intake is resolved.
    exist in the current process environment. Build `IMAGE_ACQUISITION_ARGS`
    from the already selected platform as follows: Docker receives both pinned
    image URIs; Brev receives both URIs plus the selected instance; SLURM
-   receives the selected login host plus the two planned `.sqsh` paths;
+   receives the single login host that passed platform preflight plus the two
+   planned `.sqsh` paths (not a comma-separated failover list); its probes reuse
+   the platform's `SLURM_USER`, `SSH_KEY_PATH`, SSH config, and connection options;
    Kubernetes receives the selected namespace/context and the pre-created
    image-pull secret when one was supplied; virtualenv receives no images.
    Missing platform-specific arguments are preflight blockers, never guessed
@@ -285,7 +287,12 @@ Run this section only after required intake is resolved.
    recognizes already-working Docker/Brev registry access, a non-empty remote
    SLURM Enroot credential file, or a verified Kubernetes pull secret without
    reading credential content; it does not inspect authentication state when
-   every required image is already present:
+   every required image is already present. SSH connection/tool failures and
+   Kubernetes access errors block classification rather than requesting a key.
+   Kubernetes queries only the secret type: `kubernetes.io/dockerconfigjson`
+   and `kubernetes.io/dockercfg` are accepted; missing or other-type secrets do
+   not supply image-pull authentication. This type check does not validate the
+   secret's registry credentials or guarantee a successful pull:
 
    ```bash
    IMAGE_ACQUISITION_ARGS=(--platform "$PLATFORM")
@@ -299,10 +306,10 @@ Run this section only after required intake is resolved.
          --image "$PAS_PYT_IMAGE" --image "$PAS_DS_IMAGE")
        ;;
      slurm)
-       : "${SLURM_HOSTNAME:?selected SLURM login is required}"
+       : "${SLURM_HOST:?single login host verified by platform preflight is required}"
        : "${PAS_PYT_SQSH:?planned PAS PyTorch sqsh path is required}"
        : "${PAS_DS_SQSH:?planned PAS data-services sqsh path is required}"
-       IMAGE_ACQUISITION_ARGS+=(--slurm-host "$SLURM_HOSTNAME" \
+       IMAGE_ACQUISITION_ARGS+=(--slurm-host "$SLURM_HOST" \
          --platform-image "$PAS_PYT_SQSH" --platform-image "$PAS_DS_SQSH")
        ;;
      kubernetes)
