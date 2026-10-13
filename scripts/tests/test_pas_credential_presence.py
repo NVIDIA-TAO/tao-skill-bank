@@ -35,8 +35,8 @@ def test_presence_report_never_emits_credential_values():
             sys.executable,
             "-S",
             str(SCRIPT),
-            "--required",
-            "NGC_KEY",
+            "--ngc-key-requirement",
+            "required",
             "--optional",
             "HF_TOKEN",
         ],
@@ -52,6 +52,7 @@ def test_presence_report_never_emits_credential_values():
     report = json.loads(completed.stdout)
     assert report == {
         "schema_version": "1",
+        "ngc_key_requirement": "required",
         "credentials": [
             {"name": "NGC_KEY", "requirement": "required", "status": "set"},
             {"name": "HF_TOKEN", "requirement": "optional", "status": "missing"},
@@ -68,6 +69,8 @@ def test_missing_required_credential_is_a_value_free_failure():
             sys.executable,
             "-S",
             str(SCRIPT),
+            "--ngc-key-requirement",
+            "not-required",
             "--required",
             "PAS_TEST_REQUIRED_TOKEN",
         ],
@@ -81,3 +84,47 @@ def test_missing_required_credential_is_a_value_free_failure():
     report = json.loads(completed.stdout)
     assert report["missing_required"] == ["PAS_TEST_REQUIRED_TOKEN"]
     assert report["credentials"][0]["status"] == "missing"
+    assert report["credentials"][1] == {
+        "name": "NGC_KEY",
+        "requirement": "optional",
+        "status": "missing",
+    }
+
+
+def test_image_acquisition_is_the_only_ngc_requirement_authority():
+    environment = os.environ.copy()
+    environment.pop("NGC_KEY", None)
+
+    required = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(SCRIPT),
+            "--ngc-key-requirement",
+            "required",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert required.returncode == 2
+    assert json.loads(required.stdout)["missing_required"] == ["NGC_KEY"]
+
+    duplicate = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(SCRIPT),
+            "--ngc-key-requirement",
+            "not-required",
+            "--required",
+            "NGC_KEY",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert duplicate.returncode == 2
+    assert "classified only by --ngc-key-requirement" in duplicate.stderr

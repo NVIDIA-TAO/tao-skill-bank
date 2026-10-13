@@ -190,8 +190,10 @@ auditor recovery statement, and preserved results directory.
 
 ### User-facing result
 
-For a successful terminal run, report the stop reason, contract and target,
-baseline value, operator-directed best value/label, best raw checkpoint and
-normalized state (when an iteration trained), completed iterations, warnings,
-HTML report path, and passing `--require-complete` evidence. For failure,
+For a successful terminal run, report the auditor's canonical
+`completion_result`: stop reason, contract and target, baseline value,
+operator-directed best value/label, best trained raw checkpoint and normalized
+state (when an iteration trained), completed iterations, warnings (explicitly
+`none` when empty), HTML report path, and passing `--require-complete` evidence.
+Do not reconstruct or shorten this payload in agent prose. For failure,
 replace metric claims with the last validated metric and failure evidence.

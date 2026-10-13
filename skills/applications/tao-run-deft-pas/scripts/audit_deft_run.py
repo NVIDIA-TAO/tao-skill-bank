@@ -895,6 +895,79 @@ def _next_action(
     return f"{nxt[0]}/{nxt[1]}", STAGE_REFERENCES[nxt[1]]
 
 
+def _completion_result(
+    *,
+    state: dict[str, Any],
+    results_dir: pathlib.Path,
+    gate: dict[str, Any] | None,
+    metric_candidates: list[tuple[str, dict[str, Any]]],
+    best_label: str | None,
+    best_result: dict[str, Any] | None,
+    warnings: list[str],
+    require_complete: bool,
+) -> dict[str, Any]:
+    """Build the single canonical payload a successful run must report."""
+    iterations = state.get("iterations")
+    if not isinstance(iterations, dict):
+        iterations = {}
+    baseline_result = next(
+        (result for label, result in metric_candidates if label == "baseline"),
+        None,
+    )
+    trained_candidates = [
+        (label, iterations[label], result)
+        for label, result in metric_candidates
+        if label != "baseline"
+        and isinstance(iterations.get(label), dict)
+        and iterations[label].get("best_ckpt_path")
+        and iterations[label].get("pretrained_state")
+    ]
+    checkpoint_label: str | None = None
+    checkpoint_info: dict[str, Any] | None = None
+    if gate is not None and trained_candidates:
+        checkpoint_label, checkpoint_info, _ = pick_best(trained_candidates, gate)
+    completed_iterations = sorted(
+        (
+            label
+            for label, info in iterations.items()
+            if re.fullmatch(r"iter[1-9][0-9]*", label)
+            and isinstance(info, dict)
+            and info.get("status") == "complete"
+        ),
+        key=lambda label: int(label[4:]),
+    )
+    return {
+        "stop_reason": state.get("loop_stop_reason"),
+        "metric_contract": gate,
+        "baseline": (
+            {"label": "baseline", "value": baseline_result.get("value")}
+            if baseline_result is not None
+            else None
+        ),
+        "best": (
+            {"label": best_label, "value": best_result.get("value")}
+            if best_label is not None and best_result is not None
+            else None
+        ),
+        "checkpoint_iteration": checkpoint_label,
+        "best_raw_checkpoint": (
+            checkpoint_info.get("best_ckpt_path")
+            if checkpoint_info is not None
+            else None
+        ),
+        "normalized_state": (
+            checkpoint_info.get("pretrained_state")
+            if checkpoint_info is not None
+            else None
+        ),
+        "completed_iterations": completed_iterations,
+        "completed_iteration_count": len(completed_iterations),
+        "warnings": list(warnings),
+        "html_report": str(results_dir / "DEFT_Loop_Report.html"),
+        "require_complete": "PASS" if require_complete else "NOT_REQUESTED",
+    }
+
+
 def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str, Any]:
     results_dir = results_dir.expanduser().resolve()
     state_path = results_dir / "deft_state.json"
@@ -3020,6 +3093,12 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 f"loop_stop reason {reason} requires every iteration to be "
                 f"complete; not complete: {incomplete}"
             )
+        report_path = results_dir / "DEFT_Loop_Report.html"
+        if require_complete and not report_path.is_file():
+            errors.append(
+                "--require-complete requires the deterministic loop-end report: "
+                f"{report_path}"
+            )
     if errors:
         status = "INVALID"
     elif terminal and (
@@ -3062,6 +3141,21 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     f"stop rather than substituting generic commands"
                 )
 
+    completion_result = (
+        _completion_result(
+            state=state,
+            results_dir=results_dir,
+            gate=gate,
+            metric_candidates=metric_candidates,
+            best_label=best_label,
+            best_result=best_result,
+            warnings=warnings,
+            require_complete=require_complete,
+        )
+        if status == "COMPLETE"
+        else None
+    )
+
     return {
         "status": status,
         "terminal": terminal,
@@ -3077,6 +3171,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         "best_iteration": best_label,
         "best_metric_result": best_result,
         "metric_results": metric_summaries,
+        "completion_result": completion_result,
         "next_action": next_action,
         "required_reference": required_reference,
         "errors": errors,
@@ -3119,6 +3214,11 @@ def _print_text(report: dict[str, Any]) -> None:
             f"({metric['comparison_to_baseline']}) "
             f"delta_previous={float(metric['delta_from_previous']):+.6g} "
             f"({metric['comparison_to_previous']})"
+        )
+    if report.get("completion_result") is not None:
+        print(
+            "completion_result="
+            + json.dumps(report["completion_result"], sort_keys=True)
         )
     print(f"next_action={report['next_action']}")
     if report["required_reference"]:
