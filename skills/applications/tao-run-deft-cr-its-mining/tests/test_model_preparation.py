@@ -34,7 +34,7 @@ from workflow_common import (  # noqa: E402
 )
 
 
-RUNTIME_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl"
+RUNTIME_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:0.0.0-cosmos-rl-test"  # unpinned: mock fixture, must not equal a versions.yaml image
 RUNTIME_DIGEST = "sha256:" + "a" * 64
 ARCHITECTURE_REVISION = "b" * 40
 
