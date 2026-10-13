@@ -388,6 +388,69 @@ class ModelPreparationTests(unittest.TestCase):
 
 
 class WorkflowIntegrationTests(unittest.TestCase):
+    def test_packaged_patch_projection_survives_baseline_and_iteration_preparation(self) -> None:
+        """NVBug 6920383: native evaluation must not fall back to H100-unsafe auto."""
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = pathlib.Path(temporary)
+            baseline = write_qwen_checkpoint(workspace / "model/baseline")
+            workflow = write_workflow(workspace / "specs/workflow.yaml", baseline)
+            base = workspace / "specs/base_evaluate.toml"
+            base.write_bytes((SKILL_ROOT / "assets/cr_base_evaluate.toml").read_bytes())
+            write_json(workspace / "data/kpi/annotations.json", [])
+            (workspace / "data/kpi/media").mkdir(parents=True)
+            run = workspace / "results/run"
+            write_json(run / "baseline/model_preparation.json", {
+                "status": "ready", "prepared_model_path": str(baseline),
+            })
+            trained = write_qwen_checkpoint(
+                run / "iter_1/train/20260101000000/safetensors/epoch_1"
+            )
+            for iteration, checkpoint, stage in (
+                (None, baseline, "baseline"), (1, trained, "iter_1"),
+            ):
+                with self.subTest(stage=stage):
+                    command = [sys.executable, str(SCRIPTS / "prepare_cosmos_reason_evaluate.py"),
+                               "--workspace", str(workspace), "--workflow-yaml", str(workflow),
+                               "--run-dir", str(run)]
+                    if iteration is not None:
+                        command.extend(["--iteration", str(iteration)])
+                    subprocess.run(command, check=True, capture_output=True, text=True)
+                    spec = load_toml(run / stage / "evaluate/specs/evaluate.toml")
+                    self.assertEqual(spec["model"]["qwen3_vl_patch_embed"], "linear")
+                    self.assertEqual(spec["model"]["model_name"], str(checkpoint))
+                    self.assertEqual(spec["model"]["dtype"], "bfloat16")
+
+    def test_train_projection_and_custom_choices_survive_native_toml_roundtrip(self) -> None:
+        """The native train key is policy, not model; preserve reviewed overrides."""
+        template = load_toml(SKILL_ROOT / "assets/cr_base_train.toml")
+        self.assertEqual(template["policy"]["qwen3_vl_patch_embed"], "linear")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            for mode in ("linear", "auto", "conv3d"):
+                with self.subTest(mode=mode):
+                    config = load_toml(SKILL_ROOT / "assets/cr_base_train.toml")
+                    config["policy"]["qwen3_vl_patch_embed"] = mode
+                    patched = prepare_train.patch_train_config(
+                        config, train_dir=root / "train", train_annotations=root / "train.json",
+                        train_media_dir=root / "media", val_annotations=root / "kpi.json",
+                        val_media_dir=root / "media", checkpoint_path=root / "checkpoint",
+                    )
+                    output = root / "train.toml"
+                    output.write_text(workflow_common.dump_toml(patched), encoding="utf-8")
+                    saved = load_toml(output)
+                    self.assertEqual(saved["policy"]["qwen3_vl_patch_embed"], mode)
+                    self.assertEqual(saved["policy"]["model_name_or_path"], str(root / "checkpoint"))
+                    self.assertEqual(saved["train"]["optm_lr"], template["train"]["optm_lr"])
+                    evaluate = load_toml(SKILL_ROOT / "assets/cr_base_evaluate.toml")
+                    evaluate["model"]["qwen3_vl_patch_embed"] = mode
+                    evaluate["generation"]["max_tokens"] = 17
+                    prepared = prepare_evaluate.patch_evaluate_config(
+                        evaluate, results_dir=root / "evaluate", annotation_path=root / "kpi.json",
+                        media_dir=root / "media", checkpoint_path=str(root / "checkpoint"),
+                    )
+                    self.assertEqual(prepared["model"]["qwen3_vl_patch_embed"], mode)
+                    self.assertEqual(prepared["generation"]["max_tokens"], 17)
+
     def test_baseline_evaluate_and_noncontinual_train_use_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = pathlib.Path(temporary)
