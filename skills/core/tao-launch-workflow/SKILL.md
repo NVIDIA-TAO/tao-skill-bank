@@ -313,6 +313,11 @@ needed, then ask before installing. Examples:
 After user approval and installation, rerun the same preflight. Do not create
 runner files or launch jobs between the failed check and the rerun.
 
+### Runtime downloads
+
+Follow `references/runtime-downloads.md` for runtime-download rules. Local
+checkpoints do not imply cached packages.
+
 ## Dataset Intake
 
 Accept dataset inputs in either mode:

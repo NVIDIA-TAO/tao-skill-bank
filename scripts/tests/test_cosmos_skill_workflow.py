@@ -3218,8 +3218,11 @@ def test_nvbug_conversion_command_has_nonroot_identity_env(tmp_path):
     )
     joined = " ".join(checkpoint_preparation.command(args, tmp_path / "out", tmp_path / "cache"))
     assert "USER=" in joined and "LOGNAME=" in joined
-    assert "HOME=/cache/tao-home" in joined
-    assert "TORCHINDUCTOR_CACHE_DIR=/cache/torchinductor" in joined
+    assert "/tao-local-cache:rw,exec,size=32g,mode=1777" in joined
+    assert "HOME=/tao-local-cache/home" in joined
+    assert "XDG_CACHE_HOME=/tao-local-cache/xdg" in joined
+    assert "UV_CACHE_DIR=/tao-local-cache/uv" in joined
+    assert "TORCHINDUCTOR_CACHE_DIR=/tao-local-cache/torchinductor" in joined
 
 
 def test_nvbug_task_aware_alias_media_key_fails_closed(tmp_path):
