@@ -151,6 +151,9 @@ Do not use `--force` for an ordinary resume. It rewrites the state/config snapsh
 
 ## Baseline Evaluation
 
+Before preparing TOMLs, follow `references/mining-loop.md#qwen3-vl-patch-embedding`
+for both base templates, including custom templates and resumed workspaces.
+
 Prepare the baseline once before evaluation. Reuse a complete Qwen3-VL checkpoint or convert Cosmos3 Omni through the current model-skill contract, cache it under `<deft_workspace>/model/prepared/`, and validate it with the pinned runtime. Read `references/cosmos-reason-model-preparation.md` for this stage.
 
 After its manifest records `status: ready`, evaluate the prepared path on KPI data and compute `baseline/evaluate/bcq_accuracy_metrics.json`. Use `references/mining-loop.md` for evaluation commands and logging.
