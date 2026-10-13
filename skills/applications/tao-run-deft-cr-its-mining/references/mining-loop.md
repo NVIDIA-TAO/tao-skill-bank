@@ -68,6 +68,39 @@ cosmos-rl --config <train.toml> /opt/cosmos_rl/tao_sft_example.py
 cosmos-rl-evaluate --config <evaluate.toml>
 ```
 
+### Qwen3-VL patch embedding
+
+Use the pinned Cosmos-RL image's native linear-equivalent patch projection for
+this workflow's Qwen3-VL checkpoints, including prepared Cosmos3 Nano. The
+bundled templates select it in different native sections:
+
+| Base template | Required setting |
+| --- | --- |
+| `cosmos_reason.base_evaluate_toml` | `[model]` → `qwen3_vl_patch_embed = "linear"` |
+| `cosmos_reason.base_train_toml` | `[policy]` → `qwen3_vl_patch_embed = "linear"` |
+
+Before preparation, inspect both workspace templates. For older copies or
+user-supplied templates, add the missing setting without replacing their other
+parameters. If either explicitly selects `auto` or `conv3d`, explain the
+incompatibility and include the change to `linear` in the launch review; do not
+silently overwrite an explicit choice. Do not launch the affected path until
+that configuration change is approved. The helpers preserve these settings;
+check the generated baseline/iteration evaluate and train TOMLs before each
+submission. On resume, regenerate an unsubmitted stage's TOML after updating
+its base template; leave completed stage artifacts intact.
+
+In `7.2.0-cosmos-rl`, the precompiled cuDNN engine library is missing and the
+runtime's `auto` policy does not select the linear implementation on H100/H200
+(compute capability 9.0). This causes bf16/fp16 patchify Conv3d to fail even when
+CUDA initialization and checkpoint validation pass. `linear` uses the same
+trainable projection weights and bias without that cuDNN convolution; it does
+not change the checkpoint format, precision, or video decoder. Keep this
+selection consistent for baseline evaluation, training, and reevaluation.
+Do not downgrade the image (that removes Omni preparation support), disable
+cuDNN globally, or inject/mount runtime patches.
+
+### Launch checks
+
 Before the first Cosmos Reason launch, inspect `DEFT_COSMOS_REASON_IMAGE` through the selected platform and require `cosmos-rl`, `cosmos-rl-evaluate`, and `/opt/cosmos_rl/tao_sft_example.py` to exist. Stop with a runtime-contract error if any is missing. Do not invoke `cosmos_workflow.py`, inspect `skill_info.yaml` for a replacement command, derive the hook from `cosmos_rl.__file__`, or submit a model-skill action bundle.
 
 Use the exact image for a CUDA initialization probe before its first GPU action. The probe must initialize `libcuda.so.1` and require `torch.cuda.is_available()`; `nvidia-smi` alone is insufficient. If Docker reports `CUDA_ERROR_SYSTEM_DRIVER_MISMATCH (803)` while the host GPU probe succeeds, inspect the image's declared `LD_LIBRARY_PATH`, remove only entries rooted at `/usr/local/cuda/compat`, and rerun the exact-image probe with that value. Carry the sanitized value into every Cosmos Reason train/evaluate submission only when this second probe passes. Do not remove unrelated library paths, disable strict GPU video decoding, or fall back to CPU. If either the host probe or sanitized exact-image probe fails, stop with an infrastructure error instead of launching the workflow.
