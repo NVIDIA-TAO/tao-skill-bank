@@ -35,9 +35,12 @@ job-record opening, UID/GID mapping, cache variables and GPU selection.
 Resolve the approved application image on the host with:
 
 ```bash
-DEFT_TAG=$(python scripts/resolve_tao_image.py --application tao-run-dinov3-ssl-deft \
+DEFT_TAG=$(python scripts/resolve_tao_image.py --skill-bank . --application tao-run-dinov3-ssl-deft \
   --action run --format json | python -c 'import json, sys; print(json.load(sys.stdin)["image"])')
 ```
+
+Run it from the Skill Bank checkout; without `--skill-bank` the resolver reads
+`$TAO_SKILL_BANK_PATH` or `~/tao-skill-bank`, which can be a different bank.
 
 Show `DEFT_TAG` to the user and accept an explicit override. Then pin the
 digest, because a tag can move between preflight and launch:
@@ -53,22 +56,30 @@ Skill Bank or `versions.yaml`.
 
 The example below assumes the platform has prepared these reviewed bindings:
 `DEFT_IMAGE` is the tested image digest, `DEFT_ROOT` contains config, data,
-checkpoints and outputs, and `DEFT_GPU` is the allocated host GPU identifier.
+checkpoints and outputs, `DEFT_SCRATCH` is a writable node-local directory, and
+`DEFT_GPU` is the allocated host GPU identifier. The GRIT score action writes
+its work files to `$TAO_LOCAL_SCRATCH`; without it the first score stage fails.
 All paths in the YAML use the container's `/deft` namespace.
 `DEFT_IDENTITY_ARGS` and `DEFT_CACHE_ARGS` are the Docker skill's non-root
 identity and writable cache arguments. Do not inline credentials.
 
 ```bash
-DEFT_MOUNTS=(-v "$DEFT_ROOT:/deft")
-DEFT_RUNTIME=(--gpus "device=$DEFT_GPU" --ipc=host -e CUDA_VISIBLE_DEVICES=0)
+DEFT_MOUNTS=(-v "$DEFT_ROOT:/deft" -v "$DEFT_SCRATCH:/scratch")
+DEFT_RUNTIME=(--gpus "device=$DEFT_GPU" --ipc=host -e CUDA_VISIBLE_DEVICES=0 -e TAO_LOCAL_SCRATCH=/scratch)
 DEFT_COMMAND=(python -m nvidia_tao_ds.mining.dinov3.workflow)
 
 docker run --rm "${DEFT_RUNTIME[@]}" "${DEFT_IDENTITY_ARGS[@]}" "${DEFT_CACHE_ARGS[@]}" "${DEFT_MOUNTS[@]}" "$DEFT_IMAGE" "${DEFT_COMMAND[@]}" preflight --gpu
 docker run --rm "${DEFT_IDENTITY_ARGS[@]}" "${DEFT_CACHE_ARGS[@]}" "${DEFT_MOUNTS[@]}" "$DEFT_IMAGE" "${DEFT_COMMAND[@]}" init --recipe grit-score --output /deft/run.yaml
 # Fill reviewed paths/resources and set execution.backend: local.
 docker run --rm "${DEFT_IDENTITY_ARGS[@]}" "${DEFT_CACHE_ARGS[@]}" "${DEFT_MOUNTS[@]}" "$DEFT_IMAGE" "${DEFT_COMMAND[@]}" validate /deft/run.yaml
+# With the config, preflight also checks each action's scratch, GPU count and,
+# when execution.capabilities.gpu_faiss is set, GPU FAISS.
+docker run --rm "${DEFT_RUNTIME[@]}" "${DEFT_IDENTITY_ARGS[@]}" "${DEFT_CACHE_ARGS[@]}" "${DEFT_MOUNTS[@]}" "$DEFT_IMAGE" "${DEFT_COMMAND[@]}" preflight /deft/run.yaml --gpu
 docker run --rm "${DEFT_IDENTITY_ARGS[@]}" "${DEFT_CACHE_ARGS[@]}" "${DEFT_MOUNTS[@]}" "$DEFT_IMAGE" "${DEFT_COMMAND[@]}" plan /deft/run.yaml
 ```
+
+Do not request approval until the config preflight passes: `validate` and
+`plan` do not check the runtime allocation.
 
 After approval, the Docker platform opens the job-record and binds
 `output.run_dir` to its results directory. Its returned `JOB_ID` names the
