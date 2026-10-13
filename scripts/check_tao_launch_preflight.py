@@ -22,6 +22,8 @@ import yaml
 from pathlib import Path
 from typing import Any
 
+from tao_slurm_ssh import ssh_command
+
 
 DEFAULT_SKILL_BANK = Path(
     os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")
@@ -906,30 +908,6 @@ def check_json_required_fields_remote(
     detail = reason[-1] if reason else "exit " + str(result.returncode)
     print(f"Remote JSON fields missing or invalid: {label}={path}: {detail}")
     return False
-
-
-def ssh_command(host: str, remote_command: str) -> list[str]:
-    user = os.environ["SLURM_USER"]
-    command = [
-        "ssh",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "PasswordAuthentication=no",
-        "-o",
-        "PreferredAuthentications=publickey",
-        "-o",
-        "ConnectTimeout=15",
-        "-o",
-        "StrictHostKeyChecking=yes",
-    ]
-    key_path = os.environ.get("SSH_KEY_PATH")
-    if key_path:
-        command.extend(
-            ["-i", str(Path(key_path).expanduser()), "-o", "IdentitiesOnly=yes"]
-        )
-    command.extend([f"{user}@{host}", remote_command])
-    return command
 
 
 def s3_paths(paths: list[tuple[str, str]]) -> list[tuple[str, str]]:
