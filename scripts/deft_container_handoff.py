@@ -48,16 +48,18 @@ def capture(argv, cwd=None):
     return subprocess.check_output(argv, cwd=cwd, text=True).strip()
 
 
+# git archive exports no submodules, so the snapshots cannot hold a gitlink.
+# Submodule repositories are tested from their own source mounts.
+FEATURE_DIFF = ["git", "diff", "--name-only", "--diff-filter=ACMR", "--ignore-submodules=all"]
+
+
 def source_info(path, base_ref="origin/main"):
     """Require a clean committed snapshot and enumerate its feature diff."""
     if capture(["git", "status", "--porcelain"], path):
         raise ValueError(f"Commit or stash changes before testing: {path}")
     commit = capture(["git", "rev-parse", "HEAD"], path)
     base = capture(["git", "merge-base", base_ref, commit], path)
-    files = capture(
-        ["git", "diff", "--name-only", "--diff-filter=ACMR", base, commit],
-        path,
-    )
+    files = capture([*FEATURE_DIFF, base, commit], path)
     return {"commit": commit, "base": base, "changed_files": files.splitlines()}
 
 
@@ -149,6 +151,27 @@ def fresh_start_check():
         )
     if resume is not None:
         raise RuntimeError(f"Installed TAO PyTorch resumes from {resume!r} instead of starting fresh")
+
+
+def workflow_contract_check():
+    """Reject a DS image without the multi-task placeholder guard or exit code 143.
+
+    Both arrived together (tao-data-services#59); older images accept the recipe
+    placeholder at validate and exit 0 after a cancel.
+    """
+    import yaml
+    cli = importlib.import_module("nvidia_tao_ds.mining.dinov3.workflow.cli")
+    config = importlib.import_module("nvidia_tao_ds.mining.dinov3.workflow.config")
+    recipe = yaml.safe_load(Path(cli.RECIPES["multi-task-round-robin"]).read_text(encoding="utf-8"))
+    try:
+        config.WorkflowConfig.from_dict(recipe)
+    except ValueError as error:
+        if "score adapter" not in str(error):
+            raise RuntimeError(f"Data Services rejected the multi-task recipe for another reason: {error}") from error
+    else:
+        raise RuntimeError("Data Services image accepts the multi-task recipe's placeholder score adapter")
+    if getattr(cli, "CANCELED_EXIT_CODE", None) != 143:
+        raise RuntimeError("Data Services image does not exit 143 for a canceled run")
 
 
 def benchmark_isolation_check():
@@ -247,6 +270,7 @@ def packaged_check(repo, require_gpu_faiss=False):
         if contracts.get("benchmark_isolation", 0) < BENCHMARK_ISOLATION_CONTRACT:
             raise RuntimeError("Data Services image predates held-out benchmark isolation")
         benchmark_isolation_check()
+        workflow_contract_check()
     else:
         import torch
         if not torch.cuda.is_available():
@@ -306,9 +330,14 @@ def inside(repo, suite, require_gpu_faiss=False):
         subprocess.run(["git", "add", "--force", "-A"], cwd=work, check=True)
         subprocess.run(["git", "-c", "user.name=Container CI", "-c", "user.email=ci@example.invalid",
                         "commit", "--no-gpg-sign", "-qm", "CI candidate snapshot"], cwd=work, check=True)
-        observed = capture(["git", "diff", "--name-only", "--diff-filter=ACMR", "HEAD^", "HEAD"], work).splitlines()
-        if observed != manifest["repos"][repo]["changed_files"]:
-            raise RuntimeError("Archived snapshots do not reproduce the approved feature diff")
+        observed = capture([*FEATURE_DIFF, "HEAD^", "HEAD"], work).splitlines()
+        expected = manifest["repos"][repo]["changed_files"]
+        if observed != expected:
+            raise RuntimeError(
+                "Archived snapshots do not reproduce the approved feature diff: "
+                f"missing {sorted(set(expected) - set(observed))}, "
+                f"unexpected {sorted(set(observed) - set(expected))}"
+            )
         venv = root / "test-tools"
         os.environ["PIP_CACHE_DIR"] = str(root / "pip-cache")
         subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(venv)], check=True)
@@ -373,6 +402,10 @@ def run(args):
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "--gpus", args.gpus, "--shm-size=8g", "--entrypoint", "python",
                 "-e", "PYTHONDONTWRITEBYTECODE=1",
+                # Host UIDs are often absent from the image's passwd; torch's
+                # getpass and caches need a name and a writable home. /tmp keeps
+                # the caches out of the --output evidence directory.
+                "-e", "USER=tao", "-e", "LOGNAME=tao", "-e", "HOME=/tmp",
                 "--mount", f"type=bind,src={inputs},dst=/inputs,readonly",
                 "--mount", f"type=bind,src={results},dst=/results",
                 image_ids[images[name]], "/inputs/driver.py", "inside", "--repo", name, "--suite", args.suite]
