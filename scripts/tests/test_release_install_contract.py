@@ -27,7 +27,7 @@ def test_release_branch_publishes_7_3_images_and_new_plugin_version():
         (REPO_ROOT / ".claude-plugin/marketplace.json").read_text()
     )
     advertised = marketplace["metadata"]["version"]
-    assert advertised == "0.1.13"
+    assert advertised == "0.1.16"
     assert {manifest["version"] for manifest in manifests} == {advertised}
 
 

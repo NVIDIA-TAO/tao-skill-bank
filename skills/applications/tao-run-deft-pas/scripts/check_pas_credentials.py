@@ -26,8 +26,24 @@ class CredentialPresence:
     status: str
 
 
-def check(required: list[str], optional: list[str]) -> tuple[dict, bool]:
+def check(
+    required: list[str],
+    optional: list[str],
+    *,
+    ngc_key_requirement: str,
+) -> tuple[dict, bool]:
     """Build a deterministic presence-only report and its success verdict."""
+    if "NGC_KEY" in {*required, *optional}:
+        raise ValueError(
+            "NGC_KEY is classified only by --ngc-key-requirement; do not pass it "
+            "through --required or --optional"
+        )
+    if ngc_key_requirement == "required":
+        required = [*required, "NGC_KEY"]
+    elif ngc_key_requirement == "not-required":
+        optional = [*optional, "NGC_KEY"]
+    else:
+        raise ValueError("ngc_key_requirement must be required or not-required")
     names = [*required, *optional]
     invalid = [name for name in names if NAME_PATTERN.fullmatch(name) is None]
     if invalid:
@@ -50,6 +66,7 @@ def check(required: list[str], optional: list[str]) -> tuple[dict, bool]:
     return (
         {
             "schema_version": "1",
+            "ngc_key_requirement": ngc_key_requirement,
             "credentials": [asdict(entry) for entry in entries],
             "missing_required": missing,
         },
@@ -59,6 +76,12 @@ def check(required: list[str], optional: list[str]) -> tuple[dict, bool]:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--ngc-key-requirement",
+        required=True,
+        choices=("required", "not-required"),
+        help="whether image acquisition needs NGC_KEY in this process",
+    )
     parser.add_argument("--required", action="append", default=[], metavar="ENV_NAME")
     parser.add_argument("--optional", action="append", default=[], metavar="ENV_NAME")
     return parser
@@ -67,9 +90,11 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        if not args.required and not args.optional:
-            raise ValueError("at least one --required or --optional name is required")
-        report, ok = check(args.required, args.optional)
+        report, ok = check(
+            args.required,
+            args.optional,
+            ngc_key_requirement=args.ngc_key_requirement,
+        )
     except ValueError as exc:
         print(f"check_pas_credentials: {exc}", file=sys.stderr)
         return 2
