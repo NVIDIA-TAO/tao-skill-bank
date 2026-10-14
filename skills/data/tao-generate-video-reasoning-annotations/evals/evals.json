@@ -1,7 +1,7 @@
 [
   {
     "id": "tao-generate-video-reasoning-annotations-basic",
-    "question": "A user request: \"Use the tao-generate-video-reasoning-annotations skill.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools \u2014 describe the plan only.",
+    "question": "A user request: \"Use the tao-generate-video-reasoning-annotations skill.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
     "expected_skill": "tao-generate-video-reasoning-annotations",
     "expected_script": null,
     "ground_truth": "Identify tao-generate-video-reasoning-annotations as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
@@ -9,6 +9,38 @@
       "Identifies tao-generate-video-reasoning-annotations as the relevant skill",
       "Outlines the documented workflow steps from SKILL.md",
       "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-generate-video-reasoning-annotations-warehouse-plan",
+    "question": "I have warehouse CCTV videos in /data/vra_pilot, a mix of anomaly and normal clips, and an OpenAI-compatible endpoint. My API key is already exported as OPENAI_API_KEY. Plan a pilot run that turns them into chain-of-thought QA training data. Do NOT run any commands, scripts, containers, or other tools — describe the plan and the spec you would use.",
+    "expected_skill": "tao-generate-video-reasoning-annotations",
+    "expected_script": null,
+    "ground_truth": "Select tao-generate-video-reasoning-annotations. Start from the bundled spec video_reasoning_annotation_warehouse_openai.yaml copied out of the installed nvidia_tao_ds package, set prompts_module: warehouse and workflow.mode: auto, fill results_dir, data.video_root, and the endpoint base_url/model names in the YAML, and run auto_label generate -e <spec> in the data-services container with --gpus all. Use the new step names (0a-0f, 1a-1c, 2a, 3, 4a, 4b, 5), verify one caption by eye for video_content_type, keep the key in the environment, and recommend a 5-10 video pilot before a full run. Do not execute anything.",
+    "expected_behavior": [
+      "Names tao-generate-video-reasoning-annotations as the applicable skill",
+      "Starts from the bundled video_reasoning_annotation_warehouse_openai.yaml spec rather than generating one with auto_label default_specs",
+      "Sets prompts_module to the bundled short name warehouse",
+      "Uses the new step names (0a-0f, 1a, 1b, 1c, 2a, 3, 4a, 4b, 5) and does not use the retired steps \"0\", \"2\", or \"4\"",
+      "Keeps the API key in the OPENAI_API_KEY environment variable and does not write it into the spec YAML or onto the command line",
+      "Runs in the data-services container with GPU access (--gpus all)",
+      "Recommends checking one caption for refusals (video_content_type) and running a small pilot first",
+      "Does not run commands, scripts, containers, installs, or web searches"
+    ]
+  },
+  {
+    "id": "tao-generate-video-reasoning-annotations-custom-domain",
+    "question": "My videos are hospital corridor CCTV, which none of the standard domains cover. Using the video reasoning annotation pipeline, how do I get domain-specific prompts? Do NOT run any commands, scripts, containers, or other tools — describe the plan only.",
+    "expected_skill": "tao-generate-video-reasoning-annotations",
+    "expected_script": null,
+    "ground_truth": "Select tao-generate-video-reasoning-annotations. Prompts live in the pipeline package nvidia_tao_ds.auto_label.video_reasoning_annotation.prompts; the skill ships no prompt files. First confirm no bundled module (generic, smart_space, warehouse, retail, traffic, public_safety) fits, then run the consultation (what questions the model should answer, what the captions must capture), copy the pipeline's prompts/template.py out of the container, fill its [PLACEHOLDER] markers for the enabled qa_types, make it importable (package on PYTHONPATH), set prompts_module to its dotted path, and pilot 3-5 videos. Do not execute anything.",
+    "expected_behavior": [
+      "Names tao-generate-video-reasoning-annotations as the applicable skill",
+      "Checks the bundled prompt modules in the pipeline package before writing a custom one",
+      "Starts the custom module from the pipeline's prompts/template.py, not from a prompts_traffic.py or prompts_warehouse.py file copied from the skill",
+      "Asks what questions the trained model should answer and what the captions must capture before writing prompts",
+      "Makes the module importable in the container and sets prompts_module to its dotted path",
+      "Does not run commands, scripts, containers, installs, or web searches"
     ]
   }
 ]

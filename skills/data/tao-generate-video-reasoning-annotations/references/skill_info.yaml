@@ -5,6 +5,12 @@ gpu_spec_key: null
 required_credentials: []
 actions:
   generate:
+    # {config_path} is a copy of a bundled experiment_specs/video_reasoning_annotation_*.yaml
+    # with endpoints (vlm/llm/models) edited in the file: the bundled specs share endpoint
+    # blocks via YAML anchors, so CLI overrides of vlm.*/llm.* do not reach models.*.
+    # Only per-run fields are args. Domain fields (prompts_module, qa_types, mode, fp_guards,
+    # license, description_extra) live in the spec: a CLI default would replace the spec's
+    # value (e.g. public_safety's prompts and QA families).
     command: auto_label generate -e {config_path}
     config_format: yaml
     mode: args
@@ -22,20 +28,8 @@ actions:
       results_dir: '{results_dir}'
       video_reasoning_annotation.data.video_root: '{video_root}'
       video_reasoning_annotation.data.input_jsonl_files: '{input_jsonl_files}'
-      video_reasoning_annotation.vlm.backend: '{vlm_backend}'
-      video_reasoning_annotation.llm.backend: '{llm_backend}'
       video_reasoning_annotation.workflow.steps: '{steps}'
-      video_reasoning_annotation.workflow.mode: '{mode}'
-      video_reasoning_annotation.workflow.qa_types: '{qa_types}'
-      video_reasoning_annotation.prompts_module: '{prompts_module}'
-      video_reasoning_annotation.license: '{license}'
-      video_reasoning_annotation.description_extra: '{description_extra}'
+      video_reasoning_annotation.workflow.qa_resume: '{qa_resume}'
     defaults:
-      vlm_backend: gemini
-      llm_backend: gemini
-      steps: '["0","1a","1b","1c","2","3","4"]'
-      mode: auto
-      qa_types: '["mcq","bcq","open_qa","causal_linkage","temporal_localization","temporal_event_desc","scene_description","event_summary"]'
-      prompts_module: ''
-      license: ''
-      description_extra: ''
+      steps: '["0a","0b","0c","0d","0e","0f","1a","1b","1c","2a","3","4a","4b","5"]'
+      qa_resume: 'false'
