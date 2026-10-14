@@ -59,6 +59,17 @@ def test_templates_match_packaged_schema_defaults(action):
     assert template == schema(action)["default"]
 
 
+@pytest.mark.parametrize("action", ["train", "evaluate", "inference", "export", "quantize"])
+def test_evaluation_defaults_use_iou3d_without_hota(action):
+    packaged = schema(action)
+    dataset = packaged["properties"]["dataset"]
+    for defaults in (packaged["default"]["dataset"], dataset["default"]):
+        assert defaults["eval_dist_fcn"] == "iou_3d"
+        assert defaults["eval_hota"] is False
+    assert dataset["properties"]["eval_dist_fcn"]["default"] == "iou_3d"
+    assert dataset["properties"]["eval_hota"]["default"] is False
+
+
 @pytest.mark.parametrize("action", ACTIONS)
 def test_declared_action_inputs_exist_in_schema(action):
     for field in INFO["actions"][action]["inputs"]:
