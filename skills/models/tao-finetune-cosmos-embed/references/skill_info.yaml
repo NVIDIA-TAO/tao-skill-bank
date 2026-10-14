@@ -1,8 +1,10 @@
 network_arch: cosmos-embed
 huggingface_model_ids:
 - nvidia/Cosmos-Embed1-224p
+- nvidia/Cosmos-Embed1-336p
+- nvidia/Cosmos-Embed1-448p
 automl_enabled: false
-container_image: nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed  # versions-key: images.tao_toolkit.cosmos_embed
+container_image: nvcr.io/nvidia/tao/tao-toolkit:7.3.0-cosmos-embed  # versions-key: images.tao_toolkit.cosmos_embed
 required_credentials:
 - HF_TOKEN
 data_format: msrvtt
@@ -102,5 +104,7 @@ spec_shorthand_keys:
   max_iter: train.max_iter
   batch_size: dataset.train_dataset.batch_size
   learning_rate: train.optim.lr
+  grad_accum_iter: train.grad_accum_iter
+  lora_rank: model.lora.lora_rank
   checkpoint: evaluate.checkpoint
   query_texts: inference.query.input_texts

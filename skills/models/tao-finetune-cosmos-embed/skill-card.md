@@ -25,6 +25,10 @@ Mitigation: Review and scan skill before deployment. <br>
 - [spec_template_inference.yaml](references/spec_template_inference.yaml) <br>
 - [spec_template_export_onnx.yaml](references/spec_template_export_onnx.yaml) <br>
 - [spec_template_export_hf.yaml](references/spec_template_export_hf.yaml) <br>
+- [spec_template_train_lora.yaml](references/spec_template_train_lora.yaml) <br>
+- [lora-finetune-physicalai.md](references/lora-finetune-physicalai.md) <br>
+- [data-staging.md](references/data-staging.md) <br>
+- [smoke-overrides.md](references/smoke-overrides.md) <br>
 
 
 ## Skill Output: <br>
