@@ -29,20 +29,20 @@
 
 images:
   tao_toolkit:
-    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch
-    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch
-    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
+    pyt:                nvcr.io/nvidia/tao/tao-toolkit:7.3.0-pyt
+    deploy:             nvcr.io/nvidia/tao/tao-toolkit:7.3.0-deploy
+    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.3.0-data-services
     # Sparse4D schemas and conversion require the TAO 7.3 runtime.
-    sparse4d_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-83-multiarch
-    sparse4d_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-80-multiarch
-    deft_pas_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.0.1-20260922T185808Z-a6a5e75
-    deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
+    sparse4d_pyt:       nvcr.io/nvidia/tao/tao-toolkit:7.3.0-pyt
+    sparse4d_data_services: nvcr.io/nvidia/tao/tao-toolkit:7.3.0-data-services
+    deft_pas_pyt:       nvcr.io/nvidia/tao/tao-toolkit:7.3.0-pyt
+    deft_pas_data_services: nvcr.io/nvidia/tao/tao-toolkit:7.3.0-data-services
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
-    cosmos_framework:   nvcr.io/nvstaging/tao/cosmos-framework:cosmos3-tao-reproducibility-20260818-6aa9a80
-    cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch
+    cosmos_framework:   nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-framework
+    cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
-    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
+    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.3.0-cosmos-embed
     vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
