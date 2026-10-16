@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-finetune-nv-tesseract-forecasting
+# Skill Benchmark: tao-finetune-kumo-forecast
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,13 +8,13 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-finetune-nv-tesseract-forecasting`
-- Evaluation date: 2026-09-17
+- Skill: `tao-finetune-kumo-forecast`
+- Evaluation date: 2026-10-16
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:99a0cd83e7725555f593bd8db284bde10731b7cf6a0f40d7accde38614b00fe3` (skill-evaluator-dataset-snapshot/1)
-- Attempts per task: 3
+- Dataset digest: `sha256:0d71ed10c27977b5a628fe06b3c1102a02f08586ca0b039cfff6943258746a23` (skill-evaluator-dataset-snapshot/1)
+- Attempts per task: 1
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
 - Tier 3 evidence: required for publication
@@ -35,16 +35,18 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.3% — baseline ran, but no comparable score was available; uplift unavailable | 95.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 94.4% — baseline ran, but no comparable score was available; uplift unavailable | 62.3% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 40.0% → 100.0% (+60.0 points) |
-| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 16.7% → 100.0% (+83.3 points) | 43.3% → 83.3% (+40.0 points) |
-| Efficiency | 71.7% — baseline ran, but no comparable score was available; uplift unavailable | 98.2% — baseline ran, but no comparable score was available; uplift unavailable |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 20.0% → 60.0% (+40.0 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 16.7% → 100.0% (+83.3 points) | 26.7% → 53.3% (+26.6 points) |
+| Efficiency | 72.2% — baseline ran, but no comparable score was available; uplift unavailable | 99.5% → 98.4% (-1.1 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
 Example: `47.0% → 92.0% (+45.0 points)` means the skill-assisted run scored 92.0%, 45.0 percentage points above its 47.0% no-skill baseline.
+
+A partial dimension was calculated from only the available configured signals; review the detailed report before relying on it.
 
 ## Token Usage
 
@@ -52,11 +54,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 103,285 | 92,426 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-finetune-nv-tesseract-forecasting-basic | 103,285 | 92,426 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | All cases | 31,345 | 13,790 | +17,555 | +127.30% | skill 1/1; base 1/1 |
-| codex | tao-finetune-nv-tesseract-forecasting-basic | 31,345 | 13,790 | +17,555 | +127.30% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 134,630 | 106,216 | N/A | N/A | skill 2/2; base 4/4 |
+| claude-code | All cases | 99,362 | 30,248 | +69,114 | +228.49% | skill 1/1; base 1/1 |
+| claude-code | tao-finetune-kumo-forecast-basic | 99,362 | 30,248 | +69,114 | +228.49% | skill 1/1; base 1/1 |
+| codex | All cases | 14,242 | 13,984 | +258 | +1.84% | skill 1/1; base 1/1 |
+| codex | tao-finetune-kumo-forecast-basic | 14,242 | 13,984 | +258 | +1.84% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 113,604 | 44,232 | +69,372 | +156.84% | skill 2/2; base 2/2 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -74,12 +76,12 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 <summary>Show detailed findings and successful checks</summary>
 
 - **HIGH** DUPLICATE/duplicate: Duplicate content found within references/automl.md:
-  "#### Basic mode (tune model parameters)" in references/automl.md (lines 163-175)
-  vs "#### DARR mode (tune blending parameters)" in references/automl.md (lines 291-303) (`references/automl.md:163`)
-- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/models/tao-finetune-nv-tesseract-forecasting/SKILL.md`)
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-finetune-nv-tesseract-forecasting/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-finetune-nv-tesseract-forecasting`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-finetune-nv-tesseract-forecasting/SKILL.md`)
+  "#### Basic mode (tune model parameters)" in references/automl.md (lines 154-166)
+  vs "#### DARR mode (tune blending parameters)" in references/automl.md (lines 271-283) (`references/automl.md:154`)
+- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/models/tao-finetune-kumo-forecast/SKILL.md`)
+- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-finetune-kumo-forecast/SKILL.md`)
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-finetune-kumo-forecast`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-finetune-kumo-forecast/SKILL.md`)
 - 14 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
