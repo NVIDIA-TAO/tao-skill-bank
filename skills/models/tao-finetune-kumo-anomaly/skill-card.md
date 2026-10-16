@@ -1,5 +1,5 @@
 ## Description: <br>
-NV-Tesseract AD Diffusion — diffusion-based anomaly detection and fine-tuning for multivariate time series. <br>
+Kumo-Anomaly — diffusion-based anomaly detection and fine-tuning for multivariate time series. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need to fine-tune NV-Tesseract AD Diffusion models or run inference for multivariate time-series anomaly detection. <br>
+Developers and engineers who need to run inference with, fine-tune, or run AutoML hyperparameter search for Kumo-Anomaly diffusion models to detect anomalies in multivariate time-series data. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [No] <br>
-**Credential Type(s):** [None] <br>
+**Requires API Key or External Credential:** [Optional] <br>
+**Credential Type(s):** [API key] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -25,17 +25,17 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [NV-Tesseract Source Code](https://github.com/NVIDIA/NV-Tesseract) <br>
-- [AD Diffusion README](https://github.com/NVIDIA/NV-Tesseract/blob/main/ad_diffusion/README.md) <br>
-- [Dataset Format and Conventions](https://github.com/NVIDIA/NV-Tesseract/blob/main/ad_diffusion/examples/datasets/README.md) <br>
-- [Pretrained Weights (HuggingFace)](https://huggingface.co/nvidia/nv-tesseract-ad-diffusion) <br>
+- [Kumo-TS Source Code](https://github.com/NVIDIA/Kumo-TS) <br>
+- [Kumo-Anomaly README](https://github.com/NVIDIA/Kumo-TS/blob/main/Kumo-Anomaly/README.md) <br>
+- [Dataset Format and Conventions](https://github.com/NVIDIA/Kumo-TS/blob/main/Kumo-Anomaly/examples/datasets/README.md) <br>
+- [Pretrained Weights (Hugging Face)](https://huggingface.co/nvidia/Kumo-Anomaly) <br>
 - [AutoML Reference](references/automl.md) <br>
 - [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Shell commands, Configuration instructions, Code, Files] <br>
-**Output Format:** [Markdown with inline bash code blocks] <br>
+**Output Format:** [Markdown with inline bash and Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -46,20 +46,20 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive), 3 attempts per task, each in an isolated sandbox pod. <br>
+1 evaluation task (1 positive), 1 attempt per task, each in an isolated sandbox pod. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
 - Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
 - Correctness: Checks final-answer correctness against the reference answer. <br>
-- Discoverability: Checks whether the expected skill was selected and the workflow executed. <br>
+- Discoverability: Checks whether the expected skill was loaded when needed. <br>
 - Effectiveness: Checks whether the user's goal was achieved and expected workflow behavior was followed. <br>
 - Efficiency: Checks tool-call productivity and token efficiency. <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Detects unsafe operations, secret leakage, and unauthorized access. <br>
 - `accuracy`: Verifies final-answer correctness against the reference answer. <br>
-- `skill_execution`: Verifies whether the expected skill was selected and decoys were avoided. <br>
+- `skill_execution`: Verifies whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
 - `goal_accuracy`: Verifies whether the user's goal was achieved. <br>
 - `behavior_check`: Verifies whether the expected workflow behavior was followed. <br>
 - `skill_efficiency`: Measures tool-call productivity. <br>
@@ -70,12 +70,14 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 91.1% | 59.7% |
+| Overall | 91.2% | 95.4% |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 6.7% → 100.0% (+93.3 points) | 20.0% → 46.7% (+26.7 points) |
-| Discoverability | 100.0% | 0.0% |
-| Effectiveness | 5.6% → 83.3% (+77.7 points) | 43.3% → 53.3% (+10.0 points) |
-| Efficiency | 72.0% | 99.5% → 98.7% (-0.8 points) |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 20.0% → 100.0% (+80.0 points) |
+| Discoverability | 100.0% | 95.0% |
+| Effectiveness | 16.7% → 83.3% (+66.6 points) | 16.7% → 83.3% (+66.6 points) |
+| Efficiency | 72.5% | 98.6% |
+
+Overall, Discoverability, and Efficiency: baseline ran, but no comparable score was available; uplift unavailable.
 
 ## Skill Version(s): <br>
 0.2.0 (source: frontmatter) <br>
