@@ -119,8 +119,8 @@ listed = {s for p in mp.get('plugins', []) for s in p.get('skills', [])}
 errs = 0
 for layer in sorted(os.listdir('skills')):
     layer_dir = os.path.join('skills', layer)
-    if layer == 'core' or not os.path.isdir(layer_dir):
-        continue  # skills/core/ ships via .codex-plugin, not the marketplace array
+    if not os.path.isdir(layer_dir):
+        continue  # core included: tao-skills must list the helper skills too, so Claude Code and Codex install the same set
     for name in sorted(os.listdir(layer_dir)):
         skill_dir = os.path.join(layer_dir, name)
         if not os.path.isfile(os.path.join(skill_dir, 'SKILL.md')):
@@ -346,7 +346,7 @@ for layer in ('models',):
                     continue
                 # "runnable from SKILL.md alone" is satisfied by a docker-native run
                 # path OR a self-contained local venv/uv Quick Start (the 7.1.0
-                # VirtualEnv platform option, e.g. NV-Tesseract / AutoML venv skills).
+                # VirtualEnv platform option, e.g. Kumo-Forecast / Kumo-Anomaly / AutoML venv skills).
                 if ('docker run' in text
                         or 'uv run' in text or 'uv sync' in text or 'uv pip install' in text
                         or 'python -m venv' in text or 'uv venv' in text or 'virtualenv' in text):

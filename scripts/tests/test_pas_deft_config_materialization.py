@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import subprocess
 import sys
 import types
@@ -19,11 +20,15 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PAS_ROOT = REPO_ROOT / "skills" / "applications" / "tao-run-deft-pas"
 PAS_SCRIPTS = PAS_ROOT / "scripts"
+PYT_IMAGE = "registry.example/tao-pyt:test"
+DS_IMAGE = "registry.example/tao-ds:test"
 sys.path.insert(0, str(PAS_SCRIPTS))
 
 import prepare_deft_config as prepare  # noqa: E402
+import render_deft_report  # noqa: E402
 import run_pas_stage  # noqa: E402
 from command_contract import expected_fresh_outputs  # noqa: E402
+from finetuning_contract import LoraAdapterParameters  # noqa: E402
 from pas_deft.config import (  # noqa: E402
     DeftExperimentConfig,
     PasDeftConfig,
@@ -44,6 +49,41 @@ def _base_argv(tmp_path: Path) -> tuple[list[str], Path, Path]:
     metadata_archive = tmp_path / "meta.tar.gz"
     images_archive.write_bytes(b"images")
     metadata_archive.write_bytes(b"metadata")
+    lora_attestation = tmp_path / "lora-capability.json"
+    tower = {
+        "mode": "last_n",
+        "target_modules": ["q_proj", "k_proj", "v_proj", "out_proj"],
+        "num_last_blocks": 3,
+        "rank": 8,
+        "alpha": 16,
+        "dropout": 0.05,
+    }
+    lora_attestation.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft", "lora"],
+                "clip_lora": {
+                    "checkpoint_behavior": "register-and-merge",
+                    "runtime_symbols": [
+                        "LoRALinear",
+                        "inject_lora",
+                        "merge_lora",
+                        "_register_lora_checkpoint_compatibility",
+                    ],
+                    "schema": {
+                        "enabled": False,
+                        "method": "lora",
+                        "vision": tower,
+                        "text": tower,
+                    },
+                },
+            }
+        )
+    )
     return (
         [
             "--workspace",
@@ -60,6 +100,12 @@ def _base_argv(tmp_path: Path) -> tuple[list[str], Path, Path]:
             "docker",
             "--max-iterations",
             "10",
+            "--pyt-image",
+            PYT_IMAGE,
+            "--lora-capability-attestation",
+            str(lora_attestation),
+            "--ds-image",
+            DS_IMAGE,
         ],
         results,
         dataset,
@@ -111,6 +157,96 @@ def _init_command(results: Path, dataset: Path, approval: dict) -> list[str]:
         "--tao-spec",
         str(results / "config" / "tao_spec.yaml"),
     ]
+
+
+def test_lora_is_default_and_sft_explicitly_disables_peft(tmp_path):
+    fields = {field.name: field for field in dataclasses.fields(LoraAdapterParameters)}
+    assert fields["rank"].metadata["valid_min"] == 1
+    assert fields["alpha"].metadata["description"]
+    _, results, _ = _materialize(tmp_path / "lora")
+    lora = _yaml(results / "config" / "tao_spec.yaml")
+    assert lora["peft"]["enabled"] is True
+    assert lora["peft"]["method"] == "lora"
+    assert lora["peft"]["vision"]["target_modules"] == [
+        "q_proj", "k_proj", "v_proj", "out_proj"
+    ]
+    lora_approval = json.loads(
+        (results / "config" / "approval.json").read_text(encoding="utf-8")
+    )
+    assert lora_approval["schema_version"] == "6"
+    assert lora_approval["lora_rank"] == 8
+    assert lora_approval["lora_alpha"] == 16
+
+    _, results, _ = _materialize(
+        tmp_path / "sft", "--finetuning-method", "sft"
+    )
+    sft = _yaml(results / "config" / "tao_spec.yaml")
+    assert sft["peft"] == {"enabled": False}
+    assert sft["model"]["freeze_vision_encoder"] is False
+    assert sft["model"]["freeze_text_encoder"] is False
+    sft_approval = json.loads(
+        (results / "config" / "approval.json").read_text(encoding="utf-8")
+    )
+    assert sft_approval["lora_rank"] is None
+    assert sft_approval["lora_alpha"] is None
+
+
+def test_lora_stops_before_config_without_matching_image_attestation(tmp_path):
+    argv, results, _ = _base_argv(tmp_path)
+    index = argv.index("--lora-capability-attestation")
+    argv[index + 1] = str(tmp_path / "missing.json")
+    with pytest.raises(ValueError, match="does not exist"):
+        prepare.materialize(prepare._parser().parse_args(argv))  # noqa: SLF001
+    assert not (results / "config").exists()
+    assert not (results / "deft_state.json").exists()
+
+
+def test_lora_rejects_attestation_for_another_image_before_config(tmp_path):
+    argv, results, _ = _base_argv(tmp_path)
+    attestation = Path(argv[argv.index("--lora-capability-attestation") + 1])
+    payload = json.loads(attestation.read_text())
+    payload["image_ref"] = "registry.example/unsupported:image"
+    attestation.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="does not pass for --pyt-image"):
+        prepare.materialize(prepare._parser().parse_args(argv))  # noqa: SLF001
+    assert not (results / "config").exists()
+    assert not (results / "deft_state.json").exists()
+
+
+def test_lora_approval_shape_must_match_both_materialized_towers(tmp_path):
+    _, results, dataset = _materialize(tmp_path)
+    approval_path = results / "config" / "approval.json"
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval["lora_rank"] = 4
+    approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8")
+
+    initialized = subprocess.run(
+        _init_command(results, dataset, approval),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert initialized.returncode == 2
+    assert "rank/alpha record does not match" in initialized.stderr
+    assert not (results / "deft_state.json").exists()
+
+
+def test_sft_requires_and_validates_the_same_digest_bound_runtime_attestation(tmp_path):
+    argv, results, _ = _base_argv(tmp_path)
+    argv.extend(["--finetuning-method", "sft"])
+    attestation_index = argv.index("--lora-capability-attestation")
+    without_attestation = argv[:attestation_index] + argv[attestation_index + 2 :]
+    with pytest.raises(ValueError, match="require --pyt-runtime-attestation"):
+        prepare.materialize(prepare._parser().parse_args(without_attestation))  # noqa: SLF001
+
+    attestation = Path(argv[attestation_index + 1])
+    payload = json.loads(attestation.read_text())
+    del payload["image_digest"]
+    attestation.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="immutable image_digest"):
+        prepare.materialize(prepare._parser().parse_args(argv))  # noqa: SLF001
+    assert not (results / "config").exists()
 
 
 def test_pas_notebook_controls_are_materialized_without_semantic_drift(tmp_path):
@@ -176,13 +312,39 @@ def test_mining_spec_is_the_only_materialized_mining_parameter_authority(tmp_pat
     assert "knn_metric" not in deft["mining"]
 
 
-def test_pas_uses_workflow_scoped_tao_7_2_image_contract():
+def test_pas_workflow_images_are_declared_in_versions_yaml():
     versions = _yaml(REPO_ROOT / "versions.yaml")
     tao_images = versions["images"]["tao_toolkit"]
-    assert prepare.PINNED_PYT_IMAGE == tao_images["deft_pas_pyt"]
-    assert prepare.PINNED_DS_IMAGE == tao_images["deft_pas_data_services"]
-    assert ":7.2.0-" in prepare.PINNED_PYT_IMAGE
-    assert ":7.2.0-" in prepare.PINNED_DS_IMAGE
+    assert tao_images["deft_pas_pyt"].strip()
+    assert tao_images["deft_pas_data_services"].strip()
+
+
+def test_pas_materializes_explicit_pytorch_image_override(tmp_path):
+    override = "registry.example/tao-pyt:capability"
+    argv, results, _ = _base_argv(tmp_path)
+    attestation = Path(argv[argv.index("--lora-capability-attestation") + 1])
+    payload = json.loads(attestation.read_text())
+    payload["image_ref"] = override
+    attestation.write_text(json.dumps(payload))
+    args = prepare._parser().parse_args([*argv, "--pyt-image", override])  # noqa: SLF001
+    report = prepare.materialize(args)
+    approval = json.loads((results / "config" / "approval.json").read_text())
+    assert approval["pyt_image"] == override
+    assert report["approval_manifest"] == str(results / "config" / "approval.json")
+
+
+def test_pas_rejects_empty_pytorch_image_override(tmp_path):
+    argv, _, _ = _base_argv(tmp_path)
+    args = prepare._parser().parse_args([*argv, "--pyt-image", ""])  # noqa: SLF001
+    with pytest.raises(ValueError, match="non-empty image reference"):
+        prepare.materialize(args)
+
+
+def test_pas_rejects_empty_data_services_image(tmp_path):
+    argv, _, _ = _base_argv(tmp_path)
+    args = prepare._parser().parse_args([*argv, "--ds-image", ""])  # noqa: SLF001
+    with pytest.raises(ValueError, match="non-empty image reference"):
+        prepare.materialize(args)
 
 
 def test_tao_7_2_pas_evaluation_artifacts_are_the_runtime_contract(tmp_path):
@@ -246,6 +408,10 @@ def test_test_split_survives_state_initialization_and_audit(tmp_path):
     assert state["config"]["eval_split"] == "test"
     assert state["config"]["queries_per_slice"] == 50
     assert state["config"]["text_embed_model"] == "SigLIP"
+    assert state["config"]["finetuning_method"] == "lora"
+    assert state["config"]["lora_rank"] == 8
+    assert state["config"]["lora_alpha"] == 16
+    assert state["config"]["pyt_image_digest"] == "sha256:" + "a" * 64
     assert state["config"]["visualize"] is False
     assert state["config"]["visualize_embeddings"] is False
 
@@ -276,6 +442,43 @@ def test_test_split_survives_state_initialization_and_audit(tmp_path):
     assert typed.mining.knn_metric == "cosine"
 
 
+def test_report_renders_the_durable_finetuning_method(tmp_path):
+    state = {
+        "workflow": "tao-run-deft-pas",
+        "started_at": "2026-10-07T00:00:00+00:00",
+        "max_iterations": 1,
+        "current_iteration": 0,
+        "metric_contract": {
+            "metric_name": "Rank-1",
+            "query_type": "medium",
+            "op": ">=",
+            "target": None,
+        },
+        "config": {
+            "finetuning_method": "lora",
+            "lora_rank": 8,
+            "lora_alpha": 16,
+        },
+        "iterations": {},
+    }
+    document, _, _ = render_deft_report._render_html(  # noqa: SLF001
+        results_dir=tmp_path,
+        trigger="iteration-complete",
+        state=state,
+        entries=[],
+        audit_report={
+            "status": "IN_PROGRESS",
+            "terminal": False,
+            "next_action": "baseline/dataset_setup",
+            "warnings": [],
+        },
+    )
+    assert "finetuning_method" in document
+    assert ">lora<" in document
+    assert "lora_rank" in document and ">8<" in document
+    assert "lora_alpha" in document and ">16<" in document
+
+
 def test_schema_v3_approval_remains_valid_as_local_docker(tmp_path):
     _, results, dataset = _materialize(tmp_path)
     approval_path = results / "config" / "approval.json"
@@ -284,6 +487,10 @@ def test_schema_v3_approval_remains_valid_as_local_docker(tmp_path):
     approval.pop("platform")
     approval.pop("docker_remote")
     approval.pop("virtualenvs")
+    approval.pop("finetuning_method")
+    approval.pop("lora_rank")
+    approval.pop("lora_alpha")
+    approval.pop("pyt_image_digest")
     approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8")
 
     init = subprocess.run(
@@ -310,6 +517,42 @@ def test_schema_v3_approval_remains_valid_as_local_docker(tmp_path):
     )
     assert audit.returncode == 0, audit.stderr
     assert "DEFT_RUN_STATUS=IN_PROGRESS" in audit.stdout
+
+
+def test_schema_v5_approval_remains_valid_without_new_lora_record_fields(tmp_path):
+    _, results, dataset = _materialize(tmp_path)
+    approval_path = results / "config" / "approval.json"
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval["schema_version"] = "5"
+    approval.pop("lora_rank")
+    approval.pop("lora_alpha")
+    approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8")
+
+    initialized = subprocess.run(
+        _init_command(results, dataset, approval),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert initialized.returncode == 0, initialized.stderr
+    state = json.loads((results / "deft_state.json").read_text(encoding="utf-8"))
+    assert state["config"]["finetuning_method"] == "lora"
+    assert state["config"]["lora_rank"] is None
+    assert state["config"]["lora_alpha"] is None
+    audited = subprocess.run(
+        [
+            sys.executable,
+            str(PAS_SCRIPTS / "audit_deft_run.py"),
+            "--results-dir",
+            str(results),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert audited.returncode == 0, audited.stderr
+    assert "DEFT_RUN_STATUS=IN_PROGRESS" in audited.stdout
 
 
 @pytest.mark.parametrize(
@@ -444,11 +687,64 @@ def test_runtime_interpreter_probe_does_not_require_omegaconf(tmp_path, monkeypa
     assert completed.stdout.strip() == "RUNTIME_INTERPRETER_SELECTED"
 
 
+def test_runtime_interpreter_rejects_override_without_jsonschema(tmp_path, monkeypatch):
+    stubs = tmp_path / "runtime-dependencies"
+    stubs.mkdir()
+    for module_name in (
+        "pandas",
+        "numpy",
+        "pyarrow",
+        "PIL",
+        "yaml",
+        "matplotlib",
+        "sklearn",
+        "torch",
+    ):
+        (stubs / f"{module_name}.py").write_text("")
+    workspace_python = tmp_path / ".venv/bin/python"
+    workspace_python.parent.mkdir(parents=True)
+    workspace_python.symlink_to(sys.executable)
+    incomplete = tmp_path / "python-without-jsonschema"
+    incomplete.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = -c ]; then\n"
+        "  case \"$2\" in *jsonschema*) exit 1 ;; *) exit 0 ;; esac\n"
+        "fi\n"
+        "printf '%s\\n' INCOMPLETE_INTERPRETER_SELECTED >&2\n"
+        "exit 86\n"
+    )
+    incomplete.chmod(0o755)
+    monkeypatch.setenv("DEFT_PYTHON", str(incomplete))
+    monkeypatch.setenv("PYTHONPATH", str(stubs))
+
+    completed = subprocess.run(
+        [
+            str(PAS_SCRIPTS / "deft_python.sh"),
+            "--runtime",
+            "--workspace",
+            str(tmp_path),
+            "-c",
+            "print('WORKSPACE_RUNTIME_SELECTED')",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "INCOMPLETE_INTERPRETER_SELECTED" not in completed.stderr
+    assert completed.stdout.strip() == "WORKSPACE_RUNTIME_SELECTED"
+
+
 @pytest.mark.parametrize(
     ("section", "field", "value", "expected"),
     [
         ("iteration", "start", 1.5, "cannot be converted to int"),
         ("training", "continual_model", "sometimes", "cannot be converted to bool"),
+        ("training", "continual_model", -1, "integer booleans must be 0 or 1"),
+        ("training", "continual_model", 2, "integer booleans must be 0 or 1"),
+        ("experiment", "name", -1, "cannot be converted to str"),
         ("gap_analysis", "metric_name", None, "cannot be null"),
     ],
 )
@@ -466,6 +762,32 @@ def test_typed_runtime_rejects_values_outside_declared_scalar_types(
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
 
     with pytest.raises(ValueError, match=expected):
+        PasDeftConfig(str(config_path))
+
+
+@pytest.mark.parametrize("value", [0, 1])
+def test_typed_runtime_accepts_unambiguous_integer_booleans(tmp_path, value):
+    _, results, _ = _materialize(tmp_path)
+    config_path = results / "config" / "deft_config.yaml"
+    payload = _yaml(config_path)
+    payload["training"]["continual_model"] = value
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    typed = PasDeftConfig(str(config_path))
+    assert typed.training.continual_model is bool(value)
+
+
+def test_typed_runtime_rejects_non_string_pas_path_before_normalization(tmp_path):
+    _, results, _ = _materialize(tmp_path)
+    config_path = results / "config" / "deft_config.yaml"
+    payload = _yaml(config_path)
+    payload["pas"]["eval_caption_dir"] = -1
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    with pytest.raises(
+        ValueError,
+        match=r"deft_config.yaml: pas.eval_caption_dir=-1.*expected str",
+    ):
         PasDeftConfig(str(config_path))
 
 

@@ -29,6 +29,11 @@ fine-tuning skill.
 
 ## Discovery flow
 
+Route DINOv3 SSL GRIT, unlabeled-pool data selection, active-learning-style
+mining with C-RADIO, and multi-task weakness loops to
+`tao-run-dinov3-ssl-deft`. Plain DINOv3 pretraining/fine-tuning stays with
+`tao-train-dinov3`; AOI/PAS DEFT use their own application skills.
+
 Model-first routing is mandatory. Resolve a supplied model ID with
 `scripts/resolve_tao_model.py` before selecting a generic workflow. When the
 request names an action or workload, pass `--action` and `--workload`. If the

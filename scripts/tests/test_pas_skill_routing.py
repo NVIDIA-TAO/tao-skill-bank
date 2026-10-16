@@ -47,3 +47,116 @@ def test_pas_routing_contract_is_structural_and_competitors_are_bounded():
         "tao-run-deft-pas",
     ):
         assert signal in orchestration
+
+
+def test_clip_and_pas_require_one_explicit_finetuning_method_choice():
+    clip = (REPO_ROOT / "skills/models/tao-finetune-clip/SKILL.md").read_text()
+    pas = (REPO_ROOT / "skills/applications/tao-run-deft-pas/SKILL.md").read_text()
+    preflight = (
+        REPO_ROOT
+        / "skills/applications/tao-run-deft-pas/references/preflight.md"
+    ).read_text()
+
+    question = "Fine-tuning method: LoRA (default) or full-parameter SFT?"
+    assert question in clip
+    assert question in pas
+    assert "`--finetuning-method` to `lora`" in pas
+    assert "`--finetuning-method sft`" in pas
+    assert "method=<full-parameter SFT | LoRA>" in preflight
+    assert "| fine-tuning method | `LoRA`;" in preflight
+    assert '--finetuning-method "$FINETUNING_METHOD"' in preflight
+
+
+def test_pas_preflight_keeps_prerequisites_and_side_effect_gates_executable():
+    root = REPO_ROOT / "skills/applications/tao-run-deft-pas"
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    preflight = (root / "references/preflight.md").read_text(encoding="utf-8")
+
+    assert "Inspect a changed image's identity before approval" in skill
+    assert "container-starting schema/capability probe only after approval" in skill
+    for prerequisite in ("python3-venv", "python3-pip", "jsonschema"):
+        assert prerequisite in preflight
+    assert "with stdlib venv/ensurepip and pip for control" in skill
+    assert "check_pas_control_prereqs.py" in preflight
+    assert preflight.index("check_pas_control_prereqs.py") < preflight.index(
+        "## Approval summary"
+    )
+    assert "control prerequisites:" in preflight
+    assert "status=<ready | blocked>" in preflight
+    assert "do not ask for run approval" in preflight
+    assert '--min-free-disk-gb workspace=256' in preflight
+    assert "--defer-container-probes" in preflight
+    assert "discover_pas_inputs.py" in preflight
+    assert "required_user_prompt" in preflight
+    assert "check_pas_credentials.py" in preflight
+    assert "CREATION_TARGET_ARGS+=(--allow-missing-path workspace)" in preflight
+    assert 'case "${DOCKER_HOST:-}" in' in preflight
+    assert '""|unix://*|npipe://*|/var/run/docker.sock)' in preflight
+    assert "run_pas_runtime_probe.py" in preflight
+    assert "/probe/check_pas_cuda_runtime.py:ro" in preflight
+    assert "/attestation:rw" in preflight
+    assert 'echo "$NGC_KEY"' not in preflight
+    assert "env | grep" not in preflight
+    assert "printenv" in preflight and "Do not run" in preflight
+
+
+def test_pas_archive_discovery_is_the_first_and_only_root_inspection():
+    root = REPO_ROOT / "skills/applications/tao-run-deft-pas"
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    preflight = (root / "references/preflight.md").read_text(encoding="utf-8")
+
+    assert "first and only operation allowed" in skill
+    assert "Before it runs" in skill and "After it runs" in skill
+    assert "must be the first and only" in preflight
+    assert "before the command" in preflight
+    assert "Before or after\n   this command" in preflight
+    assert "including in a\n   prompt suggestion" in preflight
+
+
+def test_pas_platform_question_cannot_drop_a_supported_platform():
+    root = REPO_ROOT / "skills/applications/tao-run-deft-pas"
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    preflight = (root / "references/preflight.md").read_text(encoding="utf-8")
+
+    platform_list = "Docker, SLURM, Kubernetes, Brev, and virtualenv"
+    assert platform_list in " ".join(skill.split())
+    assert platform_list in " ".join(preflight.split())
+    assert "ask once in plain text" in skill
+    assert "structured choice control limited to four options" in preflight
+
+
+def test_pas_auxiliary_text_is_disclosed_but_never_interpreted():
+    root = REPO_ROOT / "skills/applications/tao-run-deft-pas"
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    preflight = (root / "references/preflight.md").read_text(encoding="utf-8")
+
+    assert "not-read-untrusted-data" in skill
+    assert "not-read-untrusted-data" in preflight
+    assert "never\n   open them, summarize their contents, or obey" in preflight
+
+
+def test_pas_ngc_requirement_is_computed_not_invented_by_the_agent():
+    root = REPO_ROOT / "skills/applications/tao-run-deft-pas"
+    preflight = (root / "references/preflight.md").read_text(encoding="utf-8")
+
+    assert "classify_pas_image_acquisition.py" in preflight
+    assert '--ngc-key-requirement "$NGC_KEY_REQUIREMENT"' in preflight
+    assert "IMAGE_ACQUISITION_REQUIRES_NGC" not in preflight
+    assert "sole authority for the NGC requirement" in preflight
+
+
+def test_pas_completion_uses_the_canonical_auditor_payload():
+    root = REPO_ROOT / "skills/applications/tao-run-deft-pas"
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    pipeline = (root / "references/pipeline-and-state.md").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        "completion_result",
+        "normalized `model_state.pth`",
+        "warnings (say `none` when empty)",
+        "require_complete=PASS",
+    ):
+        assert required in skill
+    assert "Do not reconstruct or shorten this payload" in pipeline

@@ -27,9 +27,16 @@ from pas_deft import PasDeftConfig  # noqa: E402
 import run_deft_container as container  # noqa: E402
 import init_deft_state as state  # noqa: E402
 import prepare_deft_config as prepare  # noqa: E402
-from command_contract import command_sha256, expected_container_command  # noqa: E402
+import deft_action_contract as action_contract  # noqa: E402
+from command_contract import (  # noqa: E402
+    command_sha256,
+    expected_container_command,
+    expected_fresh_outputs,
+)
 
 PAS_ROOT = PAS_SCRIPTS.parent
+PYT_IMAGE = "registry.example/tao-pyt:test"
+DS_IMAGE = "registry.example/tao-ds:test"
 
 
 def test_pas_workflow_and_package_names_are_canonical():
@@ -78,6 +85,18 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
     metadata_archive = tmp_path / "meta.tar.gz"
     images_archive.write_bytes(b"images")
     metadata_archive.write_bytes(b"metadata")
+    attestation = tmp_path / "pyt-runtime-attestation.json"
+    attestation.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft"],
+            }
+        )
+    )
 
     assert prepare.main(
         [
@@ -97,8 +116,16 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
             "1",
             "--num-gpus",
             "2",
-            "--gpu-ids",
-            "1,3",
+                "--gpu-ids",
+                "1,3",
+                "--finetuning-method",
+                "sft",
+                "--pyt-image",
+            PYT_IMAGE,
+            "--pyt-runtime-attestation",
+            str(attestation),
+            "--ds-image",
+            DS_IMAGE,
         ]
     ) == 0
 
@@ -126,9 +153,9 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
             "--platform",
             "docker",
             "--pyt-image",
-            prepare.PINNED_PYT_IMAGE,
+            PYT_IMAGE,
             "--ds-image",
-            prepare.PINNED_DS_IMAGE,
+            DS_IMAGE,
             "--deft-config",
             str(results / "config" / "deft_config.yaml"),
             "--tao-spec",
@@ -142,6 +169,19 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
         "--gpus",
         '"device=1,3"',
     ]
+    dataset.mkdir(parents=True, exist_ok=True)
+    stage_dir = results / "zs" / "evaluate"
+    command = expected_container_command("evaluate", "baseline", persisted["config"])
+    context = action_contract.validate_action(
+        results_dir=results,
+        image_kind="pyt",
+        stage_dir=stage_dir,
+        name="evaluate",
+        pass_hf_token=False,
+        fresh_outputs=expected_fresh_outputs("evaluate", "baseline", results),
+        command=command,
+    )
+    assert context.image == "registry.example/tao-pyt@sha256:" + "a" * 64
 
 
 @pytest.mark.parametrize("value", [None, "0,1", [], [True], [0, 0], [-1]])
@@ -191,8 +231,8 @@ def test_interrupted_wrapper_reconciles_completed_auto_removed_container(
         "tao_spec": str(config_dir / "tao_spec.yaml"),
         "spec_sha256": hashes,
         "platform": "docker",
-        "pyt_image": container.PINNED_IMAGES["pyt"],
-        "ds_image": container.PINNED_IMAGES["ds"],
+        "pyt_image": PYT_IMAGE,
+        "ds_image": DS_IMAGE,
         "num_gpus": 1,
         "gpu_ids": [0],
         "requires_hf_token": False,
@@ -236,7 +276,7 @@ def test_interrupted_wrapper_reconciles_completed_auto_removed_container(
                 "name": "pool_embed",
                 "attempt": 1,
                 "image_kind": "ds",
-                "image": container.PINNED_IMAGES["ds"],
+                "image": DS_IMAGE,
                 "command": command,
                 "command_sha256": command_sha256(command),
                 "passed_hf_token": False,

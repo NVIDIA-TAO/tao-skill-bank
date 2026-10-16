@@ -361,6 +361,9 @@ actions:
     mode: config
     inputs:
       dataset.train_csv: { type: file }
+      checkpoint_root:
+        type: folder
+        container_path: /workspace/model/checkpoints
     outputs:
       results_dir: { type: folder }
     upload_excludes:
@@ -386,6 +389,12 @@ features: [tracking, multi-node, lustre]
 
 tags: [classification, my-domain]
 ```
+
+An input may declare `container_path` when the runtime requires a specific
+in-container mount destination. During action resolution, the launcher must
+translate this field into the selected platform's explicit mount target. The
+skill should validate the canonical location before beginning work. Do not
+assume that an arbitrary host path satisfies a runtime-owned absolute path.
 
 An action that needs runtime environment, pre/post commands, distributed-launch
 intent, completion evidence, or checked-in orchestration helpers emits the
@@ -485,7 +494,7 @@ List your skill under `tao-skills` (the marketplace's main plugin) so it ships w
 
 Users install with `/plugin install tao-skills@tao-skill-bank`. The plugin name (`tao-skills`) is what they type; the marketplace name (`tao-skill-bank`) is the source.
 
-Do not also add the skill under `skills/core/`. That directory is only for Codex helper/router skills that generate capability answers or launch intake from the packaged manifests. Mirroring model, data, platform, or application skills under both places gives agents duplicate trigger surfaces and increases the chance of stale or hallucinated routing.
+Do not also add the skill under `skills/core/`. That directory is only for helper/router skills — capability answers, launch intake, artifact handling — that ship to every runtime alongside the layer skills. Mirroring model, data, platform, or application skills under both places gives agents duplicate trigger surfaces and increases the chance of stale or hallucinated routing.
 
 ## 8. Validate
 
@@ -554,7 +563,7 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 
 **Duplicating docker boilerplate.** If your skill explains `--gpus`, NGC login, or nvidia-container-toolkit, delete it and link to `tao-skill-bank:tao-run-on-docker`.
 
-**Mirroring skills under `skills/core/`.** Keep one canonical skill location under `skills/models/`, `skills/data/`, `skills/platform/`, or `skills/applications/`. The `skills/core/` directory is a Codex helper surface, not a flat copy of the bank.
+**Mirroring skills under `skills/core/`.** Keep one canonical skill location under `skills/models/`, `skills/data/`, `skills/platform/`, or `skills/applications/`. The `skills/core/` directory holds helper/router skills, not a flat copy of the bank.
 
 **Over-long SKILL.md.** Keep it under ~500 lines. Move long reference material to `references/` and link.
 

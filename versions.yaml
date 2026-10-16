@@ -29,22 +29,22 @@
 
 images:
   tao_toolkit:
-    pyt:                    nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt
-    deploy:                 nvcr.io/nvidia/tao/tao-toolkit:7.2.0-deploy
-    data_services:          nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
-    # PAS pins independently; review both dedicated keys on every TAO image bump.
-    deft_pas_pyt:           nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt
-    deft_pas_data_services: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
+    pyt:                nvcr.io/nvidia/tao/tao-toolkit:7.3.0-pyt
+    deploy:             nvcr.io/nvidia/tao/tao-toolkit:7.3.0-deploy
+    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.3.0-data-services
+    deft_pas_pyt:       nvcr.io/nvidia/tao/tao-toolkit:7.3.0-pyt
+    deft_pas_data_services: nvcr.io/nvidia/tao/tao-toolkit:7.3.0-data-services
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
-    cosmos_framework:       nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-framework
-    cosmos_rl:              nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
-    deft_cosmos_reason:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
-    cosmos_predict:         nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
-    cosmos_embed:           nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
-    vila:                   nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
+    cosmos_framework:   nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-framework
+    cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
+    deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
+    cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
+    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.3.0-cosmos-embed
+    vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
     paidf_anomalygen: nvcr.io/nvidia/paidf-anomalygen:1.0.1
+    anomalygen_next: nvcr.io/nvidia/paidf-anomalygen:1.1.0
     paidf_augmentation: nvcr.io/nvidia/paidf-augmentation:1.0.0
 wheels:
   # TAO Python wheels, published to public PyPI. Skill Preflight sections

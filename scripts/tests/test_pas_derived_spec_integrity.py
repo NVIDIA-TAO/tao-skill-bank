@@ -25,6 +25,9 @@ import prepare_deft_config as prepare  # noqa: E402
 import run_deft_container as container  # noqa: E402
 import run_pas_stage as stage  # noqa: E402
 
+PYT_IMAGE = "registry.example/tao-pyt:test"
+DS_IMAGE = "registry.example/tao-ds:test"
+
 
 def _initialized_run(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
@@ -35,6 +38,18 @@ def _initialized_run(tmp_path: Path) -> Path:
     metadata_archive = tmp_path / "meta.tar.gz"
     images_archive.write_bytes(b"images")
     metadata_archive.write_bytes(b"metadata")
+    attestation = tmp_path / "pyt-runtime-attestation.json"
+    attestation.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft"],
+            }
+        )
+    )
     common = [
         "--workspace",
         str(workspace),
@@ -48,17 +63,29 @@ def _initialized_run(tmp_path: Path) -> Path:
         str(metadata_archive),
         "--max-iterations",
         "1",
+        "--pyt-image",
+        PYT_IMAGE,
+        "--ds-image",
+        DS_IMAGE,
     ]
-    assert prepare.main(common) == 0
+    assert prepare.main(
+        [
+            *common,
+            "--finetuning-method",
+            "sft",
+            "--pyt-runtime-attestation",
+            str(attestation),
+        ]
+    ) == 0
     assert state.main(
         [
             *common,
             "--platform",
             "docker",
             "--pyt-image",
-            prepare.PINNED_PYT_IMAGE,
+            PYT_IMAGE,
             "--ds-image",
-            prepare.PINNED_DS_IMAGE,
+            DS_IMAGE,
             "--deft-config",
             str(results / "config" / "deft_config.yaml"),
             "--tao-spec",

@@ -15,6 +15,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PAS_ROOT = REPO_ROOT / "skills/applications/tao-run-deft-pas"
 PREPARE = PAS_ROOT / "scripts/prepare_deft_config.py"
 INITIALIZE = PAS_ROOT / "scripts/init_deft_state.py"
+PYT_IMAGE = "registry.example/tao-pyt:test"
+DS_IMAGE = "registry.example/tao-ds:test"
+
+
 def _base_args(tmp_path: Path, selected: str):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -22,6 +26,18 @@ def _base_args(tmp_path: Path, selected: str):
     metadata = tmp_path / "meta.tar.gz"
     images.write_bytes(b"images")
     metadata.write_bytes(b"metadata")
+    attestation = tmp_path / "pyt-runtime-attestation.json"
+    attestation.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "image_digest": "sha256:" + "a" * 64,
+                "finetuning_methods": ["sft"],
+            }
+        )
+    )
     results = workspace / "results/run"
     dataset = workspace / "data/pas"
     args = [
@@ -41,6 +57,14 @@ def _base_args(tmp_path: Path, selected: str):
         "docker",
         "--max-iterations",
         "1",
+        "--finetuning-method",
+        "sft",
+        "--pyt-image",
+        PYT_IMAGE,
+        "--pyt-runtime-attestation",
+        str(attestation),
+        "--ds-image",
+        DS_IMAGE,
         "--num-gpus",
         str(len(selected.split(","))),
         "--gpu-ids",
