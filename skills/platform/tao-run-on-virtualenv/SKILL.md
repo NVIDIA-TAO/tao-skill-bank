@@ -130,6 +130,18 @@ finished before the cancel — mark the record with the status it reports instea
   procfs, `pidfd_open`, and `pidfd_send_signal`. On another POSIX host the
   `ps`/`pgrep` fallback can prove a group is empty, but cancellation of active
   members returns `UNKNOWN` instead of risking a reused numeric PID or PGID.
+- **Windows is refused, not merely untested.** The runner is POSIX-only *by
+  construction*: job identity is a process group (`os.getpgid` / `os.killpg`),
+  start markers come from `/proc`, and liveness is probed with
+  `os.kill(pid, 0)`. On Windows CPython that call is `OpenProcess` +
+  `TerminateProcess` with no signal-0 special case — a single `status` poll
+  would **kill the training job**, and `TerminateProcess(handle, 0)` would then
+  report a clean exit 0, i.e. a silent `COMPLETE` with no results. Every verb
+  therefore returns the JSON error contract immediately when `os.name == "nt"`.
+  Do not try to patch around it: native Windows execution is a different
+  process model (Job Objects, `GetProcessTimes` identity) and is served by the
+  **`tao-run-on-windows-venv`** skill. WSL2 counts as Linux — this skill is
+  correct there.
 - **No multi-node, no image resolution** — there is no container. The "image"
   recorded is the venv's interpreter path.
 - The runner never downloads anything. Remote inputs are the agent's job to

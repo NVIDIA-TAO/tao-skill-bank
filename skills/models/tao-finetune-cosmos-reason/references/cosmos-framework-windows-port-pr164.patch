@@ -1,0 +1,602 @@
+diff --git a/cosmos_framework/model/generator/reasoner/qwen3_vl_moe/moe_kernels.py b/cosmos_framework/model/generator/reasoner/qwen3_vl_moe/moe_kernels.py
+index 5fca13a..097bf37 100644
+--- a/cosmos_framework/model/generator/reasoner/qwen3_vl_moe/moe_kernels.py
++++ b/cosmos_framework/model/generator/reasoner/qwen3_vl_moe/moe_kernels.py
+@@ -4,8 +4,39 @@
+ from typing import Callable, Literal
+ 
+ import torch
+-import triton
+-import triton.language as tl
++
++try:
++    import triton
++    import triton.language as tl
++except ImportError:  # pragma: no cover - platform dependent
++    # Triton publishes no Windows wheel. The MoE kernels below are its only
++    # consumers here, but this module is imported *transitively* by the config
++    # graph (configs/base/defaults/model_config.py -> defaults/reasoner.py ->
++    # mot/unified_mot.py -> qwen3_vl_moe/moe.py) even for dense, non-MoE models.
++    # Stub the symbols so import succeeds; any attempt to actually launch a MoE
++    # kernel then fails loudly instead of silently degrading.
++    class _TritonUnavailable:
++        """Placeholder for triton / triton.language when triton is absent."""
++
++        def __getattr__(self, _name: str) -> "_TritonUnavailable":
++            return _TritonUnavailable()
++
++        def __call__(self, *args, **kwargs):
++            # Support bare-decorator use: @triton.jit
++            if len(args) == 1 and callable(args[0]) and not kwargs:
++
++                def _kernel_unavailable(*_a, **_k):
++                    raise RuntimeError(
++                        "Triton is unavailable on this platform (no Windows wheel), so the "
++                        "Qwen3-VL-MoE fused kernels cannot run. Use a dense (non-MoE) "
++                        "backbone such as Qwen/Qwen3-VL-8B-Instruct."
++                    )
++
++                return _kernel_unavailable
++            return _TritonUnavailable()
++
++    triton = _TritonUnavailable()  # type: ignore[assignment]
++    tl = _TritonUnavailable()  # type: ignore[assignment]
+ 
+ # Set the token group alignment size for experts in MoE. This is implemented by
+ # padding each expert size to the next multiple of TOKEN_GROUP_ALIGN_SIZE_M.
+diff --git a/cosmos_framework/model/tokenizer/evaluation/lpips_cache.py b/cosmos_framework/model/tokenizer/evaluation/lpips_cache.py
+index 8804ee5..ab4584c 100644
+--- a/cosmos_framework/model/tokenizer/evaluation/lpips_cache.py
++++ b/cosmos_framework/model/tokenizer/evaluation/lpips_cache.py
+@@ -5,7 +5,6 @@
+ 
+ from __future__ import annotations
+ 
+-import fcntl
+ import os
+ import stat
+ import tempfile
+@@ -16,6 +15,10 @@ from typing import TypeVar
+ 
+ import torch
+ 
++# fcntl is POSIX-only; win_compat.flock is a passthrough on Linux and an
++# msvcrt-based equivalent on Windows.
++from cosmos_framework.utils import win_compat as fcntl
++
+ _ModelT = TypeVar("_ModelT")
+ _READY_MARKER_PAYLOAD = b"cosmos3-tokenizer-lpips-cache-ready-v1\n"
+ _READY_MARKER_READ_ATTEMPTS = 10
+diff --git a/cosmos_framework/scripts/_train.py b/cosmos_framework/scripts/_train.py
+index 6532f40..b98ef16 100644
+--- a/cosmos_framework/scripts/_train.py
++++ b/cosmos_framework/scripts/_train.py
+@@ -32,7 +32,7 @@ from cosmos_framework.inference.common.config import (
+ from cosmos_framework.inference.common.init import init_output_dir, is_rank0
+ from cosmos_framework.utils.flags import SMOKE
+ from cosmos_framework.trainer import ImaginaireTrainer
+-from cosmos_framework.utils import log
++from cosmos_framework.utils import log, win_compat
+ 
+ if TYPE_CHECKING:
+     from torch.utils.data import DataLoader
+@@ -120,8 +120,18 @@ def train(args: Args) -> None:
+         effective_output_dir.mkdir(parents=True, exist_ok=True)
+         symlink_path = effective_output_dir / "job"
+         if symlink_path.is_symlink() or symlink_path.exists():
+-            os.remove(symlink_path)
+-        os.symlink(job_dir, symlink_path)
++            # A junction/dir link needs rmdir, a symlink-to-file needs remove.
++            try:
++                os.remove(symlink_path)
++            except (IsADirectoryError, PermissionError, OSError):
++                shutil.rmtree(symlink_path, ignore_errors=True)
++        # Creating a symlink on Windows requires Developer Mode or
++        # SeCreateSymbolicLinkPrivilege; neither is guaranteed. link_dir falls
++        # back to a directory junction and then to a pointer file so a
++        # convenience alias never aborts the run.
++        strategy = win_compat.link_dir(job_dir, symlink_path)
++        if strategy != "symlink":
++            log.warning(f"Could not symlink {symlink_path} -> {job_dir}; used {strategy} instead.")
+     if torch.distributed.is_initialized():
+         torch.distributed.barrier()
+ 
+diff --git a/cosmos_framework/scripts/dataset_utils.py b/cosmos_framework/scripts/dataset_utils.py
+index 6a66f72..64324f7 100644
+--- a/cosmos_framework/scripts/dataset_utils.py
++++ b/cosmos_framework/scripts/dataset_utils.py
+@@ -4,7 +4,6 @@
+ """Shared utilities for Action dataset export and evaluation workflows."""
+ 
+ import base64
+-import fcntl
+ import json
+ import os
+ import subprocess
+@@ -15,6 +14,10 @@ from urllib.parse import urlparse
+ from loguru import logger
+ from tqdm import tqdm
+ 
++# fcntl is POSIX-only; win_compat.flock is a passthrough on Linux and an
++# msvcrt-based equivalent on Windows.
++from cosmos_framework.utils import win_compat as fcntl
++
+ DEFAULT_GCS_CREDENTIALS = "credentials/gcp_checkpoint.secret"
+ GCS_CREDS_ENV_VAR = "COSMOS_GCP_CHECKPOINT_CREDS"
+ 
+diff --git a/cosmos_framework/trainer/__init__.py b/cosmos_framework/trainer/__init__.py
+index 2cf55ec..227ce43 100644
+--- a/cosmos_framework/trainer/__init__.py
++++ b/cosmos_framework/trainer/__init__.py
+@@ -198,7 +198,13 @@ class ImaginaireTrainer:
+         # One fetched batch reused for cp_size consecutive steps when CP is enabled.
+         self._cp_data_window = ContextParallelDataWindow()
+         # Send a TimeoutError if a training step takes over timeout_period seconds.
+-        signal.signal(signal.SIGALRM, functools.partial(misc.timeout_handler, config.trainer.timeout_period))  # type: ignore
++        # SIGALRM is POSIX-only; Windows has no alarm(2) equivalent, so the
++        # hang watchdog is simply disabled there rather than aborting init.
++        self._hang_watchdog_enabled = hasattr(signal, "SIGALRM")
++        if self._hang_watchdog_enabled:
++            signal.signal(signal.SIGALRM, functools.partial(misc.timeout_handler, config.trainer.timeout_period))  # type: ignore
++        else:
++            log.warning("signal.SIGALRM is unavailable on this platform; the step-timeout watchdog is disabled.")
+ 
+     def _fetch_data_batch(
+         self,
+@@ -409,7 +415,8 @@ class ImaginaireTrainer:
+                     if self.config.trainer.run_validation and (epoch_validation_due or iter_validation_due):
+                         self.validate(model, dataloader_val, iteration=iteration)
+                     # This iteration is successful; reset the timeout signal.
+-                    signal.alarm(self.config.trainer.timeout_period)
++                    if self._hang_watchdog_enabled:
++                        signal.alarm(self.config.trainer.timeout_period)
+                     self.straggler_detector.generate_report(iteration)
+                     if torch_profiler:
+                         torch_profiler.step()
+@@ -482,7 +489,15 @@ class ImaginaireTrainer:
+                 ):
+                     output_batch, loss = model_ddp.training_step(data, iteration)
+             self.callbacks.on_after_forward(iteration=iteration)
+-            model = model_ddp.module if self.config.trainer.distributed_parallelism == "ddp" else model_ddp
++            # `.module` only exists when the DDP wrapper was actually applied.
++            # parallel_model_wrapper may hand back the bare module (e.g.
++            # world_size==1 on Windows), so unwrap defensively rather than on
++            # the configured mode alone.
++            model = (
++                model_ddp.module
++                if self.config.trainer.distributed_parallelism == "ddp" and hasattr(model_ddp, "module")
++                else model_ddp
++            )
+             self.callbacks.on_before_backward(model, loss, iteration=iteration)
+             with self.training_timer("backward"):
+                 with self.straggler_detector.profile_section(
+diff --git a/cosmos_framework/utils/checkpoint_db.py b/cosmos_framework/utils/checkpoint_db.py
+index 3f76195..ad11503 100644
+--- a/cosmos_framework/utils/checkpoint_db.py
++++ b/cosmos_framework/utils/checkpoint_db.py
+@@ -250,6 +250,19 @@ class CheckpointDirHf(_CheckpointHf):
+                 for i, pattern in enumerate(patterns):
+                     patterns[i] = os.path.join(self.subdirectory, pattern)
+ 
++        # `--include *` is a *trivial* filter -- it already means "everything" --
++        # but the hf CLI parses a bare `*` as a positional FILENAME rather than as
++        # the include pattern:
++        #     UserWarning: Ignoring `--include` since filenames have been explicitly set.
++        # Only README.md is then fetched, `blobs/` stays empty, and the CLI still
++        # exits 0 returning a valid-looking snapshot path -- so the caller proceeds
++        # on an essentially empty snapshot and fails much later and misleadingly
++        # (e.g. `TypeError: expected str, bytes or os.PathLike object, not NoneType`
++        # out of the tokenizer's `open(vocab_file)`). Drop the flag when it adds
++        # nothing; a subdirectory-scoped pattern is still passed through.
++        if include == ["*"]:
++            include = []
++
+         cmd_args = [
+             self.repository,
+             "--repo-type",
+diff --git a/cosmos_framework/utils/distributed.py b/cosmos_framework/utils/distributed.py
+index ac2b1ea..29aeac1 100644
+--- a/cosmos_framework/utils/distributed.py
++++ b/cosmos_framework/utils/distributed.py
+@@ -42,18 +42,30 @@ def init() -> int | None:
+     local_rank = int(os.getenv("LOCAL_RANK", 0))
+     try:
+         device = Device(local_rank)
+-        allowed_affinity = set(os.sched_getaffinity(0))
+-        device_affinity = set(device.get_cpu_affinity())
+-        compatible_affinity = allowed_affinity.intersection(device_affinity)
+-        if compatible_affinity:
+-            os.sched_setaffinity(0, compatible_affinity)
++        # os.sched_getaffinity / os.sched_setaffinity are POSIX-only and do not
++        # exist on Windows. Guard before calling: an AttributeError is not an
++        # OSError, so it would escape the handler below and abort every
++        # entrypoint before training starts.
++        if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
++            allowed_affinity = set(os.sched_getaffinity(0))
++            device_affinity = set(device.get_cpu_affinity())
++            compatible_affinity = allowed_affinity.intersection(device_affinity)
++            if compatible_affinity:
++                os.sched_setaffinity(0, compatible_affinity)
++            else:
++                log.warning(
++                    "Skipping GPU CPU affinity because NVML affinity "
++                    f"{sorted(device_affinity)} does not intersect the process cpuset "
++                    f"{sorted(allowed_affinity)}"
++                )
+         else:
+             log.warning(
+-                "Skipping GPU CPU affinity because NVML affinity "
+-                f"{sorted(device_affinity)} does not intersect the process cpuset "
+-                f"{sorted(allowed_affinity)}"
++                "os.sched_getaffinity/sched_setaffinity are unavailable on this platform; "
++                "skipping CPU affinity."
+             )
+-    except (pynvml.NVMLError, OSError) as e:
++    # AttributeError kept in the tuple as a belt-and-braces guard for any other
++    # POSIX-only os.* attribute that may appear in this block later.
++    except (pynvml.NVMLError, OSError, AttributeError) as e:
+         log.warning(f"Failed to set device affinity: {e}")
+     # Set up distributed communication. CPU checkpoint conversion needs Gloo
+     # because NCCL cannot synchronize CPU-resident tokenizer or model tensors.
+@@ -66,7 +78,28 @@ def init() -> int | None:
+         # Convert the timeout to an integer (if it isn't already) and then to a timedelta
+         timeout_timedelta = timedelta(seconds=int(timeout_seconds))
+         backend = "nccl" if os.environ.get("COSMOS_DEVICE", "cuda").lower() == "cuda" else "gloo"
++        # NCCL has no Windows build (torch.distributed.is_nccl_available() is
++        # False there). A process group is still mandatory rather than optional:
++        # Trainer.__init__ runs an unconditional dist.barrier(). Fall back to
++        # gloo for collectives while compute stays on CUDA.
++        if sys.platform == "win32" and backend == "nccl":
++            log.warning("NCCL is unavailable on Windows; using the gloo backend instead (compute stays on CUDA).")
++            backend = "gloo"
++        # env:// needs these set even for a single-rank job.
++        os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
++        os.environ.setdefault("MASTER_PORT", "29500")
++        os.environ.setdefault("RANK", str(local_rank))
++        os.environ.setdefault("WORLD_SIZE", "1")
+         dist.init_process_group(backend=backend, init_method="env://", timeout=timeout_timedelta)
++        # The Windows gloo build cannot run collectives on CUDA tensors; it
++        # faults with an access violation. Route them via host memory.
++        from cosmos_framework.utils import win_compat
++
++        if win_compat.install_gloo_cuda_collective_shims():
++            log.warning(
++                "Installed gloo/CUDA collective shims: torch.distributed collectives will "
++                "stage CUDA tensors through host memory on this platform."
++            )
+         log.critical(
+             f"Initialized distributed training with local rank {local_rank} using {backend} with timeout {timeout_seconds}",
+             rank0_only=False,
+@@ -183,6 +216,23 @@ def parallel_model_wrapper(config_ddp: DDPConfig, model: torch.nn.Module) -> tor
+     """
+     if dist.is_available() and dist.is_initialized():
+         local_rank = int(os.getenv("LOCAL_RANK", 0))
++        # On Windows the only available backend is gloo (NCCL has no Windows
++        # build). PyTorch's DDP reducer runs its gradient allreduce on the
++        # CUDA-resident grads, and the Windows gloo build has no CUDA-aware
++        # path for that -- the result is an access violation (0xC0000005) part
++        # way through backward, with no Python traceback. Reproducible in ~25
++        # lines with no cosmos code involved.
++        #
++        # At world_size == 1 the DDP wrapper is pure overhead (there is nothing
++        # to reduce), so skip it and hand back the bare module. Guarded on
++        # win32 so Linux behaviour is untouched.
++        if sys.platform == "win32" and get_world_size() == 1:
++            log.warning(
++                "Skipping the DDP wrapper: world_size==1 on Windows, where the gloo "
++                "backend cannot allreduce CUDA gradients (segfaults in backward). "
++                "Gradients are already rank-local, so this is a no-op."
++            )
++            return model
+         try:
+             from megatron.core import parallel_state
+ 
+diff --git a/cosmos_framework/utils/easy_io/backends/__init__.py b/cosmos_framework/utils/easy_io/backends/__init__.py
+index 5211ded..cd2293c 100644
+--- a/cosmos_framework/utils/easy_io/backends/__init__.py
++++ b/cosmos_framework/utils/easy_io/backends/__init__.py
+@@ -17,6 +17,11 @@ __all__ = [
+ ]
+ 
+ if TRAINING:
++    # Upstream (PR #164) already guards both optional object-store backends.
++    # On Windows multi-storage-client is not merely absent but uninstallable:
++    # it publishes no win_amd64 wheel and no sdist, and its transitive dep
++    # `xattr` needs POSIX extended attributes. This guard is what keeps the
++    # package importable there; local and http paths are unaffected.
+     try:
+         from cosmos_framework.utils.easy_io.backends.boto3_backend import Boto3Backend
+     except ImportError:
+diff --git a/cosmos_framework/utils/easy_io/backends/registry_utils.py b/cosmos_framework/utils/easy_io/backends/registry_utils.py
+index 11581cf..cbb410a 100644
+--- a/cosmos_framework/utils/easy_io/backends/registry_utils.py
++++ b/cosmos_framework/utils/easy_io/backends/registry_utils.py
+@@ -121,6 +121,9 @@ if TRAINING:
+         # multistorageclient is an optional internal S3 dependency. Local,
+         # HTTP, Docker, and Pyxis training must remain importable without it.
+         # A later s3:// access fails clearly because no S3 backend is present.
++        # On Windows it is uninstallable outright (no win_amd64 wheel, no sdist,
++        # and its transitive `xattr` dep needs POSIX extended attributes), so
++        # this is the normal path there rather than an edge case.
+         MSC_IMPORT_ERROR = error
+     else:
+         # To avoid breaking backward Compatibility, 's3' is also used as a
+diff --git a/cosmos_framework/utils/easy_io/file_client.py b/cosmos_framework/utils/easy_io/file_client.py
+index cb3af4c..a91e257 100644
+--- a/cosmos_framework/utils/easy_io/file_client.py
++++ b/cosmos_framework/utils/easy_io/file_client.py
+@@ -73,6 +73,8 @@ class FileClient:
+     }
+ 
+     if TRAINING:
++        # Guarded upstream (PR #164); on Windows this is the normal path, since
++        # multi-storage-client cannot be installed there at all.
+         try:
+             from cosmos_framework.utils.easy_io.backends.msc_backend import MSCBackend
+         except ImportError:
+diff --git a/cosmos_framework/utils/easy_io/transient_retry.py b/cosmos_framework/utils/easy_io/transient_retry.py
+index 9eca405..cd5065c 100644
+--- a/cosmos_framework/utils/easy_io/transient_retry.py
++++ b/cosmos_framework/utils/easy_io/transient_retry.py
+@@ -27,7 +27,18 @@ from botocore.exceptions import (
+ from botocore.exceptions import (
+     ReadTimeoutError as BotocoreReadTimeoutError,
+ )
+-from multistorageclient.types import RetryableError
++try:
++    from multistorageclient.types import RetryableError
++except ImportError:  # pragma: no cover - platform dependent
++
++    class RetryableError(Exception):  # type: ignore[no-redef]
++        """Stand-in when multi-storage-client is unavailable (e.g. on Windows).
++
++        Kept in RETRYABLE_EXCEPTIONS so the tuple shape is unchanged; nothing
++        ever raises it because the MSC backend is not registered.
++        """
++
++
+ from urllib3.exceptions import ProtocolError as URLLib3ProtocolError
+ from urllib3.exceptions import ReadTimeoutError as URLLib3ReadTimeoutError
+ from urllib3.exceptions import SSLError as URLLib3SSLError
+diff --git a/cosmos_framework/utils/reasoner/distributed.py b/cosmos_framework/utils/reasoner/distributed.py
+index 6b2dfff..5360b48 100644
+--- a/cosmos_framework/utils/reasoner/distributed.py
++++ b/cosmos_framework/utils/reasoner/distributed.py
+@@ -3,7 +3,6 @@
+ 
+ # Standard library imports
+ import array
+-import fcntl
+ import math
+ import os
+ import re
+@@ -14,6 +13,15 @@ from datetime import timedelta
+ from functools import partial
+ from typing import Dict, Iterable, Optional, Union
+ 
++# fcntl is POSIX-only. It is used here solely for SIOCGIFADDR/SIOCGIFCONF
++# interface discovery, which is a multi-node Infiniband/Mellanox concern; a
++# single-node Windows run never needs it. Import defensively so the module stays
++# importable, and let the helpers below degrade to "no interfaces found".
++try:
++    import fcntl
++except ImportError:  # pragma: no cover - platform dependent
++    fcntl = None  # type: ignore[assignment]
++
+ # Third party imports
+ import requests
+ import torch
+@@ -263,6 +271,9 @@ def get_ip_address(ifname):
+     Returns:
+         str or None: The IPv4 address as a string if found, else None.
+     """
++    if fcntl is None:
++        # No SIOCGIFADDR equivalent on this platform (single-node only).
++        return None
+     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+     try:
+         # 0x8915 is SIOCGIFADDR; pack interface name (limited to 15 chars)
+@@ -319,6 +330,10 @@ def get_all_ipv4_addresses():
+     ip_list = []
+     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+ 
++    if fcntl is None:
++        # No SIOCGIFCONF equivalent on this platform (single-node only).
++        return ip_list
++
+     # Allocate buffer for maximum number of interfaces.
+     max_interfaces = 128
+     bytes_size = max_interfaces * 32
+diff --git a/cosmos_framework/utils/win_compat.py b/cosmos_framework/utils/win_compat.py
+new file mode 100644
+index 0000000..e26ae50
+--- /dev/null
++++ b/cosmos_framework/utils/win_compat.py
+@@ -0,0 +1,187 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++# SPDX-License-Identifier: OpenMDW-1.1
++
++"""Compatibility shims for POSIX-only primitives, for the native-Windows port.
++
++On Linux every helper here delegates to the stdlib primitive it replaces, so the
++behaviour is byte-for-byte unchanged. On Windows it provides an equivalent built
++on ``msvcrt`` / Win32.
++
++Motivation: several modules on the reasoner/VLM SFT path import ``fcntl`` at
++module scope, which makes the whole module unimportable on Windows even when the
++locking code itself is never exercised.
++"""
++
++from __future__ import annotations
++
++import os
++import sys
++import time
++from typing import IO, Union
++
++WINDOWS: bool = sys.platform == "win32"
++
++# fcntl.flock operation constants, mirrored so callers can use one spelling.
++LOCK_SH = 1
++LOCK_EX = 2
++LOCK_NB = 4
++LOCK_UN = 8
++
++_FileOrFd = Union[int, IO]
++
++
++def _as_fd(f: _FileOrFd) -> int:
++    return f if isinstance(f, int) else f.fileno()
++
++
++if not WINDOWS:
++    import fcntl as _fcntl
++
++    def flock(f: _FileOrFd, operation: int) -> None:
++        """Advisory whole-file lock. Thin passthrough to ``fcntl.flock``."""
++        _fcntl.flock(_as_fd(f), operation)
++
++else:
++    import msvcrt
++
++    # msvcrt.locking() locks a byte range starting at the current file offset.
++    # A single byte at offset 0 is the conventional stand-in for a whole-file
++    # advisory lock, and works even on a zero-length file.
++    _LOCK_BYTES = 1
++    _BLOCKING_TIMEOUT_S = 300.0
++    _POLL_INTERVAL_S = 0.05
++
++    def flock(f: _FileOrFd, operation: int) -> None:
++        """Advisory whole-file lock implemented with ``msvcrt.locking``.
++
++        Differences from ``fcntl.flock`` that do not matter for the call sites in
++        this repo (both take LOCK_EX and hold it briefly around a download or a
++        cache warmup):
++
++        * Windows byte-range locks are *mandatory*, not advisory.
++        * There is no shared-lock mode; ``LOCK_SH`` is upgraded to exclusive.
++        """
++        fd = _as_fd(f)
++        # msvcrt.locking() is offset-relative, so normalise to 0 and restore.
++        try:
++            pos = os.lseek(fd, 0, os.SEEK_CUR)
++        except OSError:
++            pos = None
++        try:
++            os.lseek(fd, 0, os.SEEK_SET)
++            if operation & LOCK_UN:
++                msvcrt.locking(fd, msvcrt.LK_UNLCK, _LOCK_BYTES)
++                return
++            if operation & LOCK_NB:
++                msvcrt.locking(fd, msvcrt.LK_NBLCK, _LOCK_BYTES)
++                return
++            deadline = time.monotonic() + _BLOCKING_TIMEOUT_S
++            while True:
++                try:
++                    msvcrt.locking(fd, msvcrt.LK_NBLCK, _LOCK_BYTES)
++                    return
++                except OSError:
++                    if time.monotonic() >= deadline:
++                        raise
++                    time.sleep(_POLL_INTERVAL_S)
++        finally:
++            if pos is not None:
++                try:
++                    os.lseek(fd, pos, os.SEEK_SET)
++                except OSError:
++                    pass
++
++
++def install_gloo_cuda_collective_shims() -> bool:
++    """Make torch.distributed collectives safe for CUDA tensors under gloo.
++
++    NCCL has no Windows build, so gloo is the only available backend — but the
++    Windows gloo build has no CUDA-aware collective path. Passing a CUDA tensor
++    to ``all_reduce`` / ``broadcast`` / ``reduce`` / ``all_gather`` faults the
++    process with an access violation (0xC0000005) and no Python traceback.
++
++    These wrappers round-trip CUDA tensors through host memory and copy the
++    result back in place, preserving the collectives' in-place contract. On a
++    single rank the collectives are mathematically no-ops, so the only cost is
++    a small D2H/H2D copy per call.
++
++    Returns True if the shims were installed, False if they were already present
++    or the platform does not need them.
++    """
++    if not WINDOWS:
++        return False
++
++    import functools
++
++    import torch
++    import torch.distributed as dist
++
++    if getattr(dist, "_cosmos_win_gloo_shimmed", False):
++        return False
++
++    def _tensor_first(fn):
++        """For all_reduce / broadcast / reduce: signature (tensor, ...)."""
++
++        @functools.wraps(fn)
++        def inner(tensor, *args, **kwargs):
++            if isinstance(tensor, torch.Tensor) and tensor.is_cuda and not kwargs.get("async_op", False):
++                staged = tensor.detach().cpu()
++                fn(staged, *args, **kwargs)
++                tensor.copy_(staged.to(tensor.device))
++                return None
++            return fn(tensor, *args, **kwargs)
++
++        return inner
++
++    def _all_gather(fn):
++        """Signature (tensor_list, tensor, ...)."""
++
++        @functools.wraps(fn)
++        def inner(tensor_list, tensor, *args, **kwargs):
++            if isinstance(tensor, torch.Tensor) and tensor.is_cuda and not kwargs.get("async_op", False):
++                staged_out = [t.detach().cpu() for t in tensor_list]
++                fn(staged_out, tensor.detach().cpu(), *args, **kwargs)
++                for dst, src in zip(tensor_list, staged_out):
++                    dst.copy_(src.to(dst.device))
++                return None
++            return fn(tensor_list, tensor, *args, **kwargs)
++
++        return inner
++
++    dist.all_reduce = _tensor_first(dist.all_reduce)
++    dist.broadcast = _tensor_first(dist.broadcast)
++    dist.reduce = _tensor_first(dist.reduce)
++    dist.all_gather = _all_gather(dist.all_gather)
++    dist._cosmos_win_gloo_shimmed = True
++    return True
++
++
++def link_dir(target: Union[str, os.PathLike], link: Union[str, os.PathLike]) -> str:
++    """Point ``link`` at directory ``target``; return the strategy actually used.
++
++    Creating a symlink on Windows needs either Developer Mode or
++    SeCreateSymbolicLinkPrivilege, neither of which is guaranteed. Fall back to a
++    directory junction (no privilege required), then to a plain text pointer file
++    so a convenience alias never aborts a training run.
++
++    Returns one of ``"symlink"``, ``"junction"``, ``"pointer-file"``.
++    """
++    target_s, link_s = os.fspath(target), os.fspath(link)
++    try:
++        os.symlink(target_s, link_s, target_is_directory=True)
++        return "symlink"
++    except (OSError, NotImplementedError, AttributeError):
++        pass
++
++    if WINDOWS:
++        try:
++            import _winapi  # type: ignore[attr-defined]
++
++            _winapi.CreateJunction(target_s, link_s)
++            return "junction"
++        except Exception:
++            pass
++
++    with open(link_s + ".txt", "w", encoding="utf-8") as handle:
++        handle.write(target_s + "\n")
++    return "pointer-file"

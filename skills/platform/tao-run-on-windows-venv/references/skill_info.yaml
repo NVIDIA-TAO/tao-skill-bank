@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Native Windows execution out of a plain Python venv. No WSL, no container, no
+# docker daemon, no device class. The model skill owns its dependency and CUDA
+# ABI requirements. The "image" recorded on a job is the venv root path.
+type: platform
+platform_slug: windows-venv
+
+# The platform itself needs no credential: it launches a local process. Model
+# specific variables are passed BY NAME with `submit -e NAME`, so their values
+# never reach argv or any runner file.
+required_credentials: []
+optional_credentials:
+- name: HF_TOKEN
+  source: env_var
+  only_when: the action pulls gated HuggingFace assets
+- name: WANDB_API_KEY
+  source: env_var
+  only_when: the run logs to WandB (the injected env block sets WANDB_MODE=disabled)
+
+# Not a reservation of any kind. Windows has no cgroup or MIG equivalent, so
+# there is no per-user GPU quota, no isolation and no scheduler on a shared box;
+# --gpu-ids only sets CUDA_VISIBLE_DEVICES.
+resource_defaults:
+  gpus: 1
+  max_gpus: 1
+  nodes: 1
+  max_nodes: 1
+
+cloud_storage:
+  protocol: local
+  uri_format: C:/{absolute_path}
+  metadata_key: local
+
+runtime_requirements:
+  gpu_host: model_defined
+
+features: [tracking, local, no-docker, no-wsl, native-windows, single-gpu]
+
+# Hard limits, stated so a router never selects this platform for work it
+# cannot do. Multi-GPU is impossible rather than untested: gloo cannot run any
+# collective on a CUDA tensor on Windows and NCCL has no Windows build, so the
+# process dies with 0xC0000005 and no traceback. Single-GPU works only because
+# the DDP wrapper is skipped at world_size == 1.
+limits:
+  multi_gpu: false
+  multi_node: false
+  graceful_cancel: false   # TerminateJobObject is unconditional; no SIGTERM analogue
+  signal_in_exit_status: false  # GetExitCodeProcess is an unsigned DWORD
+
+actions_supported: model_defined

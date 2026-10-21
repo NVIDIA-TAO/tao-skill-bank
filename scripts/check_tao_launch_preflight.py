@@ -31,6 +31,10 @@ DEFAULT_SKILL_BANK = Path(
 REMOTE_SCHEMES = ("s3://", "azure://", "gs://", "http://", "https://")
 DEFAULT_GPU_SMOKE_IMAGE = os.environ.get("TAO_GPU_SMOKE_IMAGE", "ubuntu:22.04")
 DEFAULT_LOW_VRAM_THRESHOLD_GB = 50.0
+# Windows containers get the GPU from a device class, not from --gpus and not
+# from the NVIDIA Container Toolkit. The class projects the HOST driver
+# libraries into the container; there is no in-container driver to check.
+WINDOWS_GPU_DEVICE_CLASS = "class/5B45201D-F2F2-4F3B-85BB-30FF1F953599"
 KNOWN_IMAGE_SMS = {
     "cosmos-rl": ["sm_80", "sm_90", "sm_100", "sm_103", "sm_103a", "sm_120"],
     # TAO 7.x multi-architecture PyTorch and data-services images used by PAS.
@@ -919,7 +923,27 @@ def has_unverified_remote_mounts(
     paths: list[tuple[str, str]],
     skip_access: bool,
 ) -> bool:
-    if skip_access or platform_name in {"slurm", "docker", "local-docker", "remote-docker"}:
+    # This gate covers paths that live on ANOTHER machine — a remote mount, a
+    # PVC, a scheduler-managed volume — where preflight genuinely cannot look
+    # and the only honest answer is "prove it yourself". A platform belongs on
+    # this list only when its own branch already verifies those paths against a
+    # real filesystem: slurm probes them over ssh, docker/local-docker/
+    # remote-docker probe them locally or through a bind check, windows-docker
+    # bind-mounts host directories and checks them on this host, and
+    # windows-venv runs the process on this host and is checked by
+    # check_windows_venv(). Listing a platform here WITHOUT that verification
+    # deletes the only existence check it has; listing it with the check is what
+    # keeps every Windows host path from being refused with a "use s3://"
+    # message neither Windows platform can act on — there is no object-store
+    # client on the Windows image and no S3 sidecar stage for a `docker run`.
+    if skip_access or platform_name in {
+        "slurm",
+        "docker",
+        "local-docker",
+        "remote-docker",
+        "windows-docker",
+        "windows-venv",
+    }:
         return False
 
     failed = False
@@ -1929,6 +1953,253 @@ def check_local_docker(
     return ok
 
 
+def docker_server_os() -> tuple[bool, str]:
+    """Ask the daemon which container OS it is serving.
+
+    A daemon in Linux-container mode answers every later Windows step with
+    "no matching manifest for linux/amd64", which reads like a bad image tag.
+    """
+    result = run(["docker", "version", "--format", "{{.Server.Os}}"], timeout=20)
+    if result.returncode != 0:
+        print(f"Docker daemon check failed: {command_detail(result)}")
+        return False, ""
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return True, lines[-1].lower() if lines else ""
+
+
+def check_windows_container_gpu_smoke(
+    container_image: str | None,
+    pull_smoke_image: bool,
+) -> bool:
+    """Run the workload image itself with process isolation + the device class.
+
+    There is deliberately no smoke-image fallback. Process isolation requires
+    the container base image and the host to be the same Windows Server
+    release, so a generic image (`ubuntu:22.04`, `mcr.microsoft.com/...:<any
+    tag>`) is not a safe substitute — a mismatch reports "The container
+    operating system does not match the host operating system" and would be
+    reported here as a GPU failure.
+
+    The presence guard is the same contract check_docker_gpu_smoke() enforces:
+    `docker run` on an absent image PULLS it, and preflight must not start a
+    multi-GB download the user never approved. The Windows images are the
+    largest ones in the bank, so without the guard the pull runs past the
+    180s timeout and the failure gets reported as a GPU/isolation problem.
+    """
+    if not container_image:
+        print(
+            "Windows container GPU smoke failed: pass --container-image. There "
+            "is no generic Windows smoke image, because process isolation "
+            "requires the image base and the host to be the same Windows "
+            "Server release; only the selected workload image can be probed."
+        )
+        return False
+    if not pull_smoke_image and not docker_image_exists(container_image):
+        print(
+            "Windows container image is not present on the Docker host: "
+            f"{container_image}. Pull it after user approval or rerun "
+            "preflight with --pull-smoke-image. This is NOT a GPU, device "
+            "class or isolation failure — nothing was run."
+        )
+        return False
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        # --isolation=process is mandatory: the daemon default is hyperv and
+        # hyperv has NO GPU path. --gpus does not exist for Windows containers.
+        "--isolation=process",
+        "--device",
+        WINDOWS_GPU_DEVICE_CLASS,
+        container_image,
+        "powershell",
+        "-Command",
+        "nvidia-smi -L",
+    ]
+    result = run(command, timeout=180)
+    if result.returncode == 0 and "GPU" in result.stdout:
+        first = result.stdout.strip().splitlines()[0]
+        print(f"Windows container GPU smoke OK: image={container_image}: {first}")
+        return True
+    print(
+        "Windows container GPU smoke failed: "
+        f"image={container_image}: {command_detail(result)}. Check the device "
+        "class, --isolation=process, and that the image base matches the host "
+        "Windows Server release."
+    )
+    return False
+
+
+def check_windows_docker(
+    paths: list[tuple[str, str]],
+    required_json_fields: dict[str, list[str]],
+    json_sample_limit: int,
+    skip_access: bool,
+    container_image: str | None,
+    pull_smoke_image: bool,
+    image_supported_sm: list[str],
+    min_gpu_memory_gb: float | None,
+    low_vram_threshold_gb: float,
+    target_gpu_indices: list[str],
+) -> bool:
+    """Preflight for Windows containers.
+
+    Intentionally NOT check_local_docker with a flag. None of the Linux
+    assumptions hold: there is no `nvidia` runtime entry to look for, no
+    distro-neutral smoke image, host paths are `C:\\...` rather than
+    POSIX-absolute, and there is no `test -e` inside the image.
+    """
+    ok = True
+
+    docker_host = os.environ.get("DOCKER_HOST")
+    if docker_host_is_remote(docker_host):
+        # Every probe below reads THIS machine: host nvidia-smi, host path
+        # existence. Against a remote daemon they would describe the wrong
+        # box and pass while the real host is unusable, so fail closed.
+        print(
+            "Windows container preflight cannot target a remote daemon: "
+            f"DOCKER_HOST={docker_host}. The host driver query and the input "
+            "path checks describe the machine preflight runs on. Run this "
+            "preflight on the Windows daemon host itself."
+        )
+        return False
+
+    if not skip_access:
+        if not shutil.which("docker"):
+            print("docker executable not found")
+            ok = False
+        else:
+            version_ok, server_os = docker_server_os()
+            if not version_ok:
+                ok = False
+            elif server_os == "windows":
+                print("Docker daemon OK: Windows-container mode")
+            else:
+                print(
+                    "Docker daemon is not in Windows-container mode: "
+                    f"Server.Os={server_os or 'unknown'}. Switch engines with "
+                    '"%ProgramFiles%\\Docker\\Docker\\DockerCli.exe" '
+                    "-SwitchWindowsEngine and rerun."
+                )
+                ok = False
+
+            if pull_smoke_image:
+                print(
+                    "Note: for windows-docker --pull-smoke-image authorizes "
+                    "pulling --container-image, which is the only image probed. "
+                    "--gpu-smoke-image is never consulted: process isolation "
+                    "requires the image base and the host to be the same "
+                    "Windows Server release, so there is no generic stand-in."
+                )
+
+            # The device class projects the HOST driver into the container, so
+            # the host driver is the thing to verify. There is no NVIDIA
+            # Container Toolkit and no `nvidia` runtime entry on this platform.
+            gpu_ok, gpus = query_host_gpus()
+            selection_ok, gpus = filter_target_gpus(gpus, target_gpu_indices)
+            gpu_ok = gpu_ok and selection_ok
+            if target_gpu_indices:
+                print(
+                    "Note: --target-gpu-index is advisory for windows-docker. "
+                    f"{WINDOWS_GPU_DEVICE_CLASS} attaches every GPU of that "
+                    "class; there is no per-GPU selector and no cgroup/MIG "
+                    "equivalent to enforce one."
+                )
+            ok = gpu_ok and ok
+            if gpu_ok:
+                ok = (
+                    check_gpu_memory(gpus, min_gpu_memory_gb, low_vram_threshold_gb)
+                    and ok
+                )
+                ok = (
+                    check_image_architecture(gpus, container_image, image_supported_sm)
+                    and ok
+                )
+            ok = (
+                check_windows_container_gpu_smoke(container_image, pull_smoke_image)
+                and ok
+            )
+
+    # Tier A only: inputs are host directories bind-mounted into the container,
+    # and preflight runs on that same host, so check them directly. No
+    # POSIX-absolute assertion (a Windows path is `C:\data\...`) and no
+    # in-container `test -e` probe.
+    for label, raw_path in paths:
+        path = normalize_local_path(raw_path)
+        if path is None:
+            continue
+        if Path(path).exists():
+            print(f"Host path OK: {label}={path}")
+            maybe_report_json_record_count(label, path)
+        else:
+            print(f"Host path missing: {label}={path}")
+            ok = False
+            continue
+        fields = required_json_fields.get(label)
+        if fields and not check_json_required_fields_local(
+            label,
+            path,
+            fields,
+            json_sample_limit,
+        ):
+            ok = False
+    return ok
+
+
+def check_windows_venv(
+    platform: dict[str, Any],
+    paths: list[tuple[str, str]],
+    required_json_fields: dict[str, list[str]],
+    json_sample_limit: int,
+) -> bool:
+    """Preflight for a native Windows venv.
+
+    windows-venv is a LOCAL platform: the training process runs in a venv on
+    the very machine this preflight runs on, so a `C:\\data\\train.jsonl` input
+    is a path on THIS filesystem and existence is checkable — exactly as it is
+    for windows-docker's bind mounts and for local-docker.
+
+    That is why this is not check_env_only(). check_env_only() is for platforms
+    whose paths live on another machine (it can only print "verify it is
+    mounted in the job"), and pairing it with the has_unverified_remote_mounts
+    exemption left windows-venv with NO existence check at all: preflight
+    passed for `--path train=C:\\does\\not\\exist`.
+
+    Daemon/image/driver probes stay out of here on purpose. There is no daemon
+    and no image; the host-specific probes (driver version, venv layout, DLL
+    directories) are model-defined. Cosmos3 provides its own
+    preflight_cosmos3_windows_host.py reference.
+    """
+    missing = env_missing(platform)
+    if missing:
+        print("Missing requirement(s): " + ", ".join(missing))
+        return False
+
+    ok = True
+    for label, raw_path in paths:
+        path = normalize_local_path(raw_path)
+        if path is None:
+            # s3:// and friends are the storage check's business, not this one.
+            print(f"Remote path deferred to the storage check: {label}={raw_path}")
+            continue
+        if Path(path).exists():
+            print(f"Local path OK: {label}={path}")
+            maybe_report_json_record_count(label, path)
+        else:
+            print(f"Local path missing: {label}={path}")
+            ok = False
+            continue
+        fields = required_json_fields.get(label)
+        if fields and not check_json_required_fields_local(
+            label,
+            path,
+            fields,
+            json_sample_limit,
+        ):
+            ok = False
+    return ok
+
+
 def check_env_only(platform: dict[str, Any], paths: list[tuple[str, str]]) -> bool:
     missing = env_missing(platform)
     if missing:
@@ -1997,11 +2268,43 @@ def main() -> int:
             args.defer_container_probes,
             allow_missing_paths,
         )
+    elif name == "windows-docker":
+        platform_ok = check_windows_docker(
+            paths,
+            required_json_fields,
+            args.json_sample_limit,
+            args.skip_platform_access,
+            args.container_image,
+            args.pull_smoke_image,
+            parse_sm_list(args.image_supported_sm),
+            args.min_gpu_memory_gb,
+            args.low_vram_threshold_gb,
+            target_gpu_indices,
+        )
+    elif name == "windows-venv":
+        # NOT a fall-through to check_env_only. windows-venv runs the job on
+        # THIS machine, so its paths are local paths and have to exist here;
+        # check_env_only can only say "verify it is mounted in the job", which
+        # combined with the has_unverified_remote_mounts exemption let
+        # `--path train=C:\does\not\exist` pass preflight. There is still no
+        # daemon, image or container to probe — the host-specific probes
+        # (driver, venv layout, DLL directories) are model-defined, not part of
+        # this shared launch preflight.
+        platform_ok = check_windows_venv(
+            platform,
+            paths,
+            required_json_fields,
+            args.json_sample_limit,
+        )
     elif name == "brev":
         platform_ok = check_brev(platform, args.skip_platform_access)
     elif name == "kubernetes":
         platform_ok = check_kubernetes(platform, args.skip_platform_access)
     else:
+        # virtualenv and any other credential-only platform: no daemon, no
+        # image, and paths that this process cannot see, so the credential/env
+        # gate plus the shared GPU, disk and storage checks below (and the
+        # mounted-volume proof gate) are the whole contract.
         platform_ok = check_env_only(platform, paths)
 
     storage_ok = check_s3_storage(

@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+type: platform
+platform_slug: windows-docker        # the value passed to tao_job_record.py open --platform
+
+# --- validation ---------------------------------------------------------------
+# Machine-readable counterpart of the VALIDATION STATUS section in SKILL.md.
+validation:
+  executed: false                    # NOTHING in this skill has ever been run
+  status: unverified
+  evidence: transcribed-from-prior-findings
+  blocker: >-
+    The Windows container daemon was not available on the validation host: it could not be put
+    into Windows-container mode, so no image was pulled, no container was started, and the GPU
+    device class was never attached.
+  validated_alternative: windows-venv  # train + evaluate passed natively there, all four verbs exercised
+
+host_os: windows                     # Windows Server; the daemon must be in Windows-container mode
+container_os: windows                # Windows containers, NOT a Linux VM
+required_credentials: []             # the local daemon needs no auth; NGC_KEY only for nvcr.io pulls
+optional_credentials:
+- name: NGC_KEY
+  source: env_var
+  description: For nvcr.io image pulls. Feed on stdin via `docker login --password-stdin`, never as an argv flag.
+- name: DOCKER_HOST
+  source: env_var
+  description: >-
+    Daemon endpoint. npipe:////./pipe/docker_engine is the local Windows daemon and is the default;
+    set it explicitly to override a stale tcp:// or Linux-engine value inherited from the shell profile.
+- name: HF_TOKEN
+  source: env_var
+  description: Passed through to the container only when the selected workload needs it.
+
+# --- run-time flags -----------------------------------------------------------
+# Sourced from the application contract's [runtime] table
+# (skills/models/tao-finetune-cosmos-reason/references/cosmos3-windows-contract.toml).
+# Duplicated here only as platform metadata; the contract is authoritative.
+runtime:
+  isolation: process                 # MANDATORY at run time; the daemon default (hyperv) has NO GPU path
+  build_isolation: hyperv            # build under hyperv, run under process
+  device_class: class/5B45201D-F2F2-4F3B-85BB-30FF1F953599
+  container_path_style: forward-slash
+  # Linux flags that DO NOT EXIST for a Windows container. Passing one is an
+  # error, not a no-op — do not translate a Linux run line by search-and-replace.
+  unsupported_flags:
+  - --gpus
+  - --shm-size
+  - --user
+  - --ipc
+  - --pid
+  # Distributed-checkpoint rename fails with WinError 3 on a bind mount, AFTER
+  # the run completes. Keep output container-internal and copy it out.
+  output_dir_must_be_container_internal: true
+  results_extraction: docker cp <container>:<container_output_dir> <host_output_dir>
+
+resource_defaults:
+  num_nodes: 1                       # structural maximum, not a default
+  num_gpus: 1                        # structural maximum, not a default
+  detach: true                       # submit runs `docker run -d`; the container name is the backend ref
+  stop_timeout_seconds: 60           # `docker stop -t`; Windows containers have no signal model
+  auto_remove: false                 # never --rm: cancel/status need the exited container
+
+storage:
+  tiers_supported: [A]               # bind-mounted host paths only
+  tiers_unsupported: [B, C]          # no init-container fetch, no in-container object-store client
+  reason: >-
+    There is no sidecar or init-container stage for a single `docker run`, and the Windows image
+    carries no object-store client, so inputs must already exist on a host path the daemon can see.
+
+limits:
+  multi_gpu: false
+  multi_node: false
+  max_gpus: 1
+  max_nodes: 1
+  reason: >-
+    Impossible with stock torch wheels. gloo cannot run a collective on a CUDA tensor on Windows,
+    and torch's Windows wheels are built with USE_C10D_NCCL off, so init_process_group("nccl")
+    fails and gloo is the only selectable backend; every such call dies with 0xC0000005 and no
+    Python traceback. A community NCCL Windows port exists (SystemPanic/nccl-windows) and vLLM
+    uses it directly via VLLM_NCCL_SO_PATH, bypassing torch's process group — that does not lift
+    this limit and is UNTESTED here.
+  gpu_quota_supported: false         # no cgroup/MIG equivalent: serialize jobs yourself
+  shm_supported: false
+  user_namespace_supported: false
+
+features:
+- gpu-device-class
+- process-isolation
+- failure-analysis
+- log-streaming
+- job-record
+
+not_features:
+- multi-node
+- multi-gpu
+- gpu-quota
+- object-store-staging
+- linux-containers

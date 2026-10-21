@@ -1,0 +1,27 @@
+--- a/cosmos_rl/evaluation/metrics/text_metrics.py
++++ b/cosmos_rl/evaluation/metrics/text_metrics.py
+@@ -17,7 +17,10 @@
+ 
+ from typing import Dict, List, Optional
+ 
+-import evaluate
++try:
++    import evaluate
++except ImportError:  # W16: evaluate -> datasets -> pyarrow, which has no Windows ARM64 wheel
++    evaluate = None
+ 
+ class TextMetrics:
+     """Text metrics for Cosmos-RL."""
+@@ -31,6 +34,12 @@
+     ) -> None:
+         """Initialize the TextMetrics."""
+         self.metric_names = ["bleu", "rouge"] if metrics is None else metrics
++        if evaluate is None and any(m in self.metric_names for m in ("bleu", "rouge", "bertscore")):
++            import warnings
++            warnings.warn("text metrics (bleu/rouge/bertscore) unavailable: the `evaluate` package "
++                          "could not be imported (no pyarrow wheel on this platform); OK/NG accuracy "
++                          "is unaffected", RuntimeWarning)
++            self.metric_names = [m for m in self.metric_names if m not in ("bleu", "rouge", "bertscore")]
+         self._bleu = evaluate.load("bleu") if "bleu" in self.metric_names else None
+         self._rouge = evaluate.load("rouge") if "rouge" in self.metric_names else None
+         self._bertscore = evaluate.load("bertscore") if "bertscore" in self.metric_names else None

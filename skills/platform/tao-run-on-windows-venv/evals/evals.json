@@ -1,0 +1,42 @@
+[
+  {
+    "id": "tao-run-on-windows-venv-basic",
+    "question": "A GPU box is Windows 11 and IT will not enable WSL or Hyper-V containers. Plan a native model action without running anything.",
+    "expected_skill": "tao-run-on-windows-venv",
+    "expected_script": null,
+    "ground_truth": "Select tao-run-on-windows-venv as the native Windows, no-WSL, no-container execution platform. First read and run the selected model's Windows preflight, then open a windows-venv job record, submit its module/script/entrypoint through windows_job_runner.py, poll status and logs, cancel with the runner if needed, and mark the record after a terminal state.",
+    "expected_behavior": [
+      "Identifies tao-run-on-windows-venv as the relevant platform",
+      "Requires the selected model's preflight before launch",
+      "Uses record-then-launch and the four verbs over windows_job_runner.py",
+      "Uses exactly one model-provided script, module, or entrypoint selector",
+      "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-run-on-windows-venv-arm64-gate",
+    "question": "A model explicitly supports native Windows ARM64 and requires 72 GiB of CUDA capacity. Describe the platform checks without executing them.",
+    "expected_skill": "tao-run-on-windows-venv",
+    "expected_script": "scripts/preflight_windows_arm64.py",
+    "ground_truth": "Use the target venv interpreter, verify that platform.machine is ARM64 and that CUDA is visible, then run the explicit 72 GiB allocation probe. The probe writes and synchronizes a CUDA uint8 allocation before freeing it. It does not reserve memory or prove the model package, ABI, decoder, or workload fit; those remain model-skill checks.",
+    "expected_behavior": [
+      "Requires native ARM64 Python rather than emulated AMD64",
+      "Uses the explicit allocation probe rather than only torch.cuda.is_available",
+      "Explains that the probe frees memory and is not a reservation",
+      "Keeps model ABI and workload validation with the selected model skill"
+    ]
+  },
+  {
+    "id": "tao-run-on-windows-venv-liveness",
+    "question": "Explain how the native Windows runner decides whether a submitted job is still alive and why it does not use os.kill(pid, 0). Do not run anything.",
+    "expected_skill": "tao-run-on-windows-venv",
+    "expected_script": null,
+    "ground_truth": "Liveness uses OpenProcess with SYNCHRONIZE and PROCESS_QUERY_LIMITED_INFORMATION followed by WaitForSingleObject(handle, 0). The runner avoids os.kill(pid, 0) because Windows CPython does not implement a signal-zero probe and can terminate the target instead. A named Job Object and GetProcessTimes creation time make the durable identity safe against PID reuse.",
+    "expected_behavior": [
+      "Names WaitForSingleObject with a zero timeout as the liveness probe",
+      "Explains that os.kill on Windows can terminate instead of probe",
+      "Mentions the named Job Object or GetProcessTimes creation time",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]

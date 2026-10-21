@@ -10,9 +10,10 @@ and writes the initial PENDING record — and the id it prints is the ONLY
 handle a platform skill may launch with. A submit that skipped the verify gate
 has no id, so it cannot launch. ``mark`` appends status transitions
 (append-only; terminal states are immutable). Every write is atomic
-(temp + fsync + rename), guarded by a per-record flock (the in-turn agent and
-a detached poller may both write), and passed through the redact_secrets
-redactor so no credential material is ever persisted.
+(temp + fsync + rename), guarded by a per-record file lock — flock on POSIX,
+msvcrt byte-range locking on Windows (the in-turn agent and a detached poller
+may both write) — and passed through the redact_secrets redactor so no
+credential material is ever persisted.
 
 State root: $TAO_STATE_DIR if set, else ~/.tao — deliberately OUTSIDE any
 synced results tree. Records conform to
@@ -35,14 +36,33 @@ submitted, where do results live, and how did it end". No tao_sdk imports.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import re
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+# The record writer is invoked by EVERY platform skill, including the two
+# Windows ones, where `import fcntl` is a hard ModuleNotFoundError at line one —
+# every documented submit sequence would die before it minted an id. msvcrt's
+# byte-range lock is the Windows equivalent; the guarantee (one writer at a time
+# per record, across processes) is the same.
+try:
+    import fcntl
+except ModuleNotFoundError:  # Windows
+    fcntl = None
+    import msvcrt
+
+# ONE switch for every POSIX-only primitive below (flock, directory fsync), and
+# it is capability-based rather than `os.name == "nt"` on purpose: tests flip
+# this constant, and monkeypatching os.name is not a safe way to simulate
+# Windows on Linux — pathlib picks WindowsPath vs PosixPath from os.name, so
+# Path() starts raising NotImplementedError and the test measures pathlib
+# instead of this module.
+_POSIX = fcntl is not None
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import redact_secrets  # noqa: E402  (sibling helper; the redaction backstop)
@@ -138,6 +158,13 @@ def _atomic_write(path: Path, record: dict) -> None:
         # An ENOSPC/fsync failure must leave the previous record intact without
         # accumulating misleading zero-byte job-record fragments.
         tmp.unlink(missing_ok=True)
+    if not _POSIX:
+        # Windows cannot open a directory as a file: os.open(dir, O_RDONLY)
+        # raises PermissionError (WinError 5), so this would turn every single
+        # record write into a crash. There is no exposed equivalent — NTFS
+        # orders the rename's metadata itself — so the durability of the rename
+        # is the filesystem's promise here rather than ours.
+        return
     # fsync the directory so the rename itself survives a power loss
     dfd = os.open(path.parent, os.O_RDONLY)
     try:
@@ -158,19 +185,51 @@ def _load(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+LOCK_TIMEOUT_SECONDS = 60.0
+
+
 class _Locked:
-    """Per-record exclusive flock held across a read-modify-write."""
+    """Per-record exclusive lock held across a read-modify-write.
+
+    flock on POSIX, msvcrt byte-range locking on Windows. The Windows side
+    polls with ``LK_NBLCK`` instead of using the blocking ``LK_LOCK`` mode:
+    ``LK_LOCK`` retries on a fixed one-second cadence and gives up after ten
+    attempts, which turns a poller and an agent marking the same record into
+    seconds of stall and then an error, even though each write takes under a
+    millisecond.
+    """
 
     def __init__(self, path: Path):
         self._lock_path = path.parent / f".{path.name}.lock"
 
     def __enter__(self):
-        self._fh = open(self._lock_path, "w")
-        fcntl.flock(self._fh, fcntl.LOCK_EX)
-        return self
+        # "a+" rather than "w": truncating a file whose first byte another
+        # process has locked is a sharing violation on Windows.
+        self._fh = open(self._lock_path, "a+")
+        if _POSIX:
+            fcntl.flock(self._fh, fcntl.LOCK_EX)
+            return self
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                self._fh.seek(0)
+                msvcrt.locking(self._fh.fileno(), msvcrt.LK_NBLCK, 1)
+                return self
+            except OSError:
+                if time.monotonic() >= deadline:
+                    self._fh.close()
+                    raise SystemExit(
+                        f"could not lock {self._lock_path} within "
+                        f"{LOCK_TIMEOUT_SECONDS:g}s; another writer is stuck"
+                    )
+                time.sleep(0.01)
 
     def __exit__(self, *exc):
-        fcntl.flock(self._fh, fcntl.LOCK_UN)
+        if _POSIX:
+            fcntl.flock(self._fh, fcntl.LOCK_UN)
+        else:
+            self._fh.seek(0)
+            msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
         self._fh.close()
 
 

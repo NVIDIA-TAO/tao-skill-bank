@@ -5,12 +5,13 @@ description: >-
   Cosmos-RL, validates runtime model/video-dataset/SLURM inputs, consumes an
   SQSH or packaged backend image, optionally plans explicit clean
   source builds, prepares checkpoints, validates the first update in-process,
-  and returns token-weighted losses and task-aware accuracy.
+  and returns token-weighted losses and task-aware accuracy. Includes the
+  model-specific native Windows x64 and experimental Windows-on-ARM64 route.
 license: Apache-2.0
 compatibility: Requires Python 3.11+ with PyYAML and a supported container execution platform; SLURM runs additionally require SSH, sbatch/srun, Pyxis/Enroot, and shared storage.
 metadata:
   author: NVIDIA Corporation
-  version: "0.3.6"
+  version: "0.3.7"
 allowed-tools: Read Bash
 tags:
 - model
@@ -25,6 +26,18 @@ Keep one shared model-facing frontend. Backend image fields and contract paths
 live under `backend_contracts` in `references/skill_info.yaml`; image literals
 are stamped from `versions.yaml`, while referenced backend YAMLs define native
 runtime schemas. Never translate between them.
+
+## Native Windows
+
+The Windows contract belongs to this model skill: read
+`references/cosmos3-windows.md` first (patches, pins, overrides, decoder,
+action coverage, support boundaries); `references/cosmos3-windows-arm64.md`
+for the experimental ARM64 route; `references/cosmos3-vllm-serving-windows.md`
+for optional native vLLM serving (in-process HF inference is the default on
+Windows; vLLM for Windows on ARM64 must be built from source); and
+`references/cosmos3-wts-validation.md` for the optional WTS smoke fixture.
+Platform mechanics come from `tao-run-on-windows-venv` (native) and
+`tao-run-on-windows-docker` (containers).
 
 ## Mandatory runtime intake
 

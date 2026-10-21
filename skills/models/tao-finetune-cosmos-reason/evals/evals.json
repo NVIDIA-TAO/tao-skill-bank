@@ -92,5 +92,48 @@
       "Runs Framework DCP export and verification automatically before shared evaluation",
       "Preserves field provenance and config SHA256"
     ]
+  },
+  {
+    "id": "tao-finetune-cosmos-reason-native-windows-arm64",
+    "question": "Plan a native Windows-on-ARM64 Cosmos3-Nano LoRA validation on one RTX Spark using a staged WTS fixture. Do not execute anything.",
+    "expected_skill": "tao-finetune-cosmos-reason",
+    "expected_script": null,
+    "ground_truth": "Select the Cosmos3 model skill's Windows references, require ARM64 Python plus NVIDIA ARM nightly Torch and the platform allocation gate, use the internal ARM64 TorchCodec wheel and public converted weights, then treat WTS as an optional smoke-plus-full lifecycle fixture rather than a quality benchmark. Route process lifecycle to tao-run-on-windows-venv. For optional vLLM serving, install the portable internal ARM64 wheel by immutable version and hash and keep serving separate from TAO train/export/evaluate/direct inference.",
+    "expected_behavior": [
+      "Uses the Cosmos3 model skill rather than an application skill",
+      "Requires native ARM64 Python and the explicit platform allocation probe",
+      "Keeps WTS optional and dataset-specific rather than generalizing it",
+      "Uses CUDA TorchCodec rather than CPU video fallback",
+      "Separates TAO actions from optional validated native ARM64 vLLM serving",
+      "References a vLLM wheel built from the public Windows fork rather than a machine-local artifact"
+    ]
+  },
+  {
+    "id": "tao-finetune-cosmos-reason-windows-vllm-serving",
+    "question": "Plan OpenAI-compatible serving of a merged Cosmos3-Nano LoRA export on native Windows. Compare the x64 and ARM64 setup and explain what changes for dynamic LoRA. Do not execute anything.",
+    "expected_skill": "tao-finetune-cosmos-reason",
+    "expected_script": null,
+    "ground_truth": "Use the shared Cosmos3 Windows vLLM serving reference. Verify a merged HF safetensors export with zero LoRA keys for ordinary serving; DCP is not loadable. Keep an isolated SystemPanic/Torch 2.11 venv and CUDA_HOME shim on x64. On ARM64 use native CPython 3.13, NVIDIA WoA Torch, and the portable private vLLM 0.26.0+cu134 wheel by immutable version/hash. Dynamic LoRA instead serves the base model with a standard PEFT adapter directory. State that standard vLLM accepts text/image/video input but emits text/tool tokens, and do not inherit ARM-only validation claims onto x64.",
+    "expected_behavior": [
+      "Distinguishes DCP, merged HF safetensors, and adapter-only PEFT artifacts",
+      "Uses separate x64 and ARM64 interpreter and Torch ABI contracts",
+      "References the ARM64 vLLM source build by fork branch and version",
+      "Explains base-model plus PEFT adapter setup for dynamic LoRA",
+      "States vLLM's media-input and text-output boundary",
+      "Does not generalize ARM64 multimodal or Responses validation to x64"
+    ]
+  },
+  {
+    "id": "tao-finetune-cosmos-reason-native-windows-contract",
+    "question": "A Windows Cosmos3 LoRA run completed, but export serves base-model quality and evaluation reports zero accuracy at exit code 0. Explain the required checks without running anything.",
+    "expected_skill": "tao-finetune-cosmos-reason",
+    "expected_script": null,
+    "ground_truth": "Read the Cosmos3 Windows contract and model gaps. Export must receive --base-model-path-or-uri and the safetensors index must contain zero lora keys. Evaluation must use answer_type freeform; the letter mode clamps generation and can return zero accuracy at exit 0. Report overall.accuracy, not WEIGHTED_SCORE.",
+    "expected_behavior": [
+      "Routes to the model-owned Cosmos3 Windows contract",
+      "Requires LoRA merge and zero residual lora keys after export",
+      "Diagnoses answer_type letter as a cross-platform silent evaluation trap",
+      "Uses overall.accuracy rather than WEIGHTED_SCORE"
+    ]
   }
 ]

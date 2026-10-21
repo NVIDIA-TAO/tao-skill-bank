@@ -39,6 +39,14 @@ RUN_PLATFORMS = [
     "tao-run-on-slurm",
     "tao-run-on-brev",
     "tao-run-on-virtualenv",
+    # The two Windows platforms are held to the same contract as every other
+    # run platform. They are the first ones whose examples are PowerShell
+    # rather than POSIX shell, which is exactly why they must be listed here:
+    # the four-verb, job-record and $BANK-path checks are shell-agnostic, so a
+    # PowerShell platform that silently skipped `open`/`mark` — or pointed at a
+    # references/ file that was never committed — would otherwise ship unseen.
+    "tao-run-on-windows-docker",
+    "tao-run-on-windows-venv",
 ]
 
 VERB_PATTERNS = {

@@ -1,0 +1,167 @@
+# SPDX-License-Identifier: OpenMDW-1.1
+#
+# Cosmos3-Nano LoRA SFT recipe with the Windows-safe defaults baked in.
+#
+# VERIFIED: trained to completion on Windows in the container --
+#   LoRA injection successful: 144 modules wrapped, 15,335,424 trainable (0.175%)
+#   Done with training.  /  Cosmos Framework WTS SFT training completed successfully
+#
+# Derived from the image's examples/toml/sft_config/wts_vlm.toml. Every deviation
+# from upstream is marked `# WINDOWS`; upstream owns everything else, so keep this
+# diffed against the in-image recipe when that moves.
+#
+# This absorbs 7 of the 15 Windows overrides. NINE still have to be passed on the
+# command line -- see "What this file CANNOT absorb" below. It is a reduction, not
+# an elimination.
+#
+#   docker run --rm --isolation=process ^
+#     --device class/5B45201D-F2F2-4F3B-85BB-30FF1F953599 ^
+#     -v C:\models:C:\models -v C:\data:C:\data -v C:\cfg:C:\cfg ^
+#     -e VLM_SAFETENSORS_PATH=C:\models\Cosmos3-Nano-VLM ^
+#     -e WTS_TRAIN_ANNOTATION=C:\data\train\annotations.json ^
+#     -e WTS_TRAIN_MEDIA=C:\data\train\videos ^
+#     -e WTS_VAL_ANNOTATION=C:\data\val\annotations.json ^
+#     -e WTS_VAL_MEDIA=C:\data\val\videos ^
+#     <image> python -m cosmos_framework.scripts.train ^
+#       --sft-toml=C:\cfg\wts_vlm_windows.toml -- ^
+#       optimizer=adamw ^
+#       model.config.policy.attn_implementation=sdpa ^
+#       model.config.policy.lora_enabled=true ^
+#       dataloader_train.num_workers=0 dataloader_train.persistent_workers=false ^
+#       dataloader_train.prefetch_factor=null ^
+#       dataloader_val.num_workers=0 dataloader_val.persistent_workers=false ^
+#       dataloader_val.prefetch_factor=null
+#
+# What this file CANNOT absorb, and why. The recipe schema (SFTExperimentConfig)
+# and the `--` override namespace are DIFFERENT objects: overrides address the
+# RESOLVED config, which is strictly larger. These four are rejected outright with
+# `Extra inputs are not permitted` if you put them here:
+#     model.config.*                       (so both model.config.policy.* settings)
+#     dataloader_train.num_workers
+#     dataloader_train.persistent_workers
+#     dataloader_val                       (the whole section)
+# Two further traps:
+#   - TOML has no null literal. `prefetch_factor = null` is a TOMLDecodeError in a
+#     file, though it is fine as a command-line override where Hydra parses None.
+#   - `optimizer=adamw` selects an optimizer GROUP. Substituting `fused = false`
+#     here fails with "Optimizers with fused=False are not supported", so `fused`
+#     stays at upstream's true and the group override stays on the command line.
+#
+# Dataset and model paths come from the five environment variables above, not from
+# this file -- `${oc.env:...}` resolves them at load.
+#
+# NOTE this is a SMOKE recipe, inherited from upstream: max_iter=20,
+# steps_per_epoch=10, num_epochs=2 -- 20 optimizer steps total, enough to prove the
+# pipeline and nothing more. For real training set steps_per_epoch to your
+# distributed update count and raise max_iter accordingly.
+
+[job]
+task       = "vlm"
+experiment = "wts_vlm"
+project    = "cosmos3_reasoner"
+group      = "wts_sft"
+name       = "wts_vlm"
+wandb_mode = "disabled"
+
+[model]
+# WINDOWS: upstream is "cosmos", which routes to NATTEN -- no Windows build.
+# This is only ONE of the two attention settings; the other lives at
+# model.config.policy.attn_implementation and can only be set as an override.
+# Setting one without the other silently leaves NATTEN selected.
+attn_implementation = "sdpa"
+precision = "bfloat16"
+
+[model.backbone]
+model_name = "${oc.env:VLM_SAFETENSORS_PATH}"
+safetensors_path = "${oc.env:VLM_SAFETENSORS_PATH}"
+
+[model.ema]
+enabled = false
+rate = 0.1
+iteration_shift = 0
+
+[model.parallelism]
+# WINDOWS: upstream ships 4. Multi-GPU is impossible here -- gloo cannot run CUDA
+# collectives and NCCL has no Windows build -- so everything is 1.
+data_parallel_shard_degree = 1
+data_parallel_replicate_degree = 1
+context_parallel_shard_degree = 1
+cfg_parallel_shard_degree = 1
+
+[model.compile]
+enabled = false
+compile_dynamic = true
+
+[model.activation_checkpointing]
+mode = "full"
+save_ops_regex = ["fmha"]
+preserve_rng_state = true
+determinism_check = "default"
+
+[optimizer]
+betas = [0.9, 0.999]
+eps = 1.0e-8
+# NOT a Windows change -- deliberately left at upstream's value. `fused` is an
+# optimizer kwarg and the framework rejects fused=False outright:
+#   ValueError: Optimizers with fused=False are not supported;
+#   pass fused=True in optimizer_kwargs.
+# The Windows fix is the separate `optimizer=adamw` OVERRIDE, which selects a
+# different optimizer group; the default fusedadamw imports transformer_engine
+# (Linux-only). The two are not interchangeable.
+fused = true
+lr = 1.0e-4
+weight_decay = 0.01
+
+[scheduler]
+cycle_lengths = [20]
+f_max = [1.0]
+f_min = [0.0]
+f_start = [0.0]
+verbosity_interval = 0
+warm_up_steps = [0]
+
+[trainer]
+# WINDOWS: upstream is "fsdp". A process group is mandatory regardless -- trainer
+# init runs an unconditional dist.barrier() -- and gloo is the only backend
+# available, so DDP at world_size 1 is the single working configuration.
+distributed_parallelism = "ddp"
+grad_accum_iter = 1
+logging_iter = 1
+max_iter = 20
+num_epochs = 2
+steps_per_epoch = 10
+max_val_iter = 10
+run_validation = true
+validation_iter = 10
+validation_freq_in_epoch = 1
+run_validation_on_start = false
+
+[trainer.callbacks.compile_tokenizer]
+compile_after_iterations = 3
+enabled = false
+
+[trainer.callbacks.grad_clip]
+clip_norm = 1.0
+force_finite = false
+
+[trainer.callbacks.tao]
+enabled = true
+experiment_name = "Cosmos Framework WTS SFT"
+logging_interval = 1
+validation_heartbeat_interval = 1
+
+[checkpoint]
+keys_to_skip_loading = []
+# WINDOWS: upstream ships "???", Hydra's mandatory-missing marker, which aborts
+# config resolution. Empty means "start fresh". Note it is ignored anyway when
+# latest_checkpoint.txt exists, with no warning.
+load_path = ""
+save_iter = 100
+save_freq_in_epoch = 2
+
+[dataloader_train]
+max_samples_per_batch = 1
+max_sequence_length = 81920
+# NOTE: num_workers / persistent_workers / prefetch_factor are deliberately NOT
+# here -- the schema forbids the first two and TOML cannot express the third.
+# They are passed as overrides.

@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The bank's first pytest job of any kind, and it runs on Windows on purpose.
+#
+# Two platform skills (tao-run-on-windows-docker, tao-run-on-windows-venv) and
+# the vendored process runner they ship are the only assets here whose
+# behaviour cannot be reproduced on Linux: named Job Objects, GetProcessTimes
+# identity, msvcrt byte-range locking, `\Scripts\python.exe` layout, unsigned
+# DWORD exit codes. Every one of those was a place where the POSIX code was
+# silently wrong rather than loudly unsupported — `os.kill(pid, 0)` is a
+# liveness probe on POSIX and a KILL on Windows, `import fcntl` is a
+# ModuleNotFoundError before the first line of work — so a Linux-only pipeline
+# reports green for code that cannot run at all.
+#
+# Everything that CAN be checked from Linux is deliberately written to be
+# (scripts/tests/test_windows_platform_contract.py and the Windows cases in
+# test_launch_preflight.py assert on file content and on faked daemon replies).
+# This job covers only the remainder: real Windows process and filesystem
+# semantics.
+#
+# REVIEW ROUTING: .github/ is owned by @NVIDIA-TAO/TAO-Maintainers in
+# .github/CODEOWNERS, so this file needs their approval separately from the
+# skills in the same PR. It is also not (yet) wired into any required-status
+# gate — merging it makes the job run, not block.
+
+name: Windows Tests
+
+on:
+  pull_request:
+
+jobs:
+  windows-tests:
+    name: Windows Tests (pytest)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.12 is the version the Windows host setup pins, and >= 3.11 is
+          # required for the stdlib tomllib the contract promises its readers.
+          python-version: '3.12'
+
+      # No requirements file to install from: the bank ships skills, not a
+      # package. These are the only third-party imports in the two test trees.
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check pytest pyyaml jsonschema
+
+      # The four ignored modules are POSIX-only by construction, not by
+      # accident, and none of them covers a Windows asset:
+      #   test_iaa_deft_container   - imports a runner whose first import is fcntl
+      #   test_cosmos_skill_workflow- renders SLURM/Pyxis jobs and asserts on
+      #                               POSIX container mount paths
+      #   test_gpu_host_setup       - execs a .sh host-setup script directly
+      #   test_install_codex_agents - execs the bash installer
+      # Everything else in scripts/tests runs here, so a new test module is
+      # covered on Windows by default rather than by remembering to add it.
+      - name: Run pytest
+        run: >
+          python -m pytest scripts/tests
+          skills/platform/tao-run-on-windows-venv/references/tests
+          --ignore=scripts/tests/test_iaa_deft_container.py
+          --ignore=scripts/tests/test_cosmos_skill_workflow.py
+          --ignore=scripts/tests/test_gpu_host_setup.py
+          --ignore=scripts/tests/test_install_codex_agents.py
+          -q

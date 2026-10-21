@@ -88,6 +88,8 @@
         "./skills/platform/tao-run-on-kubernetes",
         "./skills/platform/tao-setup-nvidia-gpu-host",
         "./skills/platform/tao-run-on-slurm",
+        "./skills/platform/tao-run-on-windows-venv",
+        "./skills/platform/tao-run-on-windows-docker",
         "./skills/platform/tao-data-io",
         "./skills/data/tao-convert-dataset-format",
         "./skills/data/tao-validate-dataset-format",

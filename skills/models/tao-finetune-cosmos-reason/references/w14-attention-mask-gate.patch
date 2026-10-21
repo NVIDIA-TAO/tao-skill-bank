@@ -1,0 +1,36 @@
+diff --git a/cosmos_framework/model/generator/vlm_model.py b/cosmos_framework/model/generator/vlm_model.py
+index 39fd310..e2484d3 100644
+--- a/cosmos_framework/model/generator/vlm_model.py
++++ b/cosmos_framework/model/generator/vlm_model.py
+@@ -698,7 +698,14 @@ class VLMModel(ImaginaireModel):
+             data["position_ids"] = position_ids
+ 
+         labels = data.pop("labels")
+-        data.pop("attention_mask", None)
++        # W14 fix: the HF sdpa/eager attention paths REQUIRE attention_mask for
++        # padded multi-sample batches; popping it silently breaks training
++        # (models converge to the label prior) while custom varlen kernels
++        # (cosmos/flash) are unaffected. Keep the mask for HF-native attention.
++        if getattr(self.config.policy, "attn_implementation", "") in ("sdpa", "eager"):
++            pass  # keep attention_mask in data
++        else:
++            data.pop("attention_mask", None)
+         logits = self.model(**data)
+         loss, loss_numerator, loss_denominator = self._loss_fn(logits, labels, return_stats=True)
+ 
+@@ -741,7 +748,14 @@ class VLMModel(ImaginaireModel):
+             data["position_ids"] = position_ids
+ 
+         labels = data.pop("labels")
+-        data.pop("attention_mask", None)
++        # W14 fix: the HF sdpa/eager attention paths REQUIRE attention_mask for
++        # padded multi-sample batches; popping it silently breaks training
++        # (models converge to the label prior) while custom varlen kernels
++        # (cosmos/flash) are unaffected. Keep the mask for HF-native attention.
++        if getattr(self.config.policy, "attn_implementation", "") in ("sdpa", "eager"):
++            pass  # keep attention_mask in data
++        else:
++            data.pop("attention_mask", None)
+         logits = self.model(**data)
+         loss, loss_numerator, loss_denominator = self._loss_fn(logits, labels, return_stats=True)
+         return {

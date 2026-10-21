@@ -17,7 +17,7 @@ license: Apache-2.0 AND CC-BY-4.0
 compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python with `pyarrow`, `yaml`, and either Python 3.11+ `tomllib` or Python 3.10 with the `tomli` fallback used by the shared `cosmos_workflow.py` planner, the selected platform's native CLI, and PR 230 model helper `--backend`.
 metadata:
   author: NVIDIA Corporation
-  version: "0.2.0"
+  version: "0.2.1"
 allowed-tools: Read Task Bash Write
 tags:
 - application
@@ -28,6 +28,25 @@ tags:
 ---
 
 # tao-run-deft-aoi-cosmos3
+
+## Windows route
+
+Validated native Windows execution, mining-only iterations (AnomalyGen SDG is
+not ported): read `references/windows-route.md` together with the model
+skill's `cosmos3-windows.md`. Platform mechanics come from
+`tao-run-on-windows-venv` (native) or `tao-run-on-windows-docker` (containers).
+
+On native ARM64, also read and run `references/windows-arm64-native.md`. It
+replaces the Bash interpreter resolver and Parquet-only mining assumptions with
+the Windows venv preflight and a JSON-table handoff (`scripts/parquet_io.py`
+falls back to duckdb where no pyarrow wheel exists). Run
+`"$PYTHON" scripts/configure_windows_arm64_dll_paths.py` after installing
+TorchCodec so every native Python worker gets the required DLL directories.
+
+For the public Roboflow `poc-ongfq` v2 classification export (CC BY 4.0), run
+`"$PYTHON" scripts/prepare_roboflow_classification_aoi.py` before preflight. It
+maps `good`/`defect` to bare `OK`/`NG`, freezes the split contract, and marks
+its same-split pseudo-references as demo-only rather than physical golden pairs.
 
 ## Installation
 

@@ -10,6 +10,7 @@ with immutable terminal states; every write is redacted; concurrent marks
 """
 
 import json
+import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -77,7 +78,10 @@ def test_open_writes_schema_valid_pending_record(state_dir, capsys):
     rec = read_record(state_dir, job_id)
     jsonschema.validate(rec, SCHEMA)                     # M0 schema conformance
     assert rec["transitions"][0]["state"] == "PENDING"
-    assert rec["results_dir"] == f"/lustre/fsw/users/me/results/{job_id}"
+    # results_root is joined with the id using the HOST's separator: a Windows
+    # agent must get C:\results\<id>, not a mixed C:\results/<id> that then
+    # differs from every path the platform prints.
+    assert rec["results_dir"] == os.path.join("/lustre/fsw/users/me/results", job_id)
     assert rec["backend_ref"] is None and rec["terminal_state"] is None
     assert rec["redacted"] is True
 
@@ -347,6 +351,84 @@ def test_platform_input_is_normalized_not_rejected(capsys, state_dir, raw, canon
     record = read_record(state_dir, job_id)
     assert record["platform"] == canonical
     jsonschema.validate(record, SCHEMA)
+
+
+def test_windows_platform_slugs_are_accepted(capsys, state_dir):
+    """`windows-docker` / `windows-venv` must open records like any other slug."""
+    for slug in ("windows-docker", "windows-venv"):
+        job_id = open_job(capsys, platform=slug)
+        record = read_record(state_dir, job_id)
+        assert record["platform"] == slug
+        jsonschema.validate(record, SCHEMA)
+
+
+# --------------------------------------------------------------------------- #
+# Cross-platform writer.
+#
+# This module is invoked by every platform skill, now including two that run on
+# Windows, where the writer used to be unusable: `import fcntl` was a
+# ModuleNotFoundError at line one, so a documented submit died before it minted
+# an id. The tests below pin the pieces that had to become OS-conditional.
+# --------------------------------------------------------------------------- #
+
+def test_lock_backend_matches_the_host():
+    """Exactly one locking backend, chosen by what the interpreter really has."""
+    assert jr._POSIX is (os.name != "nt")
+    if os.name == "nt":
+        assert jr.fcntl is None, "fcntl cannot exist on Windows"
+        assert hasattr(jr, "msvcrt")
+    else:
+        assert jr.fcntl is not None, (
+            "the fcntl import guard swallowed a real POSIX failure; every "
+            "concurrent mark would then be unserialized")
+
+
+def test_lock_is_released_after_a_refused_transition(state_dir, capsys):
+    """A SystemExit raised under the lock must not leave the record locked.
+
+    On Windows the lock is a byte-range lock on a separate .lock file, which
+    outlives the interpreter's stack unwinding if __exit__ is skipped — the
+    next `mark`, in this or any other process, would then block for the full
+    timeout and abort.
+    """
+    job_id = open_job(capsys)
+    assert jr.main(["mark", job_id, "--state", "COMPLETE"]) == 0
+    with pytest.raises(SystemExit, match="terminal"):
+        jr.main(["mark", job_id, "--state", "RUNNING"])
+    # Re-entering the same lock must succeed immediately, not time out.
+    assert jr.main(["mark", job_id, "--state", "COMPLETE",
+                    "--err-class", "ERR_PROGRAM"]) == 0
+    assert read_record(state_dir, job_id)["err_class"] == "ERR_PROGRAM"
+
+
+def test_atomic_write_survives_without_a_directory_fsync(state_dir, capsys, monkeypatch):
+    """The durability fsync targets a DIRECTORY, which Windows cannot open.
+
+    `os.open(dir, O_RDONLY)` raises PermissionError (WinError 5) there, so an
+    unguarded fsync turns every record write into a crash. Simulated here on
+    every OS so the guard cannot regress on a Linux-only CI run.
+
+    The simulation flips ``jr._POSIX``, never ``os.name``: pathlib picks
+    WindowsPath vs PosixPath from ``os.name``, so monkeypatching that on Linux
+    makes every ``Path(...)`` raise NotImplementedError and the test would fail
+    for a reason that has nothing to do with this module.
+    """
+    real_open = os.open
+
+    def refuse_directories(path, flags, *args, **kwargs):
+        if Path(path).is_dir():
+            raise PermissionError(13, "Access is denied")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(jr.os, "open", refuse_directories)
+
+    monkeypatch.setattr(jr, "_POSIX", True)
+    with pytest.raises(PermissionError):
+        open_job(capsys)              # POSIX genuinely performs the fsync
+
+    monkeypatch.setattr(jr, "_POSIX", False)
+    job_id = open_job(capsys)         # Windows must skip it and still write
+    assert read_record(state_dir, job_id)["transitions"][0]["state"] == "PENDING"
 
 
 @pytest.mark.parametrize("garbage", ["", "   ", "k8s!", "a" * 40, "$(id)"])

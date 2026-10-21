@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Windows-installable subset of tao-core/requirements.txt.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# nvidia-tao-core declares uWSGI as a hard requirement (requirements.txt:49).
+# uWSGI cannot be built on Windows at all -- its build script calls a POSIX-only
+# API on the very first line of configuration:
+#
+#   File ".../uwsgi_.../uwsgiconfig.py", line 8, in <module>
+#     uwsgi_os = os.uname()[0]
+#   AttributeError: module 'os' has no attribute 'uname'. Did you mean: 'name'?
+#   ERROR: Failed to build 'uWSGI' when getting requirements to build wheel
+#
+# uWSGI only serves the TAO microservices HTTP app; nothing on the
+# train -> eval -> inference path imports it. So tao-core is installed with
+# --no-deps and its dependencies are supplied from here instead.
+#
+# WHAT IS IN HERE
+# ---------------
+# Of tao-core's 54 requirements, only 28 are present in the venv where eval and
+# inference were verified working on the host. Of those 28, 12 already ship in
+# the base training image, leaving the 16 below. The 26 omitted requirements are
+# genuinely unused by the five entrypoints; several cannot install on Windows
+# anyway (pycocotools needs a compiler, tritonclient[all]), and torchao==0.11.0
+# is deliberately excluded because it can drag torch off the required
+# 2.13.0+cu130 pin that the cuDNN 92000 attention gate depends on.
+#
+# Versions match what pip actually resolved to in the verified host venv.
+# Where tao-core's pin is older than an already-installed package (Flask 3.1.1
+# vs 3.1.3, Werkzeug 3.1.3 vs 3.1.8, grpcio 1.67.1 vs 1.83.0) the pin is relaxed
+# rather than forcing a downgrade of a working package.
+#
+# ORDER MATTERS
+# -------------
+# This file LAYERS ON TOP OF requirements-cosmos3-win.txt; it does not replace it. The
+# training set installs first (that is where the torch/torchcodec/torchvision
+# +cu130 pins and the runtime `pytest` dependency live), then this one.
+
+cryptography>43.0.1; platform_machine != "ARM64"
+cryptography==46.0.3; platform_machine == "ARM64"  # W16: abi3 wheel; newer versions attempt an OpenSSL source build on ARM64
+docker
+Flask
+grpcio; platform_machine != "ARM64"  # W16: no win_arm64 wheel; TAO_DISABLE_CLOUD_STATUS_CALLBACK=1 skips its optional cloud status clients
+jsonschema
+kubernetes==32.0.1
+leptonai>=0.26.0
+ngcsdk==3.151.0
+orjson
+pycryptodome==3.23.0
+pymongo==4.13.0
+requests_toolbelt==1.0.0
+ruamel.yaml==0.18.12
+toml
+validators==0.35.0
+Werkzeug

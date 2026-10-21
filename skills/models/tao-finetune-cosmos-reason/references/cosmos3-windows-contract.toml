@@ -1,0 +1,644 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Cosmos-3 (cosmos-framework / Cosmos Reason) on Windows — machine-readable contract.
+#
+# THIS FILE IS THE SINGLE SOURCE OF TRUTH for the Windows Cosmos-3 path: the image, the
+# container runtime flags, the five action entrypoints, the mandatory training overrides,
+# the shipped LoRA defaults, the evaluate settings that stop a silent wrong answer, the
+# export post-condition, and the hard limits. SKILL.md and every references/*.md in this
+# skill cite keys from this file rather than restating the values. Downstream consumers
+# read it instead of hardcoding.
+#
+# Read it with the standard library only — tomllib, Python >= 3.11, no third-party parser:
+#
+#     import tomllib, pathlib
+#     c = tomllib.loads(pathlib.Path("cosmos3-windows-contract.toml").read_text(encoding="utf-8"))
+#     c["image"]["uri"]; c["runtime"]["device_class"]; c["overrides"]["train"]
+#
+# image.uri is release-managed: it carries the repo's stamp marker, so
+# scripts/stamp_versions.py rewrites it from versions.yaml on a bump and
+# `scripts/stamp_versions.py --check` (CI) fails if it drifts. Do not hand-edit that
+# value — edit versions.yaml at the repo root and run the stamper.
+#
+# Every other value here was measured on a single GPU, on Windows — on that image, or on
+# the native venv that runs the same patched sources. [validation] records exactly what was
+# executed, when, on which path, and which actions remain UNVERIFIED; read it before
+# describing any action as working.
+# Trap identifiers (T1-T6 model traps, W1-W18 Windows traps) match the skill prose.
+
+schema_version = "1.2.0"
+
+
+[image]
+# One image serves all five actions. There is no separate deploy or inference image.
+uri = "nvcr.io/nvstaging/tao/cosmos-framework-windows:pr164-tao-ltsc2025-20260826.1"  # versions-key: images.tao_toolkit.cosmos_framework_windows
+versions_key = "images.tao_toolkit.cosmos_framework_windows"
+serves_all_actions = true
+os_type = "windows"
+base_os = "Windows Server Core LTSC 2025"
+# The image carries the Windows source patches. Stock upstream cannot run here.
+sources = [
+  "cosmos-framework @ windows-port-pr164 — upstream PR #164 plus the Windows port patch (13 files, incl. the new cosmos_framework/utils/win_compat.py)",
+  "cosmos-rl @ windows-port — 4 commits: NVDEC via nvcuvid.dll on win32; tao-core submodule bump; torchcodec allowed as an evaluation video decoder; torchcodec pinned",
+  "tao-core @ the pwd-guard commit — guards the POSIX-only `import pwd` in microservices/handlers/execution_handlers/slurm_handler.py",
+]
+# W4: the base image has no VC++ runtime, so c10.dll fails to load with WinError 126.
+# vc_redist.x64.exe is COPY'd into the build context and run /quiet — copied, never
+# downloaded, because the CA store is empty until certifi is wired up.
+requires_vc_redist = true
+# W1: driver libraries are projected from the host by the GPU device class and must match
+# the host driver. Never bake a driver DLL (e.g. nvEncodeAPI64.dll) into the image.
+bake_driver_dlls = false
+
+
+[runtime]
+# --isolation=process is MANDATORY. The daemon default is hyperv, which has NO GPU path
+# whatsoever. Build under hyperv, run under process.
+isolation = "process"
+build_isolation = "hyperv"
+device_class = "class/5B45201D-F2F2-4F3B-85BB-30FF1F953599"
+required_run_flags = [
+  "--isolation=process",
+  "--device class/5B45201D-F2F2-4F3B-85BB-30FF1F953599",
+]
+# Linux-only flags. On a Windows container these are not "optional" — passing one is an
+# error, not a no-op. Do not translate a Linux run line by search-and-replace.
+gpus_flag_supported = false      # the GPU arrives via device_class, never via --gpus
+shm_size_flag_supported = false  # no /dev/shm; see the dataloader overrides (num_workers=0)
+user_flag_supported = false      # no --user, no uid:gid mapping, no rootless equivalent
+# W9: the documented training command passes a RELATIVE recipe path, so changing WORKDIR
+# breaks TRAINING ONLY — evaluate and inference keep working, which makes the break silent.
+workdir = "C:/cosmos-framework"
+# W8: under a bash-family shell a backslash is eaten and the argument arrives relative to
+# WORKDIR. Use forward slashes for container paths in docker arguments.
+container_path_style = "forward-slash"
+# W3: --memory below ~2x model size gives 0xC0000005 AFTER "Done with training." prints —
+# DCP stages the whole model through host memory on the way out.
+memory_limit_min_multiple_of_model_size = 2.0
+# W2: DCP writes .metadata.tmp then renames it; on a bind mount that rename is WinError 3,
+# and it happens AFTER training completes. Keep the output dir container-internal.
+output_dir_must_be_container_internal = true
+results_extraction = "docker cp <container>:<container_output_dir> <host_output_dir>"
+# W6: a failed RUN does NOT fail a Windows docker build — $ErrorActionPreference does not
+# apply to native executables. Check $LASTEXITCODE after EVERY native command.
+build_must_check_lastexitcode = true
+# W5: pip dies mid-install at 262 chars. Set the registry key BEFORE any pip step.
+build_requires_longpaths_enabled = true
+# W7: inline `python -c` inside RUN gets its quotes and semicolons mangled by PowerShell.
+# Put the code in a .py/.pth file and COPY it in.
+build_allows_inline_python_c = false
+# W11: query health is not allocation health. is_available(), get_device_name() and
+# nvidia-smi can all pass while a 4-byte allocation segfaults. Probe with a real
+# allocation plus a bf16 matmul.
+gpu_probe_must_allocate = true
+# W10: no cgroup or MIG equivalent — no per-user GPU quota, no isolation, no scheduler on
+# a shared Windows box. Serialize jobs yourself.
+gpu_quota_supported = false
+
+
+[actions]
+# Source of truth: cosmos-rl/pyproject.toml lines 24-33. FOUR of the five console scripts
+# resolve into cosmos-rl, not cosmos-framework, so a cosmos-framework-only image cannot
+# serve them.
+names = ["train", "export", "evaluate", "inference", "inference-microservice"]
+entrypoint_prefix = "cosmos-framework-"
+console_script_source = "cosmos-rl/pyproject.toml:24-33"
+# vLLM is NOT on the evaluate or inference path: both generate through HF Transformers.
+uses_vllm = false
+
+[actions.train]
+entrypoint = "cosmos-framework-train"
+target = "cosmos_framework.scripts.train:main"
+package = "cosmos-framework"
+
+[actions.export]
+entrypoint = "cosmos-framework-export"
+target = "cosmos_rl.framework.export:main"
+package = "cosmos-rl"
+
+[actions.evaluate]
+entrypoint = "cosmos-framework-evaluate"
+target = "cosmos_rl.evaluation.evaluate:main"
+package = "cosmos-rl"
+
+[actions.inference]
+entrypoint = "cosmos-framework-inference"
+target = "cosmos_rl.inference.inference:main"
+package = "cosmos-rl"
+
+[actions.inference-microservice]
+entrypoint = "cosmos-framework-inference-microservice"
+target = "cosmos_rl.inference.infer_microservices:main"
+package = "cosmos-rl"
+
+
+[overrides]
+# Appended to `python -m cosmos_framework.scripts.train --sft-toml=<recipe>.toml` AFTER a
+# bare "--" separator. Use plain `python`, NOT torchrun: the shipped launchers are bash
+# and hardcode --nproc_per_node=8.
+separator = "--"
+launcher = "python"
+count = 11
+# Nine of the eleven CANNOT be folded into a recipe TOML: SFTExperimentConfig rejects
+# model.config.* and dataloader_* with "Extra inputs are not permitted", and TOML has no
+# null literal for prefetch_factor. Those stay on the command line on every single run.
+not_foldable_into_recipe_toml = 9
+#
+# 2026-08-27: the two attn_implementation=sdpa entries were REMOVED from this set. The
+# recipe-default `cosmos` attention is an AttentionInterface adapter over torch's built-in
+# cuDNN SDPA and runs natively on Windows (trained: epoch-1 val 0.0179 on the wafer repro).
+# The old mandatory sdpa override didn't just cost parity — it silently broke learning
+# (trap W14, see [validation.train]). DO NOT override attention on Windows.
+# If you ever must (sdpa/eager for debugging, WITH the W14 mask-gate patch applied), the
+# two-policy trap still applies: there are two policy configs — a top-level `policy.*`
+# and `model.config.policy.*` — and VLMModel reads the LATTER. Set BOTH keys; setting only
+# `policy.attn_implementation` silently leaves the model on `cosmos` attention.
+# Upstream: cosmos-framework Release 2026-08-14 (#198, 18d90ea) forwards attention_mask and
+# stops precomputing position_ids, i.e. W14 is fixed there; the gate patch is only for this
+# PR #164-based pin (cosmos3-windows-gaps.md, W14 upstream status).
+train = [
+  "optimizer=adamw",
+  "trainer.distributed_parallelism=ddp",
+  "model.config.parallelism.data_parallel_shard_degree=1",
+  "model.config.parallelism.data_parallel_replicate_degree=1",
+  "model.config.policy.lora_enabled=true",
+  "dataloader_train.num_workers=0",
+  "dataloader_train.persistent_workers=false",
+  "dataloader_train.prefetch_factor=null",
+  "dataloader_val.num_workers=0",
+  "dataloader_val.persistent_workers=false",
+  "dataloader_val.prefetch_factor=null",
+]
+
+[overrides.optional_attention_debug]
+# Do not append these to the normal Windows route. They are retained as a pair
+# only for controlled SDPA/eager debugging after the W14 mask-gate patch is
+# applied; using either override without that patch can complete successfully
+# while learning only the label prior.
+requires_w14_mask_gate = true
+values = [
+  "policy.attn_implementation=sdpa",
+  "model.config.policy.attn_implementation=sdpa",
+]
+reason = "VLMModel reads model.config.policy.*; when explicitly debugging with HF-native attention, both policy configs must be changed together"
+
+[overrides.inert]
+# ACCEPTED-BUT-IGNORED OVERRIDES. Each of these parses, is accepted without a warning, and
+# then has NO EFFECT. They do not fail; they lie. Check this table before you believe an
+# override shortened, bounded or capped anything.
+#
+# T2 num_frames — evaluate. Propagated by runtime.py, but qwen-vl-utils keys off "nframes",
+# so the frame cap never reaches the decoder. Bound with fps AND total_pixels instead.
+# See [evaluate].num_frames_is_inert. OS-independent.
+#
+# trainer.max_iter — training. MEASURED 2026-08-13 on the real native LoRA SFT run: we
+# passed trainer.max_iter=6 and the run executed ALL 20 iterations and saved
+# checkpoints/epoch_2. The shipped recipe's own length keys govern. Accepted, not logged,
+# ignored — same family as num_frames.
+keys = ["trainer.max_iter", "num_frames"]
+trainer_max_iter_is_inert_with_shipped_recipe = true
+trainer_max_iter_evidence = "passed trainer.max_iter=6; 20 iterations executed; checkpoint written to checkpoints/epoch_2 (native run, 2026-08-13)"
+trainer_max_iter_governing_recipe = "wts_vlm_windows.toml"
+trainer_max_iter_governing_key = "scheduler.cycle_lengths"
+trainer_max_iter_governing_value = 20          # wts_vlm_windows.toml line 116: cycle_lengths = [20]
+trainer_max_iter_recipe_num_epochs = 2         # the same recipe: num_epochs = 2
+trainer_max_iter_recipe_steps_per_epoch = 10   # x steps_per_epoch = 10 -> the same 20 steps
+# To ACTUALLY shorten a run, edit the recipe (scheduler.cycle_lengths together with
+# trainer.num_epochs / trainer.steps_per_epoch) and re-check the iteration count in the log.
+# Do not report a run as "capped at N iterations" on the strength of the CLI override alone.
+shorten_a_run_by = "editing the recipe TOML, not trainer.max_iter"
+verify_by = "count the iterations actually logged"
+
+[overrides.why]
+# Keyed by the left-hand side of each override above.
+"optimizer" = "the default fusedadamw imports transformer_engine"
+"trainer.distributed_parallelism" = "ddp is the only parallelism that survives world_size==1; the DDP wrapper itself is skipped at world_size==1"
+"model.config.parallelism.data_parallel_shard_degree" = "single GPU; sharding needs collectives gloo cannot run on CUDA tensors"
+"model.config.parallelism.data_parallel_replicate_degree" = "single GPU; replication needs collectives gloo cannot run on CUDA tensors"
+"model.config.policy.lora_enabled" = "LoRA is the only 8.8B configuration that fits; requires upstream PR #164"
+"dataloader_train.num_workers" = "Windows spawns rather than forks worker processes"
+"dataloader_train.persistent_workers" = "meaningless and rejected at num_workers=0"
+"dataloader_train.prefetch_factor" = "must be null at num_workers=0; TOML has no null literal, so this is CLI-only"
+"dataloader_val.num_workers" = "Windows spawns rather than forks worker processes"
+"dataloader_val.persistent_workers" = "meaningless and rejected at num_workers=0"
+"dataloader_val.prefetch_factor" = "must be null at num_workers=0; TOML has no null literal, so this is CLI-only"
+
+
+[lora]
+# The shipped defaults, logged verbatim by inject_lora_pre_fsdp at injection time. Do not
+# assume they match a Linux recipe's LoRA block — these are what this image actually uses.
+enabled_by = "model.config.policy.lora_enabled=true"
+requires_upstream_pr = 164   # on main the reasoner/VLM path has no LoRA implementation at all
+rank = 16
+alpha = 32
+dropout = 0.0
+rslora = false
+bias = "none"
+target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+modules_wrapped = 144
+trainable_parameters = 15335424
+total_parameters = 8782459120
+trainable_fraction_percent = 0.175
+modules_to_save = []
+
+
+[evaluate]
+# T1: answer_type="letter" HARD-CLAMPS max_tokens to 10 inside evaluation/base.py — it
+# discards whatever you configured. That truncates a reasoner mid-<think>, so every reply
+# comes back byte-identical, the run reports "Accuracy: 0.0000", and it EXITS 0. Raising
+# max_tokens changes nothing. MCQ letter extraction keys on task.type, not answer_type,
+# and the scorer already strips </think> before matching \b([A-D])\b, so freeform loses
+# nothing. This trap is OS-independent — it is not a Windows problem.
+answer_type = "freeform"
+answer_type_letter_clamps_max_tokens_to = 10
+# W1: the default decoder (PyNvVideoCodec) probes for the NVENC *encoder* library at init
+# even though evaluation only ever decodes. The GPU device class projects nvcuvid.dll
+# (NVDEC) but NOT nvEncodeAPI64.dll, so it dies with
+#   RuntimeError: NVENC library file is not found
+# Selecting torchcodec requires the Windows port patch; stock builds raise on any value
+# other than the default.
+video_decoder = "torchcodec"
+default_video_decoder = "pynvvideocodec"
+# T2: num_frames is INERT. runtime.py propagates (fps, num_frames, min_pixels, max_pixels,
+# total_pixels) but qwen-vl-utils keys off "nframes", so the cap is accepted, logged and
+# then ignored: a 77 s clip decodes whole and asks for 376.52 GiB. It reads as "eval is
+# slow", not "eval is misconfigured". Bound the work with fps AND total_pixels.
+num_frames_is_inert = true
+frame_budget_keys = ["fps", "total_pixels"]
+fps = 0.1
+total_pixels = 3211264            # 4096 * 28 * 28 — the video-wide cap; this is the one that matters
+max_pixels_is_per_image = true
+max_tokens = 1024                 # must be large enough for the <think> block to close
+temperature = 0.0
+batch_size = 1
+num_gpus = 1
+# evaluate joins dataset.media_dir with each annotation's relative path, so it is NOT
+# affected by the inference --media non-recursion trap. See [inference].
+media_dir_joined_with_annotation_path = true
+# CONFIRMED OBSERVED 2026-08-13: a SUCCESSFUL evaluate run prints
+#   WEIGHTED_SCORE: 0.000000
+# on its way out, alongside a real "Overall accuracy: 0.4118". The zero is an artifact of
+# the reporting line, NOT a failed run and NOT a zero score. Do not treat it as a metric,
+# do not gate on it, and do not "debug" it. Report overall.accuracy.
+weighted_score_line_always_zero = true
+weighted_score_is_not_a_metric = true
+report_metric = "overall.accuracy"
+
+
+[export]
+# Training writes a DCP checkpoint: sharded, resumable, carrying optimizer/scheduler/
+# dataloader state. Neither vLLM nor from_pretrained can read it. Export converts it.
+input_format = "dcp"
+output_format = "hf-safetensors"
+# T6: REQUIRED for a LoRA run — it merges the adapter into the base weights. Without it
+# the export still succeeds, the output STILL CONTAINS lora tensors, and vLLM serves the
+# BASELINE model. Nothing in the exit code or the logs says so.
+base_model_arg = "--base-model-path-or-uri"
+base_model_arg_required_for_lora = true
+# Post-condition, checked every time. Zero means a standalone merged model. Non-zero means
+# you exported an adapter that still needs the base model at load time.
+verify_index = "model.safetensors.index.json"
+expected_lora_keys = 0
+verify_command = '''python -c "import json;m=json.load(open('<export_dir>/model.safetensors.index.json'))['weight_map'];print(sum(1 for k in m if 'lora' in k.lower()))"'''
+
+
+[inference]
+# T3: --media <dir> does NOT recurse. WTS nests clips as videos/<clip>/overhead_view/*.mp4,
+# so pointing at videos/ fails with "No video files found in directory" while dozens of
+# files sit beneath it. Pass a single file.
+media_must_be_single_file = true
+media_dir_recurses = false
+
+
+[checkpoint]
+# T5: checkpoint.load_path is SILENTLY IGNORED when latest_checkpoint.txt exists — the run
+# resumes from the tracked checkpoint and reports nothing about the path you asked for.
+latest_marker = "latest_checkpoint.txt"
+load_path_ignored_when_latest_marker_exists = true
+
+
+[env]
+# T4: TAO_API_JOB_ID is mandatory for every action and appears in NO --help; without it
+# the action aborts with "TAO_API_JOB_ID environment variable is required for TAO status
+# logging". But for TRAINING, setting TAO_API_JOB_ID alone is FATAL at iteration 0:
+# "TAO_API_RESULTS_DIR is required when TAO_API_JOB_ID is set". The two requirements are
+# opposite, so a single env block used for all five actions must set BOTH.
+required_always = ["TAO_API_JOB_ID"]
+required_for_train = ["TAO_API_JOB_ID", "TAO_API_RESULTS_DIR"]
+set_both_when_sharing_one_env_block = true
+
+[env.train]
+# The native/single-GPU training env block. Values are strings; substitute <output_root>.
+MASTER_ADDR = "127.0.0.1"
+MASTER_PORT = "29500"
+RANK = "0"
+WORLD_SIZE = "1"
+LOCAL_RANK = "0"
+USE_LIBUV = "0"
+PYTHONIOENCODING = "utf-8"
+IMAGINAIRE_OUTPUT_ROOT = "<output_root>"
+
+
+[limits]
+# MULTI-GPU IS IMPOSSIBLE WITH STOCK TORCH WHEELS — not untested, not "unsupported for
+# now". Two independent walls, and you must clear BOTH:
+#   1. gloo cannot run ANY collective on a CUDA tensor on Windows. The call dies with
+#      0xC0000005 and no Python traceback.
+#   2. NCCL is not an escape from (1) on stock wheels. PyTorch guards every line of its
+#      NCCL process-group code behind the USE_C10D_NCCL build flag, and that flag is OFF
+#      in the official Windows wheels — so init_process_group("nccl") fails regardless of
+#      what DLLs are present on the box.
+# Single-GPU works only because the DDP wrapper is skipped at world_size == 1 and the
+# remaining collectives stage through host memory. Do not "just try 2 GPUs".
+multi_gpu = false
+multi_node = false
+multi_gpu_reason = "gloo cannot run a collective on a CUDA tensor on Windows (0xC0000005, no traceback), and torch's NCCL process group is compiled out of the stock Windows wheels via USE_C10D_NCCL, so init_process_group('nccl') fails regardless"
+multi_gpu_qualifier = "with stock torch wheels"
+# The precise claim, so nobody has to overstate it: a community NCCL Windows port DOES
+# exist and is actively maintained (github.com/SystemPanic/nccl-windows), and SystemPanic's
+# vLLM build instructions require building it. It does not make torch distributed work:
+# vLLM bypasses torch's process group entirely and dlopen's nccl.dll itself via
+# VLLM_NCCL_SO_PATH. Whether a torch rebuilt with USE_C10D_NCCL=1 against that port would
+# train here is UNTESTED IN THIS BANK. Do not claim it works; do not claim it cannot.
+nccl_windows_port_exists = true
+nccl_windows_port_url = "https://github.com/SystemPanic/nccl-windows"
+nccl_windows_port_status = "UNTESTED — never exercised for training in this bank"
+nccl_blocked_by_torch_build_flag = "USE_C10D_NCCL"
+nccl_off_in_stock_windows_wheels = true
+vllm_loads_nccl_directly_via = "VLLM_NCCL_SO_PATH"   # bypasses torch's process group; not a training path
+max_gpus = 1
+max_nodes = 1
+world_size = 1
+# Triton-only kernels; there is no Windows path.
+qwen3_vl_moe_supported = false
+# Generator and VFM TRAINING have not been exercised on this platform. Absence of a
+# recorded failure is not a pass.
+generator_vfm_training_verified = false
+
+[limits.vram_gb]
+# DO NOT SIZE A BOX OFF THIS TABLE. Every number below was measured at a SHORT sequence
+# (seq 2672) and is only comparable to the others in this table. The SHIPPED recipe does
+# NOT use a short sequence: wts_vlm_windows.toml sets max_sequence_length = 81920, and the
+# real run peaked at 71 GB, not 46.4. For the sizing number, read
+# [limits.vram_gb.shipped_recipe] below.
+measurement_conditions = "seq 2672, batch 1, bf16, gradient checkpointing on"
+applies_to_shipped_recipe = false
+sizing_table = "limits.vram_gb.shipped_recipe"
+device_total_reference = 96.0
+full_parameter_sft_8_8b = 105.0   # does NOT fit 96 GB — this is why LoRA is the default
+partial_finetune = 60.5           # freeze.trainable_params
+lora = 46.4                       # seq 2672 ONLY — the shipped recipe peaked at 71 GB
+inference_transformers = 16.3
+generator_inference = 30.5
+
+[limits.vram_gb.shipped_recipe]
+# THE NUMBER TO SIZE A BOX WITH. Measured 2026-08-13 on the real native LoRA SFT run that
+# passed, same LoRA config as [lora] above (144 modules, 15,335,424 trainable params).
+# The 46.4 figure above is honest for seq 2672 and MISLEADING for the default path: the
+# shipped recipe's sequence budget is ~30x longer, and the peak is ~1.5x higher.
+recipe = "wts_vlm_windows.toml"
+max_sequence_length = 81920           # recipe [dataloader_train]
+max_samples_per_batch = 1             # recipe [dataloader_train]
+lora_peak_mib = 72706                 # observed peak, single GPU
+lora_peak_gb = 71.0                   # 72706 MiB
+device_total_mib = 97887              # RTX PRO 6000
+device = "RTX PRO 6000"
+headroom_mib = 25181                  # 97887 - 72706, measured
+fits_measured_device = true           # the only "fits" that is a MEASUREMENT
+# Everything below is arithmetic against the measured peak, not a second measurement:
+# a 48 GB or 64 GB card is under 72706 MiB and cannot hold this recipe, and an 80 GB card
+# clears it by only ~9 GB. Anyone who sized off 46.4 GB would have OOM'd.
+minimum_card_mib_for_shipped_recipe = 72706
+sizing_off_46_4_gb_would_oom = true
+
+
+[validation]
+# WHAT WAS ACTUALLY EXECUTED, as data. This table exists so that no reader has to infer
+# support from the absence of a recorded failure. Anything not listed under
+# actions_verified_native is UNVERIFIED — say "unverified", never "supported".
+date = "2026-08-13"
+path = "native venv"                  # NOT the container; see actions_verified_container
+runner = "skills/platform/tao-run-on-windows-venv/references/windows_job_runner.py"
+venv = "C:/cosmos-win/venv-tao"
+python = "3.12.13"
+torch = "2.13.0+cu130"
+cudnn_backend_version = 92000
+gpu = "RTX PRO 6000"
+gpu_total_mib = 97887
+gpus_used = 1
+recipe = "wts_vlm_windows.toml"
+actions_verified_native = ["train", "evaluate", "export", "inference"]
+# NOT VERIFIED NATIVELY. No recorded failure either — that is not a pass.
+#
+# inference-microservice is the ACTION. What was verified is the serving stack
+# underneath it: vLLM's own vllm.entrypoints.openai.api_server, loading the
+# exported checkpoint and answering /v1/chat/completions (see [validation.vllm_serving]).
+# Those are not the same thing; do not read one as the other.
+actions_unverified_native = ["inference-microservice"]
+actions_verified_container = []       # no cosmos-framework-* ACTION re-run in a container; see [validation.container]
+# The upstream capability table records export as container-only. That is out of
+# date: export ran natively here. Prefer this table over the upstream one.
+supersedes_upstream_export_container_only = true
+
+[validation.train]
+# 2026-08-27 QUALIFICATION (trap W14, RESOLVED same day): "PASS" means the train ACTION
+# runs to completion, checkpoints, and exports. `learns` below is the separate claim
+# that the trained model actually learns — and it is now TRUE, provided attention is
+# left at the recipe default. History, because the failure is silent and will look
+# healthy if reintroduced: this contract originally mandated attn_implementation=sdpa
+# on Windows, and sdpa/eager models plateau at the label prior (epoch-1 val 0.669/0.615
+# vs 0.019 fixed, on identical data). Root cause: training_step pops attention_mask
+# (harmless for cosmos/flash, which ignore it), and transformers 4.57.6 with mask=None
+# fabricates packed-sequence boundaries from the M-RoPE temporal position row at every
+# image token — the answer token cannot attend to the image or prompt. Fixed upstream
+# in transformers v5.3.0 (huggingface/transformers PR #44158); no 4.x backport. Local
+# remedy is EITHER of:
+#   1. (default, shipped) no attention override — the recipe-default `cosmos` attention
+#      is a torch-cuDNN-SDPA adapter, runs natively on Windows, never reads the mask.
+#      Validated: epoch-1 val 0.0179 on the wafer repro.
+#   2. sdpa/eager + the W14 mask-gate patch (references/w14-attention-mask-gate.patch):
+#      keep the mask for HF-native attention, pop it otherwise. Validated end-to-end:
+#      10-epoch train -> export -> 910-record benchmark = 0.8780 acc / 0.605 NG recall,
+#      above the cosmos-rl Linux calibration (0.8615 / 0.576) on the same mined set.
+# Evaluation was never affected (its path supplies the mask), which is exactly why this
+# trap is invisible to post-training checks. Full evidence chain: the DEFT skill's
+# windows-route.md, "Root cause, named".
+status = "PASS"
+learns = true                         # with recipe-default cosmos attention (or sdpa/eager + W14 patch)
+learns_requires = "attn_implementation left at recipe default ('cosmos'); sdpa/eager only with the W14 mask-gate patch"
+# W14 is fixed upstream in cosmos-framework Release 2026-08-14 (#198); the gate patch applies to this PR #164 pin only.
+return_code = 0
+runner_status = "COMPLETE"
+lora_rank = 16
+lora_alpha = 32.0
+lora_dropout = 0.0
+lora_rslora = false
+lora_bias = "none"
+lora_target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+modules_wrapped = 144
+trainable_params = 15335424
+frozen_params = 8767123696
+trainable_fraction_percent = 0.175
+iterations_executed = 20              # trainer.max_iter=6 was passed and IGNORED; see [overrides.inert]
+checkpoint_dir = "checkpoints/epoch_2"
+checkpoint_subdirs = ["dataloader", "model", "optim", "scheduler", "trainer"]
+checkpoint_model_size_gb = 33
+checkpoint_optim_size_mb = 124
+save_done_succeeded = true
+save_seconds = 45.23
+final_log_line = "Done with training."
+peak_vram_mib = 72706                 # see [limits.vram_gb.shipped_recipe]
+
+[validation.evaluate]
+status = "PASS"
+return_code = 0
+runner_status = "COMPLETE"
+accuracy = 0.4118
+total_samples = 17
+correct_samples = 7
+seconds = 148.6
+weighted_score_printed = 0.0          # ON A SUCCESSFUL RUN — an artifact, not a metric
+answer_type = "freeform"
+video_decoder = "torchcodec"
+fps = 0.1
+total_pixels = 3211264
+max_tokens = 1024
+
+[validation.export]
+status = "PASS"
+return_code = 0
+runner_status = "COMPLETE"
+input_checkpoint = "DCP epoch_2 from [validation.train]"
+base_model_flag = "--base-model-path-or-uri"   # required for a LoRA run; without it the output serves as baseline
+output_size_gb = 17
+tensors = 750
+shards = 5
+leftover_lora_keys = 0                # THE post-condition. Non-zero means vLLM will not serve it standalone.
+config_model_type = "qwen3_vl"
+config_architecture = "Qwen3VLForConditionalGeneration"
+
+[validation.inference]
+status = "PASS"
+return_code = 0
+runner_status = "COMPLETE"
+model = "the [validation.export] output, not the base weights"
+media = "one .mp4"                    # --media does not recurse; a single file is required
+fps = 1
+seconds = 5.632
+files_successful = 1
+files_failed = 0
+
+# The SERVING STACK, not the inference-microservice action. See actions_unverified_native.
+[validation.vllm_serving]
+status = "PASS"
+entrypoint = "vllm.entrypoints.openai.api_server"
+venv = "C:/cosmos-win/venv-vllm"      # THIRD venv — torch pin below is incompatible with the other four actions
+vllm = "0.26.0"
+torch = "2.11.0+cu130"                # vLLM pins this with `==`; cosmos needs 2.13.0+cu130
+wheel = "vllm-0.26.0+cu132-cp312-cp312-win_amd64.whl"   # SystemPanic build; keep the PEP 427 filename
+cuda_home = "C:/cudashim"             # forward slashes; a backslash is eaten by the shell layers
+cuda_toolkit_required = false         # cudart64_13.dll already ships in the wheel's torch/lib
+model_loading_gib = 16.79
+kv_cache_tokens = 237712
+resident_vram_mib = 54327
+http_generation_ok = true             # /v1/models and /v1/chat/completions, finish_reason "stop"
+teardown = "runner cancel -> CANCELED, VRAM 54327 -> 711 MiB, whole process tree reaped"
+# Image input, added 2026-09-10: same venv and eager
+# profile, --max-model-len 16384, --limit-mm-per-prompt {"image": 8}, --enable-prefix-caching,
+# --max-num-seqs 1, --mm-processor-kwargs pinning min/max_pixels; 512 requests, 0 errors.
+image_input_verified = true
+images_per_request_verified_max = 4
+max_model_len_verified = 16384
+prefix_caching_verified = true
+mm_processor_kwargs_pixel_pin = 1048576   # -> 1024 visual tokens per image; preprocessor_config leaves min/max_pixels null
+co_tenant_gpu_memory_utilization = 0.30   # beside two servers holding 61 GB; vLLM budgets util*total against FREE memory
+generation_config_overrides_sampling = true   # temperature 0.7 / top-k 20 / top-p 0.8 are the server defaults; send temperature 0 explicitly
+image_validation_date = "2026-09-10"
+not_verified_x64 = ["video input", "/v1/responses", "dynamic LoRA", "compiled (non-eager) execution"]
+
+# The CONTAINER path, exercised on the same host on the same date against a real
+# Windows-container daemon. Recorded separately from actions_verified_container
+# because what ran was the platform mechanics plus vLLM serving, not the
+# cosmos-framework-* actions themselves.
+[validation.container]
+status = "PASS"
+daemon = "moby 29.7.1"
+os_type = "windows"
+default_isolation = "hyperv"          # which is exactly why --isolation=process is mandatory
+image_local = true                    # already present; no pull was exercised
+image_size_gb = 16.9                  # the on-disk image, not the 30 GB often quoted
+gpu_check = "GPU_OK, cudnn 92000, bf16 matmul, 93.1/95.6 GiB free"
+negative_control = "same image without --device -> NO GPU VISIBLE"   # device class is load-bearing
+build_check = "TAO_BUILD_CHECK_OK; all five entrypoints; both Windows source patches present"
+verbs_status_map_confirmed = "running 0 -> RUNNING; exited 0 -> COMPLETE; docker logs works after exit"
+vllm_model_loading_gib = 16.79        # identical to the native run
+vllm_kv_cache_tokens = 237712         # identical to the native run
+vllm_http_generation_ok = true
+vllm_model_bind_mounted = true        # read path is fine; the DCP hazard is the WRITE path
+resident_vram_mib = 54039
+teardown = "docker rm -f -> 54039 -> 748 MiB"
+not_exercised = ["image build", "remote DOCKER_HOST", "multi-node", "cosmos-framework-* actions in-container"]
+
+
+# Native Windows ARM64 is recorded separately from the x64 reference above.
+# Its optional WTS fixture does not change the dataset-agnostic model contract.
+[validation.arm64]
+status = "PASS"
+latest_validation_date = "2026-09-02"
+os = "Windows 11 ARM64"
+python = "3.13 ARM64"
+torch = "2.15.0.dev20260902+cu134"
+gpu = "RTX Spark N1X"
+gpu_total_gib = 101.50
+gpus_used = 1
+actions_verified_native = ["train", "export", "evaluate", "inference"]
+actions_unverified_native = ["inference-microservice"]
+serving_reference = "cosmos3-vllm-serving-windows.md"
+
+[validation.arm64.train]
+status = "PASS"
+fixture = "WTS optional validation fixture"
+iterations_executed = 500
+epochs = 2
+steps_per_epoch = 250
+trainable_params = 15335424
+adapter_modules = 144
+train_valid_label_count = 1000
+token_weighted_loss = 0.173310205149136
+checkpoint = "epoch_2 DCP"
+checkpoint_seconds = 119.53715990006458
+
+[validation.arm64.export]
+status = "PASS"
+input = "epoch_2 DCP from validation.arm64.train"
+output_format = "merged HF safetensors"
+shards = 5
+tensors = 1038
+merged_adapter_modules = 144
+leftover_lora_keys = 0
+vllm_loadable = true
+
+[validation.arm64.vllm_serving]
+status = "PASS"
+implementation = "vortex-captain/vllm-windows (public fork), branch v029_win_arm64, built from source"
+portable_package = "vllm==0.26.0+cu134"
+portable_wheel_sha256 = "4bcfed901989462c50abc7c7a177b0bee2013ce597b1087e4fa7b0dd5c1f5554"
+spark_package = "vllm==0.26.0+cu134.sm121a"
+spark_wheel_sha256 = "4f853e4eeff79efe013d3a9e57972d161e90a32ff1f799edea0fc3e56a50c959"
+model = "merged HF output from validation.arm64.export"
+apis = ["/v1/chat/completions", "/v1/responses non-Harmony"]
+inputs = ["text", "image", "video"]
+video_backends = ["pynvvideocodec direct bytes", "torchcodec cpu", "torchcodec cuda"]
+execution_modes = ["eager", "TorchInductor with CUDA graphs"]
+dynamic_lora = true
+dynamic_lora_rank = 16
+portable_eager_tokens_per_second = 13.86
+portable_compiled_tokens_per_second = 13.72
+spark_eager_tokens_per_second = 13.83
+dynamic_lora_base_tokens_per_second = 12.79
+dynamic_lora_adapter_tokens_per_second = 11.79
+linux_performance_parity_verified = false
+multi_request_throughput_verified = false
+multi_gpu_verified = false
+vllm_omni_verified = false

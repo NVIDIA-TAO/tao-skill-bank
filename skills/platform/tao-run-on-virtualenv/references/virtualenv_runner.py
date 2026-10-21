@@ -33,6 +33,16 @@ Correctness properties:
 - Observation is tri-state and fail-closed. Other POSIX systems can prove an
   empty group, but active cancellation is refused without an equivalent
   kernel-held process identity.
+
+POSIX-ONLY BY CONSTRUCTION. Every verb refuses immediately on Windows (see
+``_refuse_on_windows``) rather than half-working: identity and cleanup are
+process-group concepts (``os.getpgid`` / ``os.killpg`` / ``/proc``) that have no
+Windows equivalent, and ``os.kill(pid, 0)`` — used here purely as a liveness
+probe — is ``OpenProcess`` + ``TerminateProcess`` on Windows CPython with no
+signal-0 special case. A single status poll would KILL the training job, and
+``TerminateProcess(handle, 0)`` would then look like a clean exit 0: a silent
+COMPLETE with no results. Native Windows hosts are served by the
+``tao-run-on-windows-venv`` skill.
 """
 
 from __future__ import annotations
@@ -565,6 +575,8 @@ def _launcher_state(pid: int, expected_marker: str | None, wrapper_path: str | N
     if pid <= 0:
         return "gone"
     try:
+        # POSIX-ONLY: signal 0 is a pure existence check here. On Windows this
+        # would TERMINATE the process — hence _refuse_on_windows() on every verb.
         os.kill(pid, 0)
     except (OSError, ValueError):
         return "gone"
@@ -619,7 +631,7 @@ def _process_matches(pid: int, expected_marker: str | None, wrapper_path: str | 
     if pid <= 0 or not expected_marker:
         return False
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)  # POSIX-only existence check; see _refuse_on_windows().
         if os.getpgid(pid) != pid:
             return False
     except (OSError, ValueError):
@@ -729,6 +741,47 @@ def _emit(**payload) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Windows refusal — DATA-LOSS GUARD, not a portability TODO
+# ---------------------------------------------------------------------------
+
+WINDOWS_ALTERNATIVE_SKILL = "tao-run-on-windows-venv"
+
+WINDOWS_REFUSAL_MESSAGE = (
+    "virtualenv_runner.py is POSIX-only and refuses to run on Windows. Its "
+    "whole lifecycle is built on POSIX process groups (os.getpgid, os.killpg) "
+    "and /proc, and it uses os.kill(pid, 0) as a LIVENESS PROBE — but on "
+    "Windows CPython os.kill is OpenProcess + TerminateProcess with no "
+    "signal-0 special case, so a single `status` poll would TERMINATE the job "
+    "and TerminateProcess(handle, 0) would record it as a clean exit 0: a "
+    f"silent COMPLETE with no results. Use the {WINDOWS_ALTERNATIVE_SKILL} "
+    "skill for native Windows execution."
+)
+
+
+def _refuse_on_windows() -> int | None:
+    """Hard early refusal on Windows for every verb.
+
+    Returns the ``_fail`` exit code (1) when running on Windows, ``None``
+    otherwise — so a verb entry point is one guarded early-return. The refusal
+    is routed through the existing JSON error contract, so a caller parsing
+    stdout still gets well-formed JSON and never a traceback.
+
+    This is deliberately NOT a "not yet ported" stub: making the runner
+    Windows-capable would require replacing process-group identity and
+    signaling wholesale (Job Objects + GetProcessTimes), which is exactly what
+    the tao-run-on-windows-venv skill already does.
+    """
+    if os.name != "nt":
+        return None
+    return _fail(
+        WINDOWS_REFUSAL_MESSAGE,
+        status=VOCAB_UNKNOWN,
+        os_name=os.name,
+        supported_alternative=WINDOWS_ALTERNATIVE_SKILL,
+    )
+
+
+# ---------------------------------------------------------------------------
 # submit
 # ---------------------------------------------------------------------------
 
@@ -777,6 +830,9 @@ def _render_arg(token: str, placeholders: dict[str, str]) -> str:
 
 
 def cmd_submit(args: argparse.Namespace) -> int:
+    refused = _refuse_on_windows()
+    if refused is not None:
+        return refused
     try:
         venv_path = _validate_venv(args.venv)
         script_path = Path(args.script).expanduser()
@@ -1077,6 +1133,11 @@ def _derive_status(paths: RunnerPaths) -> tuple[str, str, dict]:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
+    # The most dangerous verb on Windows: _launcher_state()'s os.kill(pid, 0)
+    # would kill the very job this poll claims to observe.
+    refused = _refuse_on_windows()
+    if refused is not None:
+        return refused
     paths = RunnerPaths(Path(args.job_dir).expanduser().resolve())
     status, message, extra = _derive_status(paths)
     return _emit(status=status, message=message, **extra)
@@ -1087,6 +1148,9 @@ def cmd_status(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_logs(args: argparse.Namespace) -> int:
+    refused = _refuse_on_windows()
+    if refused is not None:
+        return refused
     paths = RunnerPaths(Path(args.job_dir).expanduser().resolve())
     try:
         sys.stdout.write(_read_tail(paths.log_path, args.tail))
@@ -1100,6 +1164,9 @@ def cmd_logs(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_cancel(args: argparse.Namespace) -> int:
+    refused = _refuse_on_windows()
+    if refused is not None:
+        return refused
     paths = RunnerPaths(Path(args.job_dir).expanduser().resolve())
     status, message, extra = _derive_status(paths)
     if status in (VOCAB_COMPLETE, VOCAB_ERROR, VOCAB_CANCELED):

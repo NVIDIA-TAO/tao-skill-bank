@@ -1,0 +1,51 @@
+[
+  {
+    "id": "tao-run-on-windows-docker-basic",
+    "question": "A user request: \"Run a TAO GPU container on a Windows Server host using Windows containers, and track the job.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
+    "expected_skill": "tao-run-on-windows-docker",
+    "expected_script": null,
+    "ground_truth": "Identify tao-run-on-windows-docker as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
+    "expected_behavior": [
+      "Identifies tao-run-on-windows-docker as the relevant skill",
+      "Outlines the documented workflow steps from SKILL.md",
+      "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-run-on-windows-docker-gpu-flags",
+    "question": "Reading only the tao-run-on-windows-docker skill documentation, explain how a Windows container is given a GPU and which two docker flags are mandatory. Do NOT run any commands, scripts, or web searches.",
+    "expected_skill": "tao-run-on-windows-docker",
+    "expected_script": null,
+    "ground_truth": "The GPU is attached by device-class projection: --device class/5B45201D-F2F2-4F3B-85BB-30FF1F953599, together with --isolation=process. The daemon default is hyperv isolation, which has no GPU path at all. --gpus does not exist for Windows containers and there is no NVIDIA Container Toolkit; the host driver libraries are projected into the container.",
+    "expected_behavior": [
+      "Names --isolation=process as mandatory and explains that the hyperv default has no GPU path",
+      "Names the --device class/<GUID> form and states that --gpus does not exist on Windows containers",
+      "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-run-on-windows-docker-output-hazard",
+    "question": "Reading only the tao-run-on-windows-docker skill documentation, explain why the job output directory must not be bind-mounted from the host and how results are retrieved instead. Do NOT run any commands, scripts, or web searches.",
+    "expected_skill": "tao-run-on-windows-docker",
+    "expected_script": null,
+    "ground_truth": "A distributed checkpoint writes a .tmp file then renames it; on a Windows bind mount that rename fails with WinError 3, and it fails after training has already completed, discarding the result. Keep the output directory container-internal and extract it with `docker cp <container>:<path> <host_path>` after the run reaches a terminal state; never launch with --rm, because docker cp works on a stopped container but not on a removed one.",
+    "expected_behavior": [
+      "Explains the WinError 3 rename failure on a Windows bind mount and that it occurs after the run completes",
+      "Prescribes a container-internal output directory plus docker cp for extraction",
+      "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-run-on-windows-docker-multinode-refusal",
+    "question": "A user asks to scale a Windows-container TAO training job to 4 GPUs across 2 Windows hosts. Reading only the tao-run-on-windows-docker skill documentation, respond. Do NOT run any commands, scripts, or web searches.",
+    "expected_skill": "tao-run-on-windows-docker",
+    "expected_script": null,
+    "ground_truth": "Refuse: multi-node is not supported and multi-GPU is impossible on this platform with stock torch wheels, not merely untested. PyTorch gates all NCCL code behind USE_C10D_NCCL, which is off in the official Windows wheels, so init_process_group(\"nccl\") fails and gloo is the only selectable backend — and gloo cannot run any collective on a CUDA tensor on Windows, so the process dies with 0xC0000005 and no Python traceback. A community NCCL Windows port exists (SystemPanic/nccl-windows) and vLLM loads its nccl.dll directly via VLLM_NCCL_SO_PATH, bypassing torch's process group, but that does not lift the limit here and is UNTESTED. Single-GPU works only because the distributed wrapper is skipped at world_size == 1. max_gpus = 1, max_nodes = 1; do not attempt a two-GPU run. Also note this skill is UNVERIFIED — nothing in it has been executed.",
+    "expected_behavior": [
+      "Refuses the multi-GPU/multi-node request as structurally impossible rather than untested",
+      "Cites the gloo-on-CUDA-tensor limitation and USE_C10D_NCCL being off in torch's Windows wheels, rather than claiming NCCL has no Windows build",
+      "Does not propose trying two GPUs anyway",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]

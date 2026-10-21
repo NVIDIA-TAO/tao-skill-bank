@@ -40,6 +40,10 @@ images:
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
     cosmos_framework:   nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-framework
     cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
+    # WINDOWS container (Windows Server Core LTSC 2025 base), not Linux: pull and run it
+    # only on a Windows host with --isolation=process. Pre-release tag; the native
+    # Windows venv route (tao-run-on-windows-venv) needs no container at all.
+    cosmos_framework_windows: nvcr.io/nvstaging/tao/cosmos-framework-windows:pr164-tao-ltsc2025-20260826.1
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
     cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.3.0-cosmos-embed

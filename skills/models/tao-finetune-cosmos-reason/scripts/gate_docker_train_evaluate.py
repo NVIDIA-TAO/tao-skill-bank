@@ -12,12 +12,10 @@ evaluation job-record after the requested checkpoint has been validated.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import logging
 import os
 from pathlib import Path
-import pwd
 import struct
 import subprocess
 import sys
@@ -25,7 +23,55 @@ import time
 from typing import Any
 
 
+# fcntl and pwd are POSIX-only. Importing them at module scope makes this file
+# unimportable on Windows, which breaks the companion test at collection time
+# before a single assertion runs. Import them behind the OS guard instead and
+# route every use through the helpers below.
+POSIX = os.name != "nt"
+if POSIX:
+    import fcntl
+    import pwd
+else:  # pragma: no cover - exercised only on Windows hosts
+    fcntl = None
+    pwd = None
+
+
 LOG = logging.getLogger("cosmos-train-eval-gate")
+
+
+def default_container_user() -> str:
+    """Default `docker run --user` value, empty when the host has no UID.
+
+    Windows has no host UID/GID to map into a container, so the flag is
+    omitted entirely rather than guessed.
+    """
+    if hasattr(os, "getuid") and hasattr(os, "getgid"):
+        return f"{os.getuid()}:{os.getgid()}"
+    return ""
+
+
+def default_runtime_user() -> str:
+    """Default in-container USER/LOGNAME, derived from the invoking account."""
+    if pwd is not None and hasattr(os, "getuid"):
+        return pwd.getpwuid(os.getuid()).pw_name
+    return os.environ.get("USERNAME") or os.environ.get("USER") or "tao"
+
+
+def acquire_gate_lock(stream: Any) -> bool:
+    """Take the non-blocking exclusive gate lock; False if another gate owns it."""
+    if fcntl is not None:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+    import msvcrt
+
+    try:
+        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        return False
+    return True
 
 
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -262,9 +308,9 @@ def launch_eval(
         "host",
         "--shm-size",
         args.shm_size,
-        "--user",
-        args.user,
     ]
+    if args.user:
+        command.extend(["--user", args.user])
     for group_id in args.group_add:
         command.extend(["--group-add", group_id])
     command.extend([
@@ -397,12 +443,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shm-size", default="16g")
     parser.add_argument(
         "--user",
-        default=f"{os.getuid()}:{os.getgid()}",
-        help="container UID:GID (default: invoking process UID:GID)",
+        default=default_container_user(),
+        help="container UID:GID (default: invoking process UID:GID; "
+        "empty off POSIX, where --user is omitted)",
     )
     parser.add_argument(
         "--runtime-user",
-        default=pwd.getpwuid(os.getuid()).pw_name,
+        default=default_runtime_user(),
         help="USER/LOGNAME inside the container (default: invoking account)",
     )
     parser.add_argument(
@@ -428,9 +475,7 @@ def main() -> int:
     )
     args.lock_file.parent.mkdir(parents=True, exist_ok=True)
     lock_stream = args.lock_file.open("a+")
-    try:
-        fcntl.flock(lock_stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+    if not acquire_gate_lock(lock_stream):
         LOG.info("another gate process already owns %s", args.lock_file)
         return 0
     atomic_json(args.pid_file, {"pid": os.getpid()})

@@ -172,3 +172,10 @@ See `references/troubleshooting.md` for the full pitfall list with the exact err
 8. For an iterative DEFT caller, apply every configured retention filter and then run Step 4 with the current iteration number, recorded `topn`, run-level ledger path, and a distinct final `mined.parquet`. Never feed the raw candidate parquet directly into cumulative training.
 9. Compute the per-label breakdown (Section 5) by joining the target embeddings parquet with the final mined output on filepath, if both carry `label`.
 10. Write `Mining_Report.md` last — writing it triggers the packaging hook, which copies session logs and skill config alongside.
+
+## Native Windows
+
+On a native Windows host (no Docker), `scripts/native_mine_aoi.py` reproduces
+the three-step embed/embed/mine contract with SigLIP via transformers and a
+local cosine top-K, writing the same parquet schemas (duckdb fallback where
+pyarrow has no wheel, such as Windows ARM64). See `references/windows-native.md`.

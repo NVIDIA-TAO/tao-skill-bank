@@ -779,3 +779,61 @@ def test_config_path_placeholder_requires_flag(capsys, venv, job_dir, tmp_path):
                            "--venv", str(venv), "--script", str(script),
                            "--arg", "{config_path}")
     assert rc == 1 and "Unknown placeholder" in payload["message"]
+
+
+# ---------------------------------------------------------------------------
+# Windows refusal (live-data-loss guard)
+# ---------------------------------------------------------------------------
+
+WINDOWS_VERBS = ["submit", "status", "logs", "cancel"]
+
+
+def _windows_argv(verb, job_dir, tmp_path):
+    if verb == "submit":
+        return ["submit", "--job-dir", str(job_dir),
+                "--venv", str(tmp_path / "venv"),
+                "--script", str(tmp_path / "train.py")]
+    if verb == "logs":
+        return ["logs", "--job-dir", str(job_dir), "--tail", "5"]
+    return [verb, "--job-dir", str(job_dir)]
+
+
+@pytest.mark.parametrize("verb", WINDOWS_VERBS)
+def test_windows_is_refused_on_every_verb(capsys, monkeypatch, job_dir, tmp_path, verb):
+    """Every verb must REFUSE on Windows through the JSON error contract.
+
+    This runner probes liveness with ``os.kill(pid, 0)`` (_launcher_state,
+    _process_matches). On Windows CPython ``os.kill`` is OpenProcess +
+    TerminateProcess with NO signal-0 special case, so one ``status`` poll
+    would kill the training job — and ``TerminateProcess(handle, 0)`` makes
+    that look like a clean exit 0, i.e. a silent COMPLETE with no results.
+    Half-working is worse than refusing, so the guard is unconditional.
+    """
+    argv = _windows_argv(verb, job_dir, tmp_path)   # build paths BEFORE patching
+    monkeypatch.setattr(vr.os, "name", "nt")
+    rc, payload = run_verb(capsys, *argv)
+    assert rc == 1, (verb, payload)                      # non-zero, not a traceback
+    assert payload["result"] == "error", (verb, payload)  # well-formed JSON contract
+    assert payload["status"] == vr.VOCAB_UNKNOWN, (verb, payload)
+    assert "tao-run-on-windows-venv" in payload["message"], (verb, payload)
+    assert payload["supported_alternative"] == "tao-run-on-windows-venv", (verb, payload)
+
+
+def test_windows_refusal_writes_no_state(capsys, monkeypatch, job_dir, tmp_path):
+    """The refusal precedes ALL validation and every filesystem side effect:
+    no runner dir, no submission lock, no wrapper — so a job dir stays clean
+    and re-submittable on a POSIX host."""
+    argvs = [_windows_argv(v, job_dir, tmp_path) for v in WINDOWS_VERBS]
+    monkeypatch.setattr(vr.os, "name", "nt")
+    for argv in argvs:
+        run_verb(capsys, *argv)
+    monkeypatch.undo()   # inspect the filesystem as our real platform again
+    assert not (job_dir / vr.RUNNER_DIR_NAME).exists()
+    assert sorted(p.name for p in job_dir.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="asserts the POSIX side of the guard")
+def test_windows_guard_is_inert_on_posix():
+    """The guard must key on os.name alone and stay a no-op where we run."""
+    assert vr._refuse_on_windows() is None
+    assert "tao-run-on-windows-venv" in vr.WINDOWS_REFUSAL_MESSAGE
