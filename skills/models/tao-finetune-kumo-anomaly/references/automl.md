@@ -38,9 +38,22 @@ VirtualEnvSDK with no container required:
 | Mask ratio | `dataset.mask_ratio` | `0.7` | `[0.3, 0.9]` | Fraction of each window masked; shapes reconstruction difficulty |
 | Window length | `dataset.window_length` | `100` | `[50, 140]` | Temporal context per training sample; must be divisible by `split` |
 
-**Fixed (not searched):** `dataset.csv`, `dataset.val_csv`, `dataset.split`,
-`dataset.window_stride`, `train.seed`, `train.output_dir`, `train.pretrained_model`,
-`train.config`.
+**Fixed (not searched):** `dataset.csv`, `dataset.val_ratio`, `dataset.timestamp_col`,
+`dataset.split`, `dataset.window_stride`, `train.seed`, `train.output_dir`.
+
+**CLI-only flags (not spec keys):** `finetune_example.py` reads `--run-config` through a
+fixed whitelist, so it ignores `pretrained_model`, `config`, `label_col`, `drop_cols` and
+`val_csv` if they appear in the spec. Pass them as flags in `execution.args` instead:
+
+| Need | Flag in `execution.args` |
+|---|---|
+| Warm-start from a specific checkpoint (default: `final_model.pth`, auto-downloaded into `cwd`) | `--pretrained-model <path>` |
+| Model config YAML (default: `curriculum_medium.yaml`) | `--config <path>` |
+| Drop a label column from the features (otherwise it is trained on as a feature) | `--label-col <name>` |
+| Drop extra columns | `--drop-cols a,b` |
+| Separate validation CSV (default: temporal split by `dataset.val_ratio`) | `--val-csv <path>` |
+| Fail instead of downloading missing weights | `--no-download` |
+| Single GPU on a multi-GPU host (default: all visible GPUs, DDP) | `--num-gpus 1` |
 
 #### Inference HPO
 
@@ -120,7 +133,12 @@ result = runner.run(
     execution={
         "type":          "python_script",
         "script":        str(kumo_anomaly_dir / "examples/finetune_example.py"),
-        "args":          ["--run-config", "{config_path}"],
+        # CLI-only flags: --run-config does not read these from the spec (see above).
+        "args":          ["--run-config", "{config_path}",
+                          "--pretrained-model", "/path/to/final_model.pth",
+                          "--config", "/path/to/curriculum_medium.yaml",
+                          "--label-col", "is_anomaly",     # only if the CSV has a label column
+                          "--no-download"],
         "cwd":           str(kumo_anomaly_dir),
         "config_format": "yaml",
     },
@@ -140,7 +158,7 @@ Each trial:
 1. Samples hyperparameters from `schemas/train.schema.json`
 2. Merges with `spec_template_train.yaml` defaults
 3. Writes merged spec to `{config_path}` (YAML)
-4. Calls `<venv>/bin/python finetune_example.py --run-config {config_path}`
+4. Calls `<venv>/bin/python finetune_example.py --run-config {config_path} <execution.args flags>`
 5. Reads `val_loss` from `metrics.json` in the trial's `output_dir`
 
 #### Window length constraint

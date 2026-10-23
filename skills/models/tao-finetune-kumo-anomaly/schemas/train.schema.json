@@ -9,15 +9,10 @@
   ],
   "automl_disabled_parameters": [
     "dataset.csv",
-    "dataset.val_csv",
     "dataset.val_ratio",
     "dataset.timestamp_col",
-    "dataset.label_col",
-    "dataset.drop_cols",
     "dataset.window_stride",
     "dataset.split",
-    "train.pretrained_model",
-    "train.config",
     "train.num_epochs",
     "train.checkpoint_interval",
     "train.checkpoint_interval_unit",
@@ -27,19 +22,14 @@
   "default": {
     "dataset": {
       "csv": "",
-      "val_csv": "",
       "val_ratio": 0.3,
       "timestamp_col": "timestamp",
-      "label_col": "",
-      "drop_cols": "",
       "mask_ratio": 0.7,
       "window_length": 100,
       "window_stride": 1,
       "split": 10
     },
     "train": {
-      "pretrained_model": "",
-      "config": "",
       "epochs": 10,
       "num_epochs": 10,
       "checkpoint_interval": 10,
@@ -60,11 +50,8 @@
       ],
       "automl_disabled_parameters": [
         "dataset.csv",
-        "dataset.val_csv",
         "dataset.val_ratio",
         "dataset.timestamp_col",
-        "dataset.label_col",
-        "dataset.drop_cols",
         "dataset.window_stride",
         "dataset.split"
       ],
@@ -80,17 +67,10 @@
           "title": "training CSV",
           "type": "string"
         },
-        "val_csv": {
-          "automl_enabled": false,
-          "default": "",
-          "description": "Path to a separate validation CSV. When empty, val_ratio is used to split csv.",
-          "title": "validation CSV",
-          "type": "string"
-        },
         "val_ratio": {
           "automl_enabled": false,
           "default": 0.3,
-          "description": "Fraction of csv reserved for validation when val_csv is not provided (temporal split).",
+          "description": "Fraction of csv reserved for validation (temporal split). Ignored when a separate validation CSV is passed via --val-csv in execution.args.",
           "maximum": 0.9,
           "minimum": 0.05,
           "title": "validation ratio",
@@ -101,20 +81,6 @@
           "default": "timestamp",
           "description": "Name of the datetime column to drop from features.",
           "title": "timestamp column",
-          "type": "string"
-        },
-        "label_col": {
-          "automl_enabled": false,
-          "default": "",
-          "description": "Name of the label column to drop (if present in CSV).",
-          "title": "label column",
-          "type": "string"
-        },
-        "drop_cols": {
-          "automl_enabled": false,
-          "default": "",
-          "description": "Comma-separated list of extra columns to drop from features.",
-          "title": "drop columns",
           "type": "string"
         },
         "mask_ratio": {
@@ -163,8 +129,6 @@
         "train.grad_clip"
       ],
       "automl_disabled_parameters": [
-        "train.pretrained_model",
-        "train.config",
         "train.num_epochs",
         "train.checkpoint_interval",
         "train.checkpoint_interval_unit",
@@ -176,20 +140,6 @@
       "title": "training configuration",
       "type": "collection",
       "properties": {
-        "pretrained_model": {
-          "automl_enabled": false,
-          "default": "",
-          "description": "Path to the warm-start checkpoint. Empty = auto-download final_model.pth from HuggingFace.",
-          "title": "pretrained model path",
-          "type": "string"
-        },
-        "config": {
-          "automl_enabled": false,
-          "default": "",
-          "description": "Path to the model config YAML. Empty = auto-download curriculum_medium.yaml from HuggingFace.",
-          "title": "model config path",
-          "type": "string"
-        },
         "epochs": {
           "automl_enabled": false,
           "default": 10,

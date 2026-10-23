@@ -10,20 +10,22 @@ actions:
     # python_script execution via VirtualEnvSDK — no container required.
     # The script lives in the Kumo-TS repo, not in this skill directory,
     # so paths must be supplied at runtime via execution= in runner.run().
-    # See SKILL.md § "Running AutoML locally" for the full example.
+    # See references/automl.md § "Fine-tuning AutoML" for the full example.
+    #
+    # --run-config only reads the keys in spec_template_train.yaml. The
+    # finetune_example.py flags below are NOT read from the spec and must be
+    # passed in execution.args when needed: --pretrained-model, --config,
+    # --label-col, --drop-cols, --val-csv, --no-download, --num-gpus.
     #
     # execution:
     #   type: python_script
     #   script: /absolute/path/to/Kumo-TS/Kumo-Anomaly/examples/finetune_example.py
-    #   args: ["--run-config", "{config_path}"]
+    #   args: ["--run-config", "{config_path}"]   # + the CLI-only flags above
     #   cwd: /absolute/path/to/Kumo-TS/Kumo-Anomaly
     #   config_format: yaml
     inputs:
       dataset.csv:
         type: file
-      dataset.val_csv:
-        type: file
-        optional: true
     outputs:
       train.output_dir:
         type: folder
