@@ -5,14 +5,16 @@
 # VERIFIED: trained to completion on Windows in the container --
 #   LoRA injection successful: 144 modules wrapped, 15,335,424 trainable (0.175%)
 #   Done with training.  /  Cosmos Framework WTS SFT training completed successfully
+#   (that run used the former "sdpa" setting below; it proves the pipeline runs, not that
+#   it learns -- see the [model] comment and trap W14.)
 #
 # Derived from the image's examples/toml/sft_config/wts_vlm.toml. Every deviation
 # from upstream is marked `# WINDOWS`; upstream owns everything else, so keep this
 # diffed against the in-image recipe when that moves.
 #
-# This absorbs 7 of the 15 Windows overrides. NINE still have to be passed on the
-# command line -- see "What this file CANNOT absorb" below. It is a reduction, not
-# an elimination.
+# This absorbs the Windows overrides the recipe schema accepts; the rest still have to
+# be passed on the command line (current list: cosmos3-windows-overrides.md; see "What
+# this file CANNOT absorb" below). It is a reduction, not an elimination.
 #
 #   docker run --rm --isolation=process ^
 #     --device class/5B45201D-F2F2-4F3B-85BB-30FF1F953599 ^
@@ -25,7 +27,6 @@
 #     <image> python -m cosmos_framework.scripts.train ^
 #       --sft-toml=C:\cfg\wts_vlm_windows.toml -- ^
 #       optimizer=adamw ^
-#       model.config.policy.attn_implementation=sdpa ^
 #       model.config.policy.lora_enabled=true ^
 #       dataloader_train.num_workers=0 dataloader_train.persistent_workers=false ^
 #       dataloader_train.prefetch_factor=null ^
@@ -36,7 +37,8 @@
 # and the `--` override namespace are DIFFERENT objects: overrides address the
 # RESOLVED config, which is strictly larger. These four are rejected outright with
 # `Extra inputs are not permitted` if you put them here:
-#     model.config.*                       (so both model.config.policy.* settings)
+#     model.config.*                       (so model.config.policy.lora_enabled, and the
+#                                            W14-gated attention debug pair if ever used)
 #     dataloader_train.num_workers
 #     dataloader_train.persistent_workers
 #     dataloader_val                       (the whole section)
@@ -64,11 +66,18 @@ name       = "wts_vlm"
 wandb_mode = "disabled"
 
 [model]
-# WINDOWS: upstream is "cosmos", which routes to NATTEN -- no Windows build.
-# This is only ONE of the two attention settings; the other lives at
-# model.config.policy.attn_implementation and can only be set as an override.
-# Setting one without the other silently leaves NATTEN selected.
-attn_implementation = "sdpa"
+# WINDOWS (corrected 2026-11-03): keep upstream's "cosmos". It is an AttentionInterface
+# adapter over torch's cuDNN SDPA, runs natively on Windows (backend list cudnn, flash2,
+# natten; NATTEN is neither installed nor selected) and is the validated learning route
+# (cosmos3-windows-overrides.md, cosmos3-windows-contract.toml). The former "sdpa" here,
+# paired with model.config.policy.attn_implementation=sdpa on the command line, trained to
+# completion but learned nothing: trap W14 (cosmos3-windows-gaps.md) -- the trainer drops
+# attention_mask, the HF sdpa/eager path then walls the answer token off from the image,
+# the model converges to the label prior, and evaluation (which gets its mask) is immune,
+# so nothing downstream shows it. The RTX Spark ITS fine-tunes of 2026-10-30 to 11-03 ran
+# under it. SDPA/eager is debug-only: apply w14-attention-mask-gate.patch and set BOTH
+# keys (VLMModel reads the nested model.config.policy one; one key alone is ignored).
+attn_implementation = "cosmos"
 precision = "bfloat16"
 
 [model.backbone]
