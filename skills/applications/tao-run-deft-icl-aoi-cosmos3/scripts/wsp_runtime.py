@@ -209,7 +209,7 @@ def sandbox_mounts(development, tool_contract, capability_socket, *, model_conte
     return mounts
 
 
-def submit_sandbox(runtime, stage, command, mounts, *, on_open=None):
+def submit_sandbox(runtime, stage, command, mounts, *, on_open=None, log_max_bytes=None):
     """CPU-only Docker four-verb consumer with NO writable host bind mounts.
 
     Uses the shared job-record before launch. Only named, read-only capabilities
@@ -217,6 +217,8 @@ def submit_sandbox(runtime, stage, command, mounts, *, on_open=None):
     """
     if os.getuid() == 0:
         raise ValueError('non-root submitting uid required')
+    if log_max_bytes is not None and (type(log_max_bytes) is not int or not 0 < log_max_bytes <= 128 * 1024**2):
+        raise ValueError('invalid native log bound')
     subprocess.run(['docker', 'image', 'inspect', runtime.image], check=True, stdout=subprocess.DEVNULL)
     job_id = runtime.record('open', '--platform', 'docker', '--image', runtime.image, '--network-arch', 'cosmos-reason',
                             '--action', stage, '--storage-tier', 'A', '--results-root', str(runtime.root))
@@ -231,7 +233,8 @@ def submit_sandbox(runtime, stage, command, mounts, *, on_open=None):
            '--tmpfs', '/task:rw,nosuid,size=256m,mode=1777', '--tmpfs', '/results:rw,nosuid,size=16m,mode=1777',
            '--workdir=/task', '-e', 'HOME=/tmp/home', '-e', 'CODEX_HOME=/codex', '-e', 'USER=tao', '-e', 'LOGNAME=tao',
            '-e', 'PYTHONPATH=/opt/generic', '-e', 'PYTHONNOUSERSITE=1', '-e', 'PYTHONDONTWRITEBYTECODE=1',
-           '-e', 'NVIDIA_VISIBLE_DEVICES=void', '--log-driver=json-file', '--log-opt', 'max-size=128m', '--log-opt', 'max-file=1']
+           '-e', 'NVIDIA_VISIBLE_DEVICES=void', '--log-driver=json-file', '--log-opt',
+           'max-size=' + (str(log_max_bytes) if log_max_bytes is not None else '128m'), '--log-opt', 'max-file=1']
     targets = set()
     allowed_targets = {'/usr/bin/python3', '/usr/lib/python3.12', '/usr/lib/x86_64-linux-gnu', '/etc/ssl/certs',
                        '/development', '/model_context', '/task/tool_contract.json', '/tools/wsp_client.py', '/tools/wsp_isolation.py',
@@ -284,7 +287,7 @@ def tool_contract(boundary):
             'semantics': 'All forwards use the same complete development view. No holdout capability. No arbitrary path, code execution, model loading or inference setting is accepted.'}
 
 
-def archive_tmpfs(job_id, name, destination):
+def archive_command(job_id, name):
     """Stream actual live tmpfs bytes; docker cp may return an empty directory.
 
     Preserve symlinks as archive members; never follow/extract them on the host.
@@ -295,8 +298,12 @@ def archive_tmpfs(job_id, name, destination):
     code = ('import sys,tarfile; '
             'a=tarfile.open(fileobj=sys.stdout.buffer,mode="w|",dereference=False); '
             'a.add(sys.argv[1],arcname=".",recursive=True); a.close()')
+    return ['docker', 'exec', job_id, '/usr/bin/python3', '-c', code, '/' + name]
+
+
+def archive_tmpfs(job_id, name, destination):
     with Path(destination).open('xb') as stream:
-        subprocess.run(['docker', 'exec', job_id, '/usr/bin/python3', '-c', code, '/' + name],
+        subprocess.run(archive_command(job_id, name),
                        stdout=stream, check=True, timeout=30)
 
 

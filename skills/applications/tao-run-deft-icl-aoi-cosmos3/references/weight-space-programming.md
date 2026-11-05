@@ -157,6 +157,9 @@ separate inputs/limits. No scientific task prompt, model context, data, weights,
 candidate capabilities or GPU is required or permitted in that diagnostic.
 It has not been run during this preparation.
 
+The [one-shot diagnostic host driver](wsp-diagnostic-driver.md) prepares a sealed
+manifest and enforces the separate outer limits only after exact live approval.
+
 ### Factual read-only context
 
 `/model_context` contains architecture configuration, exact header-derived tensor

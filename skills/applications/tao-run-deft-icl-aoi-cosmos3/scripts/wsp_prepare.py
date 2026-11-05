@@ -208,7 +208,7 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
                 raise ValueError('prepared view changed')
     code = Path(__file__).parent
     code_files = ['wsp.py', 'wsp_prepare.py', 'wsp_weights.py', 'wsp_boundary.py', 'wsp_runtime.py',
-                  'wsp_client.py', 'wsp_isolation.py', 'wsp_usage.py', 'wsp_context.py', 'wsp_collect.py', 'wsp_capture.py', 'tht_contract.py', 'inference_worker.py',
+                  'wsp_client.py', 'wsp_isolation.py', 'wsp_usage.py', 'wsp_context.py', 'wsp_collect.py', 'wsp_capture.py', 'wsp_diagnostic.py', 'tht_contract.py', 'inference_worker.py',
                   'suite_runtime.py', 'codex_capture.py', 'suite_costs.py', 'tool_evidence.py', 'astra_isolation.py']
     budgets = dict(BUDGETS)
     budgets['forward_images'] = (budgets['development_requests'] * split['roles']['development']['images']
