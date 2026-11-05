@@ -17,6 +17,7 @@ from suite_data import identity_from_query
 from suite_runtime import json_write
 from wsp_weights import catalog, regular_file, strict_json
 from wsp_usage import RESPONSE_POLICY, runtime_identity
+from wsp_context import build_context
 
 PROMPT_SHA = 'c2b3b9aeb4c31b6b699dad32ea6f4c00081c7aadf2a8d65384f0bba1423326f6'
 FRAMEWORK_IMAGE = 'nvcr.io/nvidia/tao/tao-toolkit@sha256:897c7cb2088e761bb48003029f1f5ed4fac32997388efe4d158e93dd8d36ac8d'
@@ -38,7 +39,7 @@ BUDGETS = {
 EDITOR_PROMPT = '''This is one bounded Weight-Space Programming feasibility experiment on a prepared Cosmos3-Nano model for eight-class, single-image THT classification.
 Use only the supplied development images/labels, model metadata/value tools and bounded development forward feedback. Identify one observable behavior, state a short testable hypothesis, and implement a replayable direct weight patch. You choose the behavior, hypothesis, tensors and values. No preferred change or expected improvement is supplied.
 Do not use autograd, backward passes, optimizers, gradient estimation or an iterative fitting/training loop. No prompts, preprocessing, tokenizer, model configuration or generation settings may change. A prompt-only or generation-only proposal is not a weight edit. No real-model execution is available except the forward tool.
-Tools: python3 /tools/wsp_client.py reads a JSON request on stdin. See /task/tool_contract.json for schemas, the exact frozen budgets and base fingerprint. Metadata and value inspection concern the original base. Each candidate is independently patched from that same base; failures consume budgets. Forward requests always use the complete fixed development view. Completed INVALID/length-limited outputs are final, not repaired or retried.
+Tools: python3 /tools/wsp_client.py reads a JSON request on stdin. See /task/tool_contract.json for schemas, the exact frozen budgets and base fingerprint. /model_context contains hash-pinned read-only architecture, tensor naming, tokenizer vocabulary/special tokens/chat template and the exact frozen inference profile from that same base. It is factual context, not permission to change those settings. Metadata and value inspection concern the original base. Each candidate is independently patched from that same base; failures consume budgets. Forward requests always use the complete fixed development view. Completed INVALID/length-limited outputs are final, not repaired or retried.
 Keep the Python code you use to construct each patch in /task and provide its literal source in the candidate request. The trusted service executes only the declarative sparse assignments, never your Python source. Keep a brief development-evidence rationale. Freeze at most one validated, development-evaluated candidate. Freeze ends all editor access; no holdout feedback will be returned. A failed or inconclusive attempt is valid evidence; do not reset or extend any cap to seek improvement.
 You have a fresh context, generic Python/image tools, this development view and the listed service capabilities. Do not seek other experiments, holdout data, host resources, credentials, external tools or other agents. Report limitations and actual work honestly.
 '''
@@ -207,7 +208,7 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
                 raise ValueError('prepared view changed')
     code = Path(__file__).parent
     code_files = ['wsp.py', 'wsp_prepare.py', 'wsp_weights.py', 'wsp_boundary.py', 'wsp_runtime.py',
-                  'wsp_client.py', 'wsp_isolation.py', 'wsp_usage.py', 'tht_contract.py', 'inference_worker.py',
+                  'wsp_client.py', 'wsp_isolation.py', 'wsp_usage.py', 'wsp_context.py', 'tht_contract.py', 'inference_worker.py',
                   'suite_runtime.py', 'codex_capture.py', 'suite_costs.py', 'tool_evidence.py', 'astra_isolation.py']
     budgets = dict(BUDGETS)
     budgets['forward_images'] = (budgets['development_requests'] * split['roles']['development']['images']
@@ -258,6 +259,7 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
     codex_binary = shutil.which('codex')
     if codex_binary is None:
         raise ValueError('installed Codex binary required to seal diagnostic runtime identity')
+    task['model_context'] = build_context(task, Path(output).with_suffix('.model-context'))
     task['editor']['runtime_identity'] = runtime_identity(task, codex_binary)
     result = {'task': task, 'preflight_sha256': json_hash(task)}
     json_write(output, result)

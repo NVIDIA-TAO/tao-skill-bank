@@ -29,6 +29,7 @@ from tht_contract import external_evaluator, json_hash, load_jsonl, sha256
 from wsp_boundary import Boundary
 from wsp_weights import catalog, clone, finite_tensor, inventory, regular_file, strict_json
 from wsp_isolation import UnixProvider
+from wsp_context import verify_context
 from wsp_usage import RESPONSE_POLICY, actual_usage, editor_command, response_snapshots, runtime_identity, validate_live_proof
 
 HERE = Path(__file__).parent
@@ -42,6 +43,7 @@ def load_preflight(path):
     for name, digest in task['code_hashes'].items():
         if sha256(regular_file(HERE, name)) != digest:
             raise ValueError('reviewed code changed: ' + name)
+    verify_context(task)
     return preflight
 
 
@@ -172,7 +174,7 @@ class CapabilityServer(socketserver.UnixStreamServer):
         os.chmod(path, 0o600)
 
 
-def sandbox_mounts(development, tool_contract, capability_socket, *, codex_binary=None, auth_file=None, provider_socket=None, probe_file=None):
+def sandbox_mounts(development, tool_contract, capability_socket, *, model_context=None, codex_binary=None, auth_file=None, provider_socket=None, probe_file=None):
     mounts = [(Path('/usr/bin/python3.12'), '/usr/bin/python3', True),
               (Path('/usr/lib/python3.12'), '/usr/lib/python3.12', True),
               (Path('/usr/lib/x86_64-linux-gnu'), '/usr/lib/x86_64-linux-gnu', True),
@@ -183,6 +185,8 @@ def sandbox_mounts(development, tool_contract, capability_socket, *, codex_binar
               (HERE / 'wsp_isolation.py', '/tools/wsp_isolation.py', True),
               (HERE / 'codex_capture.py', '/runtime/codex_capture.py', True),
               (Path(capability_socket), '/channel/wsp.sock', True)]
+    if model_context is not None:
+        mounts.append((Path(model_context), '/model_context', True))
     # Only generic image packages, never the host venv or model libraries.
     for entry in sys.path:
         path = Path(entry)
@@ -229,7 +233,7 @@ def submit_sandbox(runtime, stage, command, mounts):
            '-e', 'NVIDIA_VISIBLE_DEVICES=void', '--log-driver=json-file', '--log-opt', 'max-size=128m', '--log-opt', 'max-file=1']
     targets = set()
     allowed_targets = {'/usr/bin/python3', '/usr/lib/python3.12', '/usr/lib/x86_64-linux-gnu', '/etc/ssl/certs',
-                       '/development', '/task/tool_contract.json', '/tools/wsp_client.py', '/tools/wsp_isolation.py',
+                       '/development', '/model_context', '/task/tool_contract.json', '/tools/wsp_client.py', '/tools/wsp_isolation.py',
                        '/runtime/codex_capture.py', '/channel/wsp.sock', '/channel/provider.sock', '/codex/auth.json',
                        '/usr/local/bin/codex', '/usr/local/bin/codex-code-mode-host', '/usr/local/bin/codex-exec-server',
                        '/opt/generic/PIL', '/opt/generic/pillow.libs', '/probe.py'}
@@ -261,6 +265,9 @@ def submit_sandbox(runtime, stage, command, mounts):
 
 def tool_contract(boundary):
     return {'schema': 'wsp-toolset/1', 'base_fingerprint': boundary.base_manifest['fingerprint'],
+            'model_context': {'path': '/model_context', 'readonly': True,
+                              'bundle_sha256': boundary.task.get('model_context', {}).get('bundle_sha256'),
+                              'permission': 'Factual context only; all configuration and inference settings stay frozen.'},
             'response_budget_policy': RESPONSE_POLICY,
             'budgets': boundary.b, 'operations': {
                 'metadata': {'op': 'metadata', 'offset': 0, 'limit': 64},
@@ -347,6 +354,7 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
     contract_file = root / 'tool_contract.json'
     json_write(contract_file, tool_contract(boundary))
     mounts = sandbox_mounts(Path(task['views']) / 'development', contract_file, channel / 'wsp.sock',
+                            model_context=verify_context(task),
                             codex_binary=codex_binary, auth_file=auth_file, provider_socket=channel / 'provider.sock')
     command = editor_command(task, task['budgets']['editor_agent_tokens'])
     job = None

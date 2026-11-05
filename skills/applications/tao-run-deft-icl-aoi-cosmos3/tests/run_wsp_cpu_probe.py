@@ -20,12 +20,28 @@ from suite_runtime import Docker, json_write
 from wsp_prepare import GENERIC_IMAGE
 from wsp_runtime import CapabilityServer, sandbox_mounts, submit_sandbox, tool_contract
 from test_wsp import synthetic_boundary
+from test_wsp_context import context_task
+from wsp_context import build_context, verify_context
 
 PROBE = '''import json, pathlib, sys
 sys.path.insert(0, '/tools')
 from wsp_client import call
 from wsp_isolation import probe
 checks = probe()
+context = pathlib.Path('/model_context')
+manifest = json.loads((context / 'manifest.json').read_text())
+assert manifest['schema'] == 'wsp-model-context/1'
+assert json.loads((context / 'tokenizer.json').read_text())['vocabulary']['a'] == 0
+assert json.loads((context / 'inference.json').read_text())['frozen_profile']['prompt'] == 'Frozen synthetic prompt'
+for name in [*manifest['files'], 'manifest.json', 'forbidden-addition']:
+    try:
+        (context / name).write_text('forbidden')
+        raise AssertionError('model context writable')
+    except OSError:
+        pass
+assert not any(p.suffix == '.safetensors' for p in context.iterdir())
+assert '/home/secret' not in ''.join(p.read_text() for p in context.iterdir())
+checks['context_readable_readonly_no_payload_or_host_paths'] = True
 assert pathlib.Path('/development/gold.jsonl').is_file()
 try:
     pathlib.Path('/development/forbidden-write').write_text('x')
@@ -74,6 +90,9 @@ def main():
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     os.environ['TAO_STATE_DIR'] = str(output / 'job-records')
     boundary, calls = synthetic_boundary(output)
+    context = context_task(output)
+    context['model_context'] = build_context(context, output / 'model-context')
+    boundary.task['model_context'] = context['model_context']
     channel = output / 'channel'
     channel.mkdir(mode=0o700)
     server = CapabilityServer(channel / 'wsp.sock', boundary)
@@ -84,7 +103,8 @@ def main():
     probe_file = output / 'probe.py'
     probe_file.write_text(PROBE)
     runtime = Docker(output / 'jobs', GENERIC_IMAGE)
-    mounts = sandbox_mounts(boundary.views / 'development', contract, channel / 'wsp.sock', probe_file=probe_file)
+    mounts = sandbox_mounts(boundary.views / 'development', contract, channel / 'wsp.sock',
+                            model_context=verify_context(context), probe_file=probe_file)
     job = None
     harvest_job = None
     try:
