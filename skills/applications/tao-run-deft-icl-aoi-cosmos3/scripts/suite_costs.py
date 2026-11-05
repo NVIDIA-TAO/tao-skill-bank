@@ -50,7 +50,8 @@ def codex_usage(events):
 def interval_usage(events,start,end,session_id,session_started_at=None):
     """Bounded cumulative deltas for one explicitly identified continuing session.
 
-    Include the last pre-interval snapshot as baseline. Replayed snapshots do
+    Use (start, end], with the last snapshot at/before start as baseline, so
+    adjacent stages never count their shared boundary twice. Replayed snapshots do
     not add cost. A decreasing counter is a reset and requires a new session
     identity/export rather than inventing usage. Reasoning/cache are subsets.
     """
@@ -82,12 +83,13 @@ def interval_usage(events,start,end,session_id,session_started_at=None):
         if timestamp>upper: break
         if last is not None and any(u.get(k,0)<last.get(k,0) for k in FIELDS):
             raise ValueError('cumulative reset requires an explicit session boundary')
-        if timestamp<lower: baseline=u;last=u;continue
+        if timestamp<=lower: baseline=u;last=u;continue
         if last is None:
             return {**{k:None for k in FIELDS},'session_id':session_id,'reason':'pre-interval usage baseline missing'}
         for k in FIELDS: total[k]+=u.get(k,0)-last.get(k,0)
         last=u;count+=1
     return {**total,'session_id':session_id,'interval_start':start,'interval_end':end,
+            'interval_convention':'(start, end]',
             'source':'bounded_cumulative_deltas','snapshots':count,'baseline_present':baseline is not None,
             'zero_baseline_from_session_birth':born_inside,'session_started_at':session_started_at,'price':None}
 
