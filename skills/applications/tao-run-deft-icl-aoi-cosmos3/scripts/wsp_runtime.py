@@ -227,6 +227,8 @@ def submit_sandbox(runtime, stage, command, mounts, *, on_open=None, log_max_byt
     job_id = runtime.record('open', '--platform', 'docker', '--image', runtime.image, '--network-arch', 'cosmos-reason',
                             '--action', stage, '--storage-tier', 'A', '--results-root', str(runtime.root))
     record = json.loads(runtime.record('show', job_id))
+    if on_open is not None:
+        on_open(job_id)  # Preserve the minted ID even if validation rejects launch.
     out = Path(record['results_dir'])
     out.mkdir(parents=True, exist_ok=True)
     cmd = ['docker', 'run', '-d', '--pull=never', '--runtime=runc', '--name', job_id, '--label', 'tao-job=' + job_id,
@@ -242,7 +244,8 @@ def submit_sandbox(runtime, stage, command, mounts, *, on_open=None, log_max_byt
     targets = set()
     allowed_targets = {'/usr/bin/python3', '/usr/lib/python3.12', '/usr/lib/x86_64-linux-gnu', '/etc/ssl/certs',
                        '/development', '/model_context', '/task/tool_contract.json', '/tools/wsp_client.py', '/tools/wsp_isolation.py',
-                       '/runtime/wsp_capture.py', '/channel/wsp.sock', '/channel/provider.sock', '/codex/auth.json',
+                       '/runtime/wsp_capture.py', '/runtime/wsp_stop.py', '/channel/control.sock',
+                       '/channel/wsp.sock', '/channel/provider.sock', '/codex/auth.json',
                        '/usr/local/bin/codex', '/usr/local/bin/codex-code-mode-host', '/usr/local/bin/codex-exec-server',
                        '/opt/generic/PIL', '/opt/generic/pillow.libs', '/probe.py'}
     for source, target, readonly in mounts:
@@ -256,8 +259,6 @@ def submit_sandbox(runtime, stage, command, mounts, *, on_open=None, log_max_byt
     lint_cmd = [s.replace('prefill_token_weight=1,', 'prefill_weight=1,').replace('sampling_token_weight=1}', 'sampling_weight=1}') for s in cmd]
     subprocess.run([sys.executable, str(BANK / 'scripts/redact_secrets.py'), 'lint', '-'], input=shlex.join(lint_cmd), text=True, check=True)
     json_write(out / 'launch.json', {'job_id': job_id, 'argv': cmd, 'submitted_at_unix': time.time()})
-    if on_open is not None:
-        on_open(job_id)
     try:
         cid = subprocess.check_output(cmd, text=True, stderr=subprocess.PIPE, timeout=60).strip()
     except BaseException as error:
