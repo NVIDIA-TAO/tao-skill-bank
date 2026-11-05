@@ -93,6 +93,8 @@ class Journal:
                 raise LimitError('operation is closed in this phase')
             if self.now() - state['started_at_unix'] >= self.task['budgets']['experiment_wall_seconds']:
                 raise LimitError('experiment wall exhausted')
+            if phase == 'DEVELOPMENT' and state.get('editor_admissions_closed'):
+                raise LimitError('editor admissions closed by observed stop')
             usage = state.get('agent_usage')
             if phase == 'DEVELOPMENT' and usage and usage.get('input_tokens') is not None and usage.get('output_tokens') is not None:
                 if usage['input_tokens'] + usage['output_tokens'] >= self.task['budgets']['editor_agent_tokens']:
@@ -373,6 +375,12 @@ class Boundary:
                                     lambda state: state.update(phase='ERROR'))
                 raise
 
+    def close_editor_admissions(self, notice):
+        # Only the journal lock, never the operation lock: an admitted forward
+        # may still run under its existing reservation while new work is closed.
+        self.journal.change('editor_admissions_closed', notice,
+                            lambda state: state.update(editor_admissions_closed=notice))
+
     def record_agent_usage(self, usage, source, *, final=False):
         """Trusted cumulative snapshots only; missing counts remain unknown."""
         def record(state):
@@ -397,7 +405,7 @@ class Boundary:
         completion = response_completion(events, evidence, self.b['editor_agent_tokens'],
                                           frozen=state['phase'] == 'FROZEN' and state['freeze'] is not None,
                                           exit_code=exit_code, forced_stop=forced_stop)
-        self.record_agent_usage(completion['usage'], 'complete_raw_response_evidence', final=True)
+        self.record_agent_usage(completion['usage'], 'captured_raw_response_evidence', final=completion['provider_usage_complete'])
         self.journal.change('editor_completion', completion, lambda state: state.update(editor_completion=completion))
         return completion
 
@@ -414,7 +422,7 @@ class Boundary:
                   'failed_forward_usage': 'see retained native outputs; missing values remain unknown',
                   'prices_usd': {'agent': None, 'gpu': None}, 'ledger_head_sha256': ledger['head_sha256'],
                   'limitations': ['small Mining-only feasibility subset', 'no claim of paper reproduction',
-                                  'response-boundary policy requires reviewed live admission evidence; no zero-overshoot spend ceiling',
+                                  'observed raw stopping requires reviewed live evidence; interrupted provider usage stays unknown; no zero-overshoot spend ceiling',
                                   'failed requests consume full reservations; actual usage reported separately']}
         if state['phase'] == 'COMPLETE':
             comparison = json.loads((self.root / 'holdout_comparison.private.json').read_text())

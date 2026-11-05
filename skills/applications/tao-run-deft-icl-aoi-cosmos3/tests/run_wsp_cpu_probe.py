@@ -144,7 +144,7 @@ def main():
         dummy = CAPTURE_CHILD
         harvest_job = submit_sandbox(runtime, 'wsp-cpu-harvest-probe',
                                      ['/tools/wsp_isolation.py', 'editor-entry', '/usr/bin/python3', '/runtime/wsp_capture.py',
-                                      '/usr/bin/python3', '-c', dummy], mounts)
+                                      '--threshold', str(boundary.b['editor_agent_tokens']), '--', '/usr/bin/python3', '-c', dummy], mounts)
         json_write(output / 'harvest_job.json', harvest_job)
         child_exit = None
         deadline = time.time() + 30
@@ -159,7 +159,7 @@ def main():
             if child_exit is not None:
                 break
             time.sleep(.25)
-        if child_exit != {'exit_code': 0}:
+        if child_exit != {'schema': 'wsp-editor-exit/2', 'child_returncode': 0, 'supervisor_returncode': 0, 'container_returncode': 0}:
             raise RuntimeError('synthetic subprocess harvest sentinel missing')
         observed_exit_at = time.time()
         assert runtime.status(harvest_job['job_id'])['state'] == 'RUNNING'
@@ -180,11 +180,12 @@ def main():
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=True)
         (output / 'editor_events.timestamped.log').write_text(native_log.stdout)
         scripts = Path(__file__).resolve().parents[1] / 'scripts'
-        identity = {'synthetic_cpu_child': True, 'code_hashes': {n: sha256(scripts / n) for n in ('wsp_collect.py', 'wsp_capture.py', 'wsp_isolation.py')}}
-        json_write(output / 'editor_invocation.json', {'schema': 'wsp-editor-invocation/1', 'kind': 'cpu_synthetic',
+        identity = {'synthetic_cpu_child': True, 'code_hashes': {n: sha256(scripts / n) for n in ('wsp_collect.py', 'wsp_capture.py', 'wsp_isolation.py', 'wsp_stop.py')}}
+        json_write(output / 'editor_invocation.json', {'schema': 'wsp-editor-invocation/2', 'kind': 'cpu_synthetic',
                    'job_id': harvest_job['job_id'], 'threshold_tokens': boundary.b['editor_agent_tokens'],
                    'runtime_identity': identity, 'log_limit_bytes': boundary.b['editor_log_bytes'],
                    'warning': 'Ordinary Python child with synthetic events; not native Codex stopping evidence.'})
+        json_write(output / 'editor_stop_ack.json', {'schema': 'wsp-stop-ack/1', 'status': 'not_requested'})
         json_write(output / 'editor_terminal.json', {'backend': harvest_terminal, 'editor_exit': child_exit,
                    'stop_reason': None, 'log_limit_hit': False, 'log_capture_returncode': native_log.returncode, 'log_thread_completed': True,
                    'log_method': 'successful bounded native logs query after child and wrapper exit; synthetic CPU fixture only'})

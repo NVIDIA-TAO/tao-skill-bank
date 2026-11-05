@@ -28,10 +28,11 @@ from suite_runtime import BANK, Docker, json_write
 from tht_contract import external_evaluator, json_hash, load_jsonl, sha256
 from wsp_boundary import Boundary
 from wsp_weights import catalog, clone, finite_tensor, inventory, regular_file, strict_json
-from wsp_isolation import UnixProvider
+from wsp_isolation import ClosingProvider
+from wsp_stop import STOP_POLICY, StopServer
 from wsp_context import verify_context
 from wsp_collect import collect_native_evidence
-from wsp_usage import RESPONSE_POLICY, actual_usage, editor_command, invocation_manifest, response_snapshots, runtime_identity, validate_live_proof
+from wsp_usage import RESPONSE_POLICY, actual_usage, editor_command, invocation_manifest, runtime_identity, validate_live_proof
 
 HERE = Path(__file__).parent
 
@@ -175,7 +176,7 @@ class CapabilityServer(socketserver.UnixStreamServer):
         os.chmod(path, 0o600)
 
 
-def sandbox_mounts(development, tool_contract, capability_socket, *, model_context=None, codex_binary=None, auth_file=None, provider_socket=None, probe_file=None):
+def sandbox_mounts(development, tool_contract, capability_socket, *, model_context=None, codex_binary=None, auth_file=None, provider_socket=None, control_socket=None, probe_file=None):
     mounts = [(Path('/usr/bin/python3.12'), '/usr/bin/python3', True),
               (Path('/usr/lib/python3.12'), '/usr/lib/python3.12', True),
               (Path('/usr/lib/x86_64-linux-gnu'), '/usr/lib/x86_64-linux-gnu', True),
@@ -185,6 +186,7 @@ def sandbox_mounts(development, tool_contract, capability_socket, *, model_conte
               (HERE / 'wsp_client.py', '/tools/wsp_client.py', True),
               (HERE / 'wsp_isolation.py', '/tools/wsp_isolation.py', True),
               (HERE / 'wsp_capture.py', '/runtime/wsp_capture.py', True),
+              (HERE / 'wsp_stop.py', '/runtime/wsp_stop.py', True),
               (Path(capability_socket), '/channel/wsp.sock', True)]
     if model_context is not None:
         mounts.append((Path(model_context), '/model_context', True))
@@ -204,6 +206,8 @@ def sandbox_mounts(development, tool_contract, capability_socket, *, model_conte
         mounts.append((Path(auth_file), '/codex/auth.json', True))
     if provider_socket:
         mounts.append((Path(provider_socket), '/channel/provider.sock', True))
+    if control_socket:
+        mounts.append((Path(control_socket), '/channel/control.sock', True))
     if probe_file:
         mounts.append((Path(probe_file), '/probe.py', True))
     return mounts
@@ -383,14 +387,16 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
     channel = root / 'channel'
     channel.mkdir(mode=0o700)
     server = CapabilityServer(channel / 'wsp.sock', boundary)
-    provider = UnixProvider(channel / 'provider.sock', task['editor']['api_hosts'])
-    for service in (server, provider):
+    provider = ClosingProvider(channel / 'provider.sock', task['editor']['api_hosts'])
+    control = StopServer(channel / 'control.sock', root / 'editor_stop_ack.json', boundary.close_editor_admissions)
+    for service in (server, provider, control):
         threading.Thread(target=service.serve_forever, daemon=True).start()
     contract_file = root / 'tool_contract.json'
     json_write(contract_file, tool_contract(boundary))
     mounts = sandbox_mounts(Path(task['views']) / 'development', contract_file, channel / 'wsp.sock',
                             model_context=verify_context(task),
-                            codex_binary=codex_binary, auth_file=auth_file, provider_socket=channel / 'provider.sock')
+                            codex_binary=codex_binary, auth_file=auth_file, provider_socket=channel / 'provider.sock',
+                            control_socket=channel / 'control.sock')
     command = editor_command(task, task['budgets']['editor_agent_tokens'])
     job = None
     log_process = None
@@ -401,6 +407,8 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
         if editor_runtime.wait(probe['job_id'], time.time() + 45)['state'] != 'COMPLETE':
             raise ValueError('actual editor sandbox access probe failed')
         def record_invocation(job_id):
+            nonlocal job
+            job = {'job_id': job_id}
             json_write(root / 'editor_invocation.json', invocation_manifest(task, job_id, root,
                    fixture_hashes={'development_view': task['view_hashes']['development'],
                                    'model_context': task['model_context']['bundle_sha256']}))
@@ -433,7 +441,7 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
                     'p=Path("/results/codex_usage_events.jsonl"); e=Path("/results/editor_exit.json"); '
                     'print(json.dumps({"events":[json.loads(x) for x in p.read_text().splitlines()] if p.is_file() else [],'
                     '"exit":json.loads(e.read_text()) if e.is_file() else None}))')
-            observed = subprocess.run(['docker', 'exec', job['job_id'], '/usr/bin/python3', '-c', code], capture_output=True, text=True, timeout=15)
+            observed = subprocess.run(['docker', 'exec', job['job_id'], '/usr/bin/python3', '-c', code], capture_output=True, text=True, timeout=5)
             if observed.returncode:
                 raise ValueError('actual editor usage observation failed')
             record = strict_json(observed.stdout)
@@ -441,9 +449,6 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
                 usage = actual_usage(record['events'])
                 boundary.record_agent_usage(usage, 'fresh_editor_raw_token_events', final=final)
                 json_write(root / 'editor_usage_events.json', record['events'])
-                snapshots = response_snapshots(record['events'])
-                if any(total >= task['budgets']['editor_agent_tokens'] for _, total in snapshots[:-1]):
-                    raise ValueError('additional completed model response after actual threshold')
             return record['exit']
         while editor_runtime.status(job['job_id'])['state'] in ('RUNNING', 'PENDING'):
             editor_exit = observe_editor()
@@ -455,16 +460,18 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
             if (state['phase'] not in ('DEVELOPMENT', 'FROZEN') or time.time() >= editor_deadline or
                     time.time() >= state['started_at_unix'] + task['budgets']['experiment_wall_seconds'] or log_limit_hit.is_set()):
                 stop_reason = 'wall_log_or_state_limit'
+                boundary.close_editor_admissions({'reason': stop_reason, 'at_unix': time.time()})
                 subprocess.run(['docker', 'exec', job['job_id'], '/usr/bin/python3', '-c', 'from pathlib import Path; Path("/tmp/editor-stop").touch()'], check=True, timeout=10)
-                for _ in range(10):
+                stop_deadline = time.monotonic() + STOP_POLICY['max_stop_seconds'] + 2
+                while time.monotonic() < stop_deadline:
                     editor_exit = observe_editor()
                     if editor_exit is not None:
                         observed_exit_at = time.time()
                         break
-                    time.sleep(.5)
+                    time.sleep(.1)
                 break
             boundary.check_storage()
-            time.sleep(1)
+            time.sleep(.1)
         # The capture helper has exited and flushed its final short-lived events
         # before this wrapper sentinel appears. Observe once more before harvest.
         observe_editor()
@@ -494,7 +501,7 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
         # Produce and consume evidence here, from this invocation's actual native
         # records. No externally prewritten admission trace is required/accepted.
         completion = accept_collected_completion(boundary, root, job['job_id'], evidence['live_actual_usage_proof'],
-                                                  exit_code=editor_exit['exit_code'], forced_stop=stop_reason)
+                                                  exit_code=editor_exit['child_returncode'], forced_stop=stop_reason)
         if completion['status'] == 'HOLDOUT_ELIGIBLE':
             # Stop serving editor capabilities before any private evaluation.
             server.shutdown()
@@ -510,6 +517,16 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
         # Preserve partial stdout and bounded tmpfs evidence on any failure.
         # No extraction of untrusted archives; no deletion or retry of an editor.
         if job and editor_runtime.status(job['job_id'])['state'] in ('RUNNING', 'PENDING'):
+            boundary.close_editor_admissions({'reason': 'exceptional_cleanup', 'at_unix': time.time()})
+            try:
+                subprocess.run(['docker', 'exec', job['job_id'], '/usr/bin/python3', '-c',
+                                'from pathlib import Path;Path("/tmp/editor-stop").touch()'], check=True, timeout=5)
+                until = time.monotonic() + STOP_POLICY['max_stop_seconds'] + 2
+                while time.monotonic() < until:
+                    if observe_editor() is not None: break
+                    time.sleep(.1)
+            except (OSError, ValueError, UnboundLocalError, subprocess.SubprocessError):
+                pass  # Partial evidence and unknown interrupted usage remain.
             for name in ('task', 'results'):
                 destination = root / ('editor_' + name + '.tar')
                 if not destination.exists():
@@ -526,6 +543,10 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
             log_thread.join(timeout=5)
         server.shutdown()
         server.server_close()
+        control.shutdown()
+        control.server_close()
+        provider.disconnect()
         provider.shutdown()
         provider.server_close()
+        provider.wait_closed()
         boundary.close()

@@ -120,6 +120,46 @@ class UnixProvider(socketserver.ThreadingUnixStreamServer):
         os.chmod(path, 0o600)
 
 
+class ClosingProvider(UnixProvider):
+    """Track and close only this invocation's incoming provider connections."""
+    def __init__(self, *args):
+        self.connections, self.connection_lock = set(), threading.Lock()
+        self.workers = set()
+        super().__init__(*args)
+
+    def get_request(self):
+        request, address = super().get_request()
+        with self.connection_lock: self.connections.add(request)
+        return request, address
+
+    def close_request(self, request):
+        with self.connection_lock: self.connections.discard(request)
+        super().close_request(request)
+
+    def process_request_thread(self, request, client_address):
+        worker = threading.current_thread()
+        with self.connection_lock: self.workers.add(worker)
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            with self.connection_lock: self.workers.discard(worker)
+
+    def wait_closed(self, timeout=2):
+        until = time.monotonic() + timeout
+        with self.connection_lock: workers = list(self.workers)
+        for worker in workers: worker.join(max(0, until - time.monotonic()))
+        with self.connection_lock:
+            if self.workers: raise ValueError('owned provider worker did not exit')
+
+    def disconnect(self):
+        with self.connection_lock:
+            for request in list(self.connections):
+                try: request.shutdown(socket.SHUT_RDWR)
+                except OSError: pass
+                request.close()
+
+
+
 class LocalProxyHandler(socketserver.BaseRequestHandler):
     def handle(self):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
@@ -134,26 +174,26 @@ def editor_entry(command):
     threading.Thread(target=proxy.serve_forever, daemon=True).start()
     env = dict(os.environ, HTTPS_PROXY='http://127.0.0.1:3128', HTTP_PROXY='http://127.0.0.1:3128',
                https_proxy='http://127.0.0.1:3128', http_proxy='http://127.0.0.1:3128', NO_PROXY='')
+    handlers = {sig: signal.signal(sig, lambda number, frame: Path('/tmp/editor-stop').touch())
+                for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
         process = subprocess.Popen(command, env=env, start_new_session=True)
         Path('/results/editor_child.json').write_text(json.dumps({'pid': process.pid}))
-        while process.poll() is None:
-            if Path('/tmp/editor-stop').exists():
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                break
-            time.sleep(.1)
-        # tmpfs disappears at container exit. Keep the wrapper (not the editor)
-        # alive for trusted archive collection, then let the host stop it.
-        Path('/results/editor_exit.json').write_text(json.dumps({'exit_code': process.returncode}))
+        # The capture supervisor owns termination/reap/final capture. Never kill
+        # its group: it deliberately launches Codex in a different child group.
+        process.wait()
+        supervision = json.loads(Path('/results/editor_supervision.json').read_text())
+        wrapper_exit = 0 if process.returncode == 0 else 70
+        exit_file = Path('/results/editor_exit.json.tmp')
+        exit_file.write_text(json.dumps({
+            'schema': 'wsp-editor-exit/2', 'child_returncode': supervision['child_returncode'],
+            'supervisor_returncode': process.returncode, 'container_returncode': wrapper_exit}))
+        exit_file.replace('/results/editor_exit.json')
         while not Path('/tmp/harvested').exists():
             time.sleep(.1)
-        return process.returncode
+        return wrapper_exit
     finally:
+        for sig, handler in handlers.items(): signal.signal(sig, handler)
         proxy.shutdown()
         proxy.server_close()
 

@@ -17,11 +17,7 @@ from wsp_usage import validate_live_proof
 
 
 def diagnostic_fixture(root):
-    result = raw_diagnostic_fixture(root)
-    (root / 'fixture_state.json').write_text(json.dumps({'admitted': 2, 'limit': 10}))
-    (root / 'cleanup.json').write_text(json.dumps({'errors': [], 'fixture_admissions': 2,
-           'closed_jobs': [{'job_id': 'synthetic-job', 'state': 'ERROR'}]}))
-    return result
+    return raw_diagnostic_fixture(root)
 
 
 def test_host_fixture_counter_is_bounded_and_not_resettable(tmp_path):
@@ -65,7 +61,7 @@ def test_stream_timeout_does_not_leave_child(tmp_path):
 @pytest.mark.parametrize('events,elapsed,extra,expected', [
     ([usage_event(90000, 10000, 80000)], 1, {}, 'emergency_actual_tokens'),
     ([usage_event(90000, 9999, 80000)], 1, {}, None),
-    ([usage_event(49990, 10, 20000), usage_event(51000, 20, 21000)], 1, {}, 'native_boundary_late_response'),
+    ([usage_event(49990, 10, 20000), usage_event(51000, 20, 21000)], 1, {}, None),
     ([], 180, {}, 'wall_limit'), ([], 0, {'stream_error': 'truncated'}, 'retained_evidence_limit'),
     ([], 0, {'retained': HOST_LIMIT}, 'retained_evidence_limit')])
 def test_outer_guards_count_cache_once(events, elapsed, extra, expected):
@@ -89,11 +85,11 @@ class FakeBackend:
         self.finalized = reason or 'normal'
         if self.finalize_error: raise ValueError('synthetic harvest failure')
         native_fixture(self.budget.root, [usage_event(24990, 10, 10000), usage_event(self.tokens - 10, 10, 30000)],
-                       50000, native_stop=True, exit_code=1, forced_stop=reason)
+                       50000, observed_stop=True, exit_code=-15, forced_stop=reason)
     def close(self):
         self.closed = True
         if self.cleanup_error: raise ValueError('synthetic cleanup failure')
-        self.budget.json('fixture_state.json', {'admitted': 2, 'limit': 10})
+        self.budget.json('fixture_state.json', {'admitted': 2, 'limit': 10, 'closed': True})
         self.budget.json('cleanup.json', {'errors': [], 'fixture_admissions': 2,
                   'closed_jobs': [{'job_id': 'synthetic-job', 'state': 'ERROR'}]})
 
@@ -113,19 +109,19 @@ def test_proof_proposal_comes_from_collector_and_passes_reviewed_validator(tmp_p
     # No approval is created by the driver. This synthetic test invokes the
     # reviewed validator with a synthetic approval solely to test compatibility.
     result = assess(tmp_path, task, EvidenceBudget(tmp_path), None, None)
-    assert result['status'] == 'NATIVE_STOP_OBSERVED_REVIEW_REQUIRED'
+    assert result['status'] == 'OBSERVED_STOP_REVIEW_REQUIRED'
     proof = tmp_path / 'live_proof.proposed.json'
     accepted = validate_live_proof(proof, {'actual_usage_proof_sha256': sha256(proof)}, task)
     assert accepted['usage']['actual_input_plus_output_tokens'] == 50030
 
 
-@pytest.mark.parametrize('kind', ['voluntary', 'no_cache', 'extra_response', 'outer_stop', 'driver_error'])
+@pytest.mark.parametrize('kind', ['voluntary', 'no_cache', 'old_native', 'outer_stop', 'driver_error'])
 def test_bad_outcomes_never_propose_live_proof(tmp_path, kind):
     task, _, _, _ = diagnostic_fixture(tmp_path)
     if kind != 'driver_error':
         events = [usage_event(24990, 10, 0 if kind == 'no_cache' else 10000), usage_event(50020, 10, 0 if kind == 'no_cache' else 30000)]
-        if kind == 'extra_response': events.append(usage_event(55000, 20, 32000))
-        native_fixture(tmp_path, events, 50000, native_stop=kind != 'voluntary', exit_code=0 if kind == 'voluntary' else 1)
+        if kind == 'old_native': events.append(usage_event(55000, 20, 32000))
+        native_fixture(tmp_path, events, 50000, observed_stop=kind not in ('voluntary', 'old_native'), native_stop=kind == 'old_native', exit_code=0 if kind == 'voluntary' else -15)
     result = assess(tmp_path, task, EvidenceBudget(tmp_path), 'emergency_actual_tokens' if kind == 'outer_stop' else None,
                     'error' if kind == 'driver_error' else None)
     assert result['status'] == 'INCONCLUSIVE' and not (tmp_path / 'live_proof.proposed.json').exists()
@@ -149,7 +145,7 @@ def test_full_one_shot_driver_with_fake_backend(tmp_path, monkeypatch):
     def factory(manifest, budget):
         backend = FakeBackend(root); made.append(backend); return backend
     result = run('synthetic-manifest', approval, backend_factory=factory)
-    assert result['status'] == 'NATIVE_STOP_OBSERVED_REVIEW_REQUIRED'
+    assert result['status'] == 'OBSERVED_STOP_REVIEW_REQUIRED'
     assert made[0].closed and made[0].started == 1 and result['fixture_admissions'] == 2
     assert result['wall_seconds_including_cleanup'] >= 0
     with pytest.raises(FileExistsError): run('synthetic-manifest', approval, backend_factory=factory)
@@ -162,7 +158,7 @@ def test_manifest_prepare_seals_without_credential_read_or_launch(tmp_path, monk
     identity = {'fixed': 'synthetic runtime'}
     science = {'editor': {'runtime_identity': identity, 'model': 'gpt-6-astra', 'effort': 'xhigh', 'prompt': 'synthetic scientific prompt'},
                'budgets': {'editor_agent_tokens': 200000}, 'generic_image': 'synthetic-pinned-image',
-               'run_dir': str(tmp_path / 'scientific-never-create'),
+               'run_dir': str(tmp_path / 'scientific-never-create'), 'response_budget_policy': __import__('wsp_usage').RESPONSE_POLICY,
                'code_hashes': {'wsp_diagnostic.py': sha256(Path(wsp_diagnostic.__file__))}}
     source = tmp_path / 'science.json'; source.write_text(json.dumps({'task': science, 'preflight_sha256': json_hash(science)}))
     monkeypatch.setattr(wsp_diagnostic, 'runtime_identity', lambda *_: identity)

@@ -4,8 +4,7 @@
 
 """Prepare/seal a text-only diagnostic; run only with separate exact approval.
 
-One attempt, no scientific runner/model/data access, no resume or retry. Native
-stopping remains a measured outcome, not a claim implied by configuration.
+One attempt, no scientific runner/model/data access, no resume or retry. Observed raw stopping remains a measured outcome, never a strict spending or API admission cap.
 """
 import argparse
 import copy
@@ -23,10 +22,11 @@ from pathlib import Path
 from suite_runtime import Docker
 from tht_contract import json_hash, sha256
 from wsp_collect import collect_native_evidence
-from wsp_isolation import UnixProvider
+from wsp_isolation import ClosingProvider
+from wsp_stop import STOP_POLICY, StopServer
 from wsp_runtime import archive_command, sandbox_mounts, submit_sandbox
 from wsp_usage import (RESPONSE_POLICY, actual_usage, diagnostic_differences, editor_command,
-                       invocation_manifest, response_completion, response_snapshots, runtime_identity)
+                       invocation_manifest, response_completion, runtime_identity, validate_diagnostic_cleanup)
 from wsp_weights import regular_file, strict_json
 
 HERE = Path(__file__).resolve().parent
@@ -41,8 +41,8 @@ NATIVE_LOG_LIMIT = 16 * MIB
 FIXTURE = 'Synthetic diagnostic fixture. Sequence payload: alpha beta gamma delta. No images, labels, model or weights.\n'
 PROMPT = '''This is one bounded pure-text runtime diagnostic, not a scientific experiment.
 Use only the generic fixture service: run python3 /tools/wsp_client.py with JSON on stdin, starting with {"op":"fixture","sequence":1}.
-Make exactly one fixture request per tool call. Read that returned fixture, then make the next sequential request in a later tool call, up to sequence10. Do not batch, loop in a script, pad output, create other agents, call APIs or use any other endpoint. Each result is small deterministic text; do not invent results, usage, timestamps or native stop events.
-Continue these sequential requests until the native runtime stops or all ten permitted results have been read. If ten complete, give one brief factual final answer. An early finish is inconclusive evidence, never a reason to retry. Do not seek any model, data, images, labels, host paths or credentials. /development/fixture.txt and /task/tool_contract.json contain only the synthetic fixture and this limited protocol.
+Make exactly one fixture request per tool call. Read that returned fixture, then make the next sequential request in a later tool call, up to sequence10. Do not batch, loop in a script, pad output, create other agents, call APIs or use any other endpoint. Each result is small deterministic text; do not invent results, usage, timestamps or stop events.
+Continue these sequential requests until the observed-usage supervisor stops the runtime or all ten permitted results have been read. If ten complete, give one brief factual final answer. An early finish is inconclusive evidence, never a reason to retry. Do not seek any model, data, images, labels, host paths or credentials. /development/fixture.txt and /task/tool_contract.json contain only the synthetic fixture and this limited protocol.
 '''
 
 
@@ -117,18 +117,26 @@ class FixtureLedger:
     """Admission count is host-owned and written before returning any payload."""
     def __init__(self, budget):
         self.budget, self.count, self.lock = budget, 0, threading.Lock()
+        self.closed = False
         if (budget.root / 'fixture_state.json').exists(): raise ValueError('fixture ledger exists; no reset')
-        self.budget.json('fixture_state.json', {'admitted': 0, 'limit': 10})
+        self.budget.json('fixture_state.json', {'admitted': 0, 'limit': 10, 'closed': False})
 
     def request(self, request):
         with self.lock:
+            if self.closed: return {'ok': False, 'error': 'observed_stop_closed'}
             if self.count >= 10:
                 return {'ok': False, 'error': 'fixture_limit'}
             self.count += 1  # Invalid requests also spend a host admission.
-            self.budget.json('fixture_state.json', {'admitted': self.count, 'limit': 10})
+            self.budget.json('fixture_state.json', {'admitted': self.count, 'limit': 10, 'closed': self.closed})
             if request != {'op': 'fixture', 'sequence': self.count}:
                 return {'ok': False, 'error': 'fixture_schema_or_sequence'}
             return {'ok': True, 'sequence': self.count, 'fixture': FIXTURE.strip()}
+
+    def close_admissions(self, notice):
+        with self.lock:
+            self.closed = True
+            self.budget.json('fixture_state.json', {'admitted': self.count, 'limit': 10, 'closed': True,
+                                                    'stop_notice_sha256': json_hash(notice)}, final=True)
 
 
 class FixtureHandler(socketserver.StreamRequestHandler):
@@ -151,27 +159,6 @@ class FixtureServer(socketserver.UnixStreamServer):
         os.chmod(path, 0o600)
 
 
-class ClosingProvider(UnixProvider):
-    """Track and close only this invocation's incoming provider connections."""
-    def __init__(self, *args):
-        self.connections, self.connection_lock = set(), threading.Lock()
-        super().__init__(*args)
-
-    def get_request(self):
-        request, address = super().get_request()
-        with self.connection_lock: self.connections.add(request)
-        return request, address
-
-    def close_request(self, request):
-        with self.connection_lock: self.connections.discard(request)
-        super().close_request(request)
-
-    def disconnect(self):
-        with self.connection_lock:
-            for request in list(self.connections):
-                try: request.shutdown(socket.SHUT_RDWR)
-                except OSError: pass
-                request.close()
 
 
 class DiagnosticDocker(Docker):
@@ -191,6 +178,7 @@ class DiagnosticDocker(Docker):
 def prepare(scientific_file, output, run_dir, codex_binary, auth_file):
     scientific_file, output, run_dir = Path(scientific_file).resolve(), Path(output).resolve(), Path(run_dir).resolve()
     record = strict_json(scientific_file.read_bytes()); science = record['task']
+    if science.get('response_budget_policy') != RESPONSE_POLICY: raise ValueError('reviewed observed raw-usage policy required')
     if record['preflight_sha256'] != json_hash(science): raise ValueError('scientific preflight hash changed')
     if (run_dir.exists() or output.exists() or run_dir == output or run_dir in output.parents or
             run_dir == Path(science['run_dir']) or Path(science['run_dir']) in run_dir.parents):
@@ -206,9 +194,9 @@ def prepare(scientific_file, output, run_dir, codex_binary, auth_file):
             'budgets': dict(LIMITS), 'generic_image': science['generic_image']}
     fixture_hash = hashlib.sha256(FIXTURE.encode()).hexdigest()
     template = invocation_manifest(task, '<minted-at-launch>', run_dir, kind='text_diagnostic', fixture_hashes={'fixture.txt': fixture_hash})
-    manifest = {'schema': 'wsp-diagnostic-manifest/1', 'scientific_preflight': str(scientific_file),
+    manifest = {'schema': 'wsp-diagnostic-manifest/2', 'scientific_preflight': str(scientific_file),
                 'scientific_preflight_file_sha256': sha256(scientific_file), 'scientific_preflight_sha256': record['preflight_sha256'],
-                'reviewed_base_commit': '2e8a90e1e4ee0aa061ec937719357567729cad1a', 'run_dir': str(run_dir),
+                'reviewed_base_commit': '9aed932a31c2e3eff4316401e3c140461b492770', 'run_dir': str(run_dir),
                 'codex_binary': str(Path(codex_binary).resolve()), 'auth_file': str(Path(auth_file).absolute()),
                 'credential_policy': 'existing private mount only; contents never read/exported/hashed',
                 'task': task, 'invocation_template': template, 'fixture_text': FIXTURE,
@@ -227,6 +215,7 @@ def prepare(scientific_file, output, run_dir, codex_binary, auth_file):
 
 def approve_manifest(path, approval_path):
     sealed = strict_json(Path(path).read_bytes()); m = sealed['manifest']
+    if m.get('schema') != 'wsp-diagnostic-manifest/2': raise ValueError('observed diagnostic manifest v2 required')
     if sealed['manifest_sha256'] != json_hash(m): raise ValueError('manifest hash changed')
     approval = strict_json(Path(approval_path).read_bytes())
     if (approval.get('diagnostic_manifest_sha256') != sealed['manifest_sha256'] or approval.get('approved_for_live_text_diagnostic') is not True or
@@ -255,7 +244,6 @@ def guard_reason(events, elapsed, *, stream_error=None, retained=0):
     if stream_error or retained >= HOST_LIMIT - 2 * MIB: return 'retained_evidence_limit'
     if elapsed >= 180: return 'wall_limit'
     if events and (actual_usage(events)['actual_input_plus_output_tokens'] or 0) >= 100000: return 'emergency_actual_tokens'
-    if any(total >= 50000 for _, total in response_snapshots(events)[:-1]): return 'native_boundary_late_response'
     return None
 
 
@@ -269,7 +257,7 @@ def drive(backend, *, clock=time.monotonic, sleep=time.sleep):
             reason = guard_reason(observation['events'], clock() - started,
                                   stream_error=backend.stream_error(), retained=backend.budget.size())
             if reason or observation['exit'] is not None: break
-            sleep(.2)
+            sleep(STOP_POLICY['poll_seconds'])
     except BaseException as caught:
         reason, error = 'driver_error', type(caught).__name__ + ': ' + str(caught)
     try:
@@ -301,12 +289,14 @@ class HostBackend:
                                               'admission_limit': 10, 'host_owned_counter': True, 'real_wsp_capabilities': False})
         channel = self.root / 'channel'; channel.mkdir(mode=0o700)
         for factory in (lambda: FixtureServer(channel / 'wsp.sock', self.ledger),
-                        lambda: ClosingProvider(channel / 'provider.sock', self.m['task']['editor']['api_hosts'])):
+                        lambda: ClosingProvider(channel / 'provider.sock', self.m['task']['editor']['api_hosts']),
+                        lambda: StopServer(channel / 'control.sock', self.root / 'editor_stop_ack.json', self.ledger.close_admissions)):
             service = factory()
             thread = threading.Thread(target=service.serve_forever, daemon=True); thread.start()
             self.services.append((service, thread))
         self.mounts = sandbox_mounts(development, self.root / 'tool_contract.json', channel / 'wsp.sock',
-                     codex_binary=self.m['codex_binary'], auth_file=self.m['auth_file'], provider_socket=channel / 'provider.sock')
+                     codex_binary=self.m['codex_binary'], auth_file=self.m['auth_file'], provider_socket=channel / 'provider.sock',
+                     control_socket=channel / 'control.sock')
         def opened(job_id, kind):
             self.jobs.append(job_id); self.budget.json(kind + '_job.json', {'job_id': job_id})
             if kind == 'editor':
@@ -347,8 +337,9 @@ class HostBackend:
     def finalize(self, reason):
         if not self.job: return
         if reason or not self.last or self.last['exit'] is None:
+            self.ledger.close_admissions({'reason': reason or 'finalization'})
             self.signal('editor-stop')
-            until = time.monotonic() + 5
+            until = time.monotonic() + STOP_POLICY['max_stop_seconds'] + 2
             while time.monotonic() < until:
                 if self.observe()['exit'] is not None: break
                 time.sleep(.1)
@@ -386,6 +377,7 @@ class HostBackend:
             try:
                 if isinstance(service, ClosingProvider): service.disconnect()
                 service.shutdown(); service.server_close(); thread.join(timeout=3)
+                if isinstance(service, ClosingProvider): service.wait_closed()
                 if thread.is_alive(): errors.append('owned service thread did not exit')
             except BaseException as error: errors.append(str(error))
         self.budget.json('cleanup.json', {'owned_job_ids': self.jobs, 'errors': errors,
@@ -394,12 +386,17 @@ class HostBackend:
 
 
 def assess(root, science, budget, reason, error):
-    result = {'schema': 'wsp-diagnostic-outcome/1', 'status': 'INCONCLUSIVE', 'outer_stop': reason, 'error': error,
+    result = {'schema': 'wsp-diagnostic-outcome/2', 'status': 'INCONCLUSIVE', 'outer_stop': reason, 'error': error,
               'ended_at_unix': time.time(),
-              'observability': 'Native stop and completed-usage evidence, not direct request-admission telemetry; review required.'}
+              'observability': 'Observed raw threshold and bounded owned termination; completed overrun charged; interrupted provider usage unknown; no API admission claim.'}
     if (root / 'attempt.json').is_file():
         attempt = strict_json((root / 'attempt.json').read_bytes())
         result['wall_seconds_including_cleanup'] = result['ended_at_unix'] - attempt['started_at_unix']
+    if (root / 'editor_usage_events.json').is_file():
+        try: result['measured_completed_usage'] = actual_usage(strict_json((root / 'editor_usage_events.json').read_bytes()))
+        except ValueError: result['measured_completed_usage'] = None
+    result['interrupted_provider_usage'] = 'unknown'
+    result['provider_total_tokens'] = None
     try:
         cleanup = strict_json((root / 'cleanup.json').read_bytes())
         fixture = strict_json((root / 'fixture_state.json').read_bytes())
@@ -411,19 +408,21 @@ def assess(root, science, budget, reason, error):
         events, trace = collect_native_evidence(root, write=False)
         budget.json('editor_response_evidence.json', trace)
         result['completion'] = response_completion(events, trace, 50000, frozen=False,
-                              exit_code=trace['exit_code'], forced_stop=reason, require_native_stop=True)
+                              exit_code=trace['exit_code'], forced_stop=reason, require_observed_stop=True)
         usage = actual_usage(events)
         if error or usage.get('distinct_snapshots', 0) < 2 or not usage.get('cached_input_tokens'):
             raise ValueError('missing genuine cached multiresponse evidence or driver error')
         invocation = strict_json((root / 'editor_invocation.json').read_bytes())
-        proof = {'schema': 'wsp-live-actual-usage-proof/3', 'runtime': 'isolated_codex_exec', 'synthetic': False,
-                 'case': 'cached_multiresponse_actual_total', 'runtime_identity': invocation['runtime_identity'],
+        proof = {'schema': 'wsp-live-observed-usage-proof/4', 'runtime': 'isolated_codex_exec', 'synthetic': False,
+                 'case': 'cached_multiresponse_observed_stop', 'runtime_identity': invocation['runtime_identity'],
                  'policy_sha256': json_hash(RESPONSE_POLICY), 'scientific_threshold_tokens': science['budgets']['editor_agent_tokens'],
-                 'diagnostic_threshold_tokens': 50000, 'threshold_rationale': 'One reviewed50k text diagnostic of the same native mechanism proposed for200k scientific use.',
+                 'diagnostic_threshold_tokens': 50000, 'threshold_rationale': 'One reviewed50k text diagnostic of the same observed raw-usage supervisor proposed for200k scientific use; native config is secondary only.',
                  'diagnostic_differences': diagnostic_differences(science, invocation), 'evidence_directory': str(root),
                  'native_evidence_sha256': json_hash(trace), 'observed_actual_usage': usage}
+        budget.json('outcome.json', result, final=True)
+        proof['lifecycle_source_hashes'] = validate_diagnostic_cleanup(root, result['completion'])
         budget.json('live_proof.proposed.json', proof)
-        result.update(status='NATIVE_STOP_OBSERVED_REVIEW_REQUIRED', proof_sha256=sha256(root / 'live_proof.proposed.json'))
+        result.update(status='OBSERVED_STOP_REVIEW_REQUIRED', proof_sha256=sha256(root / 'live_proof.proposed.json'))
     except (ValueError, KeyError, OSError, tarfile.TarError) as caught:
         result['assessment_error'] = str(caught)
     budget.json('outcome.json', result, final=True)
@@ -455,7 +454,7 @@ def main():
         print(json.dumps({'manifest_sha256': result['manifest_sha256'], 'execution_authorized': False}))
     else:
         result = run(args.manifest, args.approval)
-        print(json.dumps(result)); raise SystemExit(0 if result['status'] == 'NATIVE_STOP_OBSERVED_REVIEW_REQUIRED' else 1)
+        print(json.dumps(result)); raise SystemExit(0 if result['status'] == 'OBSERVED_STOP_REVIEW_REQUIRED' else 1)
 
 
 if __name__ == '__main__':

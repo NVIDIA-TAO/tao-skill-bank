@@ -14,29 +14,27 @@ from wsp_runtime import accept_collected_completion
 from wsp_usage import response_completion, validate_live_proof
 
 
-@pytest.mark.parametrize('native_stop,frozen,total', [(False, True, 120), (False, True, 200000),
-                                                   (True, True, 200027), (True, False, 200027)])
-def test_runner_collector_reachable_synthetic_completion(tmp_path, native_stop, frozen, total):
+@pytest.mark.parametrize('stopped,frozen,total', [(False, True, 120), (False, False, 120),
+                                                 (True, True, 200027), (True, False, 200027)])
+def test_runner_collector_reachable_synthetic_completion(tmp_path, stopped, frozen, total):
     boundary, calls = synthetic_boundary(tmp_path)
     try:
         if frozen: freeze_valid(boundary)
         boundary.task['synthetic_only'] = False
         root = tmp_path / 'native'
         events = [usage_event(total - 10, 10, 50)]
-        _, expected = native_fixture(root, events, 200000, native_stop=native_stop, exit_code=int(native_stop))
-        # Start with no prewritten evidence: production integration must create it.
+        _, expected = native_fixture(root, events, 200000, observed_stop=stopped, exit_code=-15 if stopped else 0)
         (root / 'editor_response_evidence.json').unlink()
         live = {k: expected[k] for k in ('runtime_identity_sha256', 'collector_sha256')}
-        completion = accept_collected_completion(boundary, root, 'synthetic-job', live, exit_code=int(native_stop))
+        completion = accept_collected_completion(boundary, root, 'synthetic-job', live, exit_code=-15 if stopped else 0)
         assert (root / 'editor_response_evidence.json').is_file()
         assert completion['usage']['actual_input_plus_output_tokens'] == total
         assert completion['actual_overrun_tokens'] == max(0, total - 200000)
-        assert completion['exit_reason'] == ('native_token_budget_exhausted' if native_stop else 'normal')
-        if frozen:
+        if frozen and not stopped:
             boundary.holdout()
             assert [c[1] for c in calls] == ['development', 'development', 'holdout', 'holdout']
         else:
-            assert completion['status'] == 'INCOMPLETE_NO_FREEZE' and not calls
+            assert completion['status'].startswith('INCOMPLETE')
     finally:
         boundary.close()
 
@@ -50,16 +48,17 @@ def test_native_completion_failures(tmp_path, failure):
     if failure == 'unrelated_error': kwargs['error'] = 'connection lost'
     if failure == 'voluntary_diagnostic': kwargs.update(native_stop=False, exit_code=0)
     if failure == 'forced': kwargs['forced_stop'] = 'emergency_actual_tokens'
-    if failure == 'reset': events[1] = usage_event(99, 10, 60)
+
     if failure == 'native_under_threshold': events = events[:1]
     _, evidence = native_fixture(tmp_path, events, 200, **kwargs)
+    if failure == 'reset': events[1] = usage_event(99, 10, 60)
     if failure == 'missing_usage':
         events.append({'payload': {'type': 'token_count', 'info': None}})
     if failure == 'thread_identity': evidence['native_events'][0]['event']['thread_id'] = 'other-session'
     if failure == 'tool_marker':
         evidence['native_events'][-1]['event']['error']['message'] = 'tool output says shared rollout token budget exhausted'
     with pytest.raises(ValueError):
-        response_completion(events, evidence, 200, frozen=True, exit_code=kwargs['exit_code'], require_native_stop=True)
+        response_completion(events, evidence, 200, frozen=True, exit_code=kwargs['exit_code'], require_observed_stop=True)
 
 
 @pytest.mark.parametrize('change', ['raw', 'archive', 'missing_member', 'terminal', 'log_incomplete', 'harvest_time', 'runtime', 'source_reset'])
@@ -71,7 +70,7 @@ def test_collector_rejects_unverifiable_final_harvest(tmp_path, change):
     elif change == 'missing_member': write_archive(tmp_path / 'editor_results.tar', {})
     elif change in ('terminal', 'log_incomplete'):
         path = tmp_path / 'editor_terminal.json'; data = json.loads(path.read_text())
-        if change == 'terminal': data['backend']['native']['ExitCode'] = 0
+        if change == 'terminal': data['backend']['native']['ExitCode'] = 241
         else: data['log_capture_returncode'] = -15
         path.write_text(json.dumps(data))
     elif change == 'harvest_time':

@@ -597,77 +597,69 @@ def response_trace(events, threshold, *, denied=False, exit_code=0, reason='norm
     import tempfile
     from wsp_fixtures import native_fixture
     with tempfile.TemporaryDirectory() as root:
-        _, evidence = native_fixture(root, events, threshold, native_stop=denied, exit_code=exit_code,
+        _, evidence = native_fixture(root, events, threshold, observed_stop=denied, exit_code=exit_code,
                                      error='unrelated error' if reason == 'error' else None)
     return evidence
 
 
 @pytest.mark.parametrize('final_total', [200000, 200027])
-def test_frozen_exact_boundary_and_final_overrun_admit_only_trusted_holdout(boundary, final_total):
-    item, calls = boundary
-    freeze_valid(item)
-    item.task['synthetic_only'] = False  # Exercise the actual production holdout gate.
-    events = [usage_event(99990, 10, 80000), usage_event(final_total - 20, 20, 160000)]
-    trace = response_trace(events, 200000, denied=True, exit_code=1, reason='response_threshold')
-    completion = item.accept_editor_completion(events, trace, exit_code=1)
-    assert completion['status'] == 'HOLDOUT_ELIGIBLE'
-    assert completion['exit_code'] == 1  # Never invent a successful editor exit.
-    assert completion['actual_overrun_tokens'] == final_total - 200000
-    assert not item.handle({'op': 'status'})['ok']
-    comparison = item.holdout()
-    assert [row[1] for row in calls] == ['development', 'development', 'holdout', 'holdout']
-    assert comparison['before']['metrics']['n'] == comparison['after']['metrics']['n'] == 1
-    report = item.export()
-    assert report['status'] == 'COMPLETE'
-    assert report['editor_completion']['actual_overrun_tokens'] == final_total - 200000
-    assert report['agent_usage']['actual_input_plus_output_tokens'] == final_total
-    assert report['budget_reservations']['holdout_requests'] == 2
-
-
-def test_normal_final_response_at_boundary_is_accepted_without_invented_next_attempt(boundary):
+def test_observed_stop_never_admits_holdout_even_with_freeze(boundary, final_total):
     item, calls = boundary
     freeze_valid(item)
     item.task['synthetic_only'] = False
-    events = [usage_event(199999, 1, 100000)]
+    events = [usage_event(99990, 10, 80000), usage_event(final_total - 20, 20, 160000)]
+    trace = response_trace(events, 200000, denied=True, exit_code=-15)
+    completion = item.accept_editor_completion(events, trace, exit_code=-15)
+    assert completion['status'] == 'INCOMPLETE_STOP'
+    assert completion['actual_overrun_tokens'] == final_total - 200000
+    assert completion['provider_total_tokens'] is None and completion['interrupted_provider_usage'] == 'unknown'
+    with pytest.raises(LimitError): item.holdout()
+    assert len(calls) == 2
+
+
+def test_normal_complete_frozen_editor_reaches_real_holdout_gate(boundary):
+    item, calls = boundary
+    freeze_valid(item)
+    item.task['synthetic_only'] = False
+    events = [usage_event(99990, 10, 80000)]
     completion = item.accept_editor_completion(events, response_trace(events, 200000), exit_code=0)
-    assert completion['exit_reason'] == 'normal' and completion['additional_completed_responses_after_boundary'] == 0
+    assert completion['status'] == 'HOLDOUT_ELIGIBLE' and completion['provider_usage_complete']
     item.holdout()
-    assert len(calls) == 4
+    assert len(calls) == 4 and item.export()['status'] == 'COMPLETE'
 
 
 def test_token_stop_without_freeze_is_incomplete(boundary):
     item, calls = boundary
     events = [usage_event(199999, 5, 100000)]
     completion = item.accept_editor_completion(events, response_trace(events, 200000, denied=True, exit_code=1, reason='response_threshold'), exit_code=1)
-    assert completion['status'] == 'INCOMPLETE_NO_FREEZE'
+    assert completion['status'] == 'INCOMPLETE_STOP'
     with pytest.raises(LimitError): item.holdout()
     assert not calls
 
 
-@pytest.mark.parametrize('failure', ['extra_response', 'missing_snapshot', 'reset', 'unrelated_error',
-                                     'invented_exit', 'no_native_stop', 'forced_wall', 'false_cached_accounting', 'missing_evidence'])
+@pytest.mark.parametrize('failure', ['missing_snapshot', 'reset', 'invented_exit', 'false_cached_accounting',
+                                     'missing_evidence', 'late_poll', 'late_termination', 'missing_ack', 'wrong_crossing'])
 def test_response_completion_rejects_nonpolicy_failures(failure):
     events = [usage_event(100, 5, 60), usage_event(220, 10, 150)]
-    trace = response_trace(events, 200, denied=True, exit_code=1)
-    exit_code, forced = 1, None
-    if failure == 'extra_response':
-        events.append(usage_event(300, 20, 200)); trace = response_trace(events, 200, denied=True, exit_code=1)
-    elif failure == 'missing_snapshot': events.pop(0)
+    trace = response_trace(events, 200, denied=True, exit_code=-15)
+    exit_code = -15
+    if failure == 'missing_snapshot': events.pop(0)
     elif failure == 'reset': events[1] = usage_event(99, 10, 60)
-    elif failure == 'unrelated_error': trace['native_events'][-1]['event']['error']['message'] = 'unrelated failure'
     elif failure == 'invented_exit': exit_code = 0
-    elif failure == 'no_native_stop': trace['native_events'] = trace['native_events'][:2]
-    elif failure == 'forced_wall': forced = 'wall_limit'
     elif failure == 'false_cached_accounting': events[1]['payload']['info']['total_token_usage']['input_tokens'] = 70
     elif failure == 'missing_evidence': trace = {}
-    with pytest.raises(ValueError): response_completion(events, trace, 200, frozen=True, exit_code=exit_code, forced_stop=forced)
+    elif failure == 'late_poll': trace['supervision']['max_poll_gap_seconds'] = 2
+    elif failure == 'late_termination': trace['supervision']['termination_seconds'] = 8
+    elif failure == 'missing_ack': trace['host_stop_ack'] = {}
+    elif failure == 'wrong_crossing': trace['supervision']['notice']['first_crossing_event_sha256'] = '0' * 64
+    with pytest.raises(ValueError): response_completion(events, trace, 200, frozen=True, exit_code=exit_code)
 
 
 def test_trusted_holdout_still_obeys_independent_budgets(boundary):
     item, _ = boundary
     freeze_valid(item)
     item.task['synthetic_only'] = False
-    events = [usage_event(199999, 1, 0)]
+    events = [usage_event(99999, 1, 0)]
     item.accept_editor_completion(events, response_trace(events, 200000), exit_code=0)
     item.journal.change('synthetic exhausted holdout reservation', {}, lambda state: state['used'].update(holdout_requests=2))
     with pytest.raises(LimitError, match='holdout_requests'): item.holdout()
@@ -678,17 +670,25 @@ def diagnostic_fixture(tmp_path):
     from wsp_fixtures import native_fixture
     from wsp_usage import diagnostic_differences
     events = [usage_event(24990, 10, 10000), usage_event(50020, 10, 30000)]
-    _, trace = native_fixture(tmp_path, events, 50000, native_stop=True, exit_code=1)
+    _, trace = native_fixture(tmp_path, events, 50000, observed_stop=True, exit_code=-15)
     invocation = json.loads((tmp_path / 'editor_invocation.json').read_text())
     identity = invocation['runtime_identity']
     task = {'editor': {'runtime_identity': identity, 'model': 'fixture-only', 'effort': 'xhigh',
                        'prompt': 'Different scientific prompt.'}, 'budgets': BUDGETS}
-    proof = {'schema': 'wsp-live-actual-usage-proof/3', 'runtime': 'isolated_codex_exec', 'synthetic': False,
-             'case': 'cached_multiresponse_actual_total', 'runtime_identity': identity, 'policy_sha256': json_hash(RESPONSE_POLICY),
+    proof = {'schema': 'wsp-live-observed-usage-proof/4', 'runtime': 'isolated_codex_exec', 'synthetic': False,
+             'case': 'cached_multiresponse_observed_stop', 'runtime_identity': identity, 'policy_sha256': json_hash(RESPONSE_POLICY),
              'scientific_threshold_tokens': 200000, 'diagnostic_threshold_tokens': 50000,
              'threshold_rationale': 'Synthetic validator test for the declared lower diagnostic threshold.',
              'diagnostic_differences': diagnostic_differences(task, invocation),
              'evidence_directory': str(tmp_path), 'native_evidence_sha256': json_hash(trace), 'observed_actual_usage': actual_usage(events)}
+    (tmp_path / 'fixture_state.json').write_text(json.dumps({'admitted': 2, 'limit': 10, 'closed': True}))
+    (tmp_path / 'cleanup.json').write_text(json.dumps({'errors': [], 'fixture_admissions': 2,
+           'closed_jobs': [{'job_id': 'synthetic-job', 'state': 'COMPLETE'}]}))
+    (tmp_path / 'attempt.json').write_text(json.dumps({'started_at_unix': __import__('time').time()}))
+    (tmp_path / 'outcome.json').write_text(json.dumps({'ended_at_unix': __import__('time').time(), 'error': None, 'outer_stop': None}))
+    from wsp_usage import validate_diagnostic_cleanup
+    completion = response_completion(events, trace, 50000, frozen=False, exit_code=-15, require_observed_stop=True)
+    proof['lifecycle_source_hashes'] = validate_diagnostic_cleanup(tmp_path, completion)
     path = tmp_path / 'fixture-proof.json'; path.write_text(json.dumps(proof))
     return task, proof, path, tmp_path / 'editor_response_evidence.json'
 
@@ -699,11 +699,11 @@ def test_lower_diagnostic_threshold_binds_runtime_and_charges_overrun(tmp_path):
     assert result['diagnostic_threshold_tokens'] == 50000
     assert result['scientific_threshold_tokens'] == 200000
     assert result['completion']['actual_overrun_tokens'] == 30
-    assert result['completion']['exit_code'] == 1
+    assert result['completion']['exit_code'] == -15
     assert result['usage']['actual_input_plus_output_tokens'] == 50030
 
 
-@pytest.mark.parametrize('change', ['identity', 'under_threshold', 'no_native_stop', 'opaque_boolean', 'collector', 'threshold_rationale'])
+@pytest.mark.parametrize('change', ['identity', 'under_threshold', 'no_host_ack', 'opaque_boolean', 'collector', 'threshold_rationale'])
 def test_live_proof_rejects_unbound_or_non_native_evidence(tmp_path, change):
     task, proof, path, gate = diagnostic_fixture(tmp_path)
     if change == 'identity': proof['runtime_identity'] = {'model': 'different-runtime'}
@@ -711,7 +711,7 @@ def test_live_proof_rejects_unbound_or_non_native_evidence(tmp_path, change):
     elif change == 'under_threshold': proof['diagnostic_threshold_tokens'] = 60000
     else:
         trace = json.loads(gate.read_text())
-        if change == 'no_native_stop': trace['native_events'] = trace['native_events'][:2]
+        if change == 'no_host_ack': trace['host_stop_ack'] = {}
         elif change == 'opaque_boolean': trace = {'actual_ceiling_enforced': True, 'followup_response_denied': True}
         elif change == 'collector': trace['collector_sha256'] = 'd' * 64
         gate.write_text(json.dumps(trace)); proof['native_evidence_sha256'] = json_hash(trace)

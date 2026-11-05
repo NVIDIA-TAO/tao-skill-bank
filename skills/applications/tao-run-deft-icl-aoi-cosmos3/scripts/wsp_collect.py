@@ -19,7 +19,7 @@ from wsp_weights import regular_file, strict_json
 
 NATIVE_BUDGET_ERROR = 'shared rollout token budget exhausted'
 SOURCE_FILES = ('editor_usage_events.json', 'editor_events.timestamped.log', 'editor_results.tar',
-                'editor_task.tar', 'editor_harvest.json', 'editor_terminal.json', 'editor_invocation.json')
+                'editor_task.tar', 'editor_harvest.json', 'editor_terminal.json', 'editor_invocation.json', 'editor_stop_ack.json')
 
 
 def epoch(value):
@@ -93,14 +93,22 @@ def collect_native_evidence(root, *, write=True):
     native, non_json = native_events(paths['editor_events.timestamped.log'].read_text())
     harvest = strict_json(paths['editor_harvest.json'].read_bytes())
     terminal = strict_json(paths['editor_terminal.json'].read_bytes())
-    files = archive_files(paths['editor_results.tar'], {'codex_usage_events.jsonl', 'codex_usage_capture.json', 'editor_exit.json'})
+    files = archive_files(paths['editor_results.tar'], {'codex_usage_events.jsonl', 'codex_usage_capture.json', 'editor_exit.json', 'editor_supervision.json'})
     archived_events = [strict_json(line) for line in files['codex_usage_events.jsonl'].splitlines() if line.strip()]
     capture = strict_json(files['codex_usage_capture.json'])
     child_exit = strict_json(files['editor_exit.json'])
+    supervision = strict_json(files['editor_supervision.json'])
+    ack = strict_json(paths['editor_stop_ack.json'].read_bytes())
     if events != archived_events or capture.get('events_sha256') != json_hash(events) or capture.get('token_events') != len(events):
         raise ValueError('final usage observation/harvest mismatch')
-    if capture.get('schema') != 'wsp-final-capture/1' or type(capture.get('child_exit')) is not int or capture['child_exit'] != child_exit.get('exit_code'):
+    if capture.get('schema') != 'wsp-final-capture/2' or type(capture.get('child_exit')) is not int or capture['child_exit'] != child_exit.get('child_returncode'):
         raise ValueError('missing final child-exit capture')
+    if (supervision.get('schema') != 'wsp-supervision/1' or supervision.get('child_returncode') != capture['child_exit'] or
+            supervision.get('supervisor_returncode') != child_exit.get('supervisor_returncode') or
+            supervision.get('final_capture_sha256') != json_hash(capture)):
+        raise ValueError('supervision/final capture/returncode mismatch')
+    if supervision.get('notice') is not None and (supervision.get('host_ack') != ack or ack.get('notice_sha256') != json_hash(supervision['notice'])):
+        raise ValueError('host admission closure evidence mismatch')
     if child_exit != terminal.get('editor_exit'):
         raise ValueError('actual wrapper exit/harvest mismatch')
     sources = capture.get('sources', [])
@@ -123,21 +131,23 @@ def collect_native_evidence(root, *, write=True):
         raise ValueError('final capture/exit/observation/harvest ordering missing')
     backend = terminal.get('backend', {})
     native_exit = backend.get('native', {}).get('ExitCode')
-    if (backend.get('state') not in ('COMPLETE', 'ERROR') or native_exit != child_exit['exit_code'] or
+    if (backend.get('state') not in ('COMPLETE', 'ERROR') or native_exit != child_exit.get('container_returncode') or
             terminal.get('log_capture_returncode') != 0 or terminal.get('log_thread_completed') is not True or
             terminal.get('log_limit_hit') is not False):
         raise ValueError('terminal native exit or complete log harvest missing')
     collector = sha256(Path(__file__))
     if invocation.get('runtime_identity', {}).get('code_hashes', {}).get('wsp_collect.py') != collector:
         raise ValueError('collector is not bound to invocation runtime')
-    evidence = {'schema': 'wsp-native-evidence/1', 'invocation_id': invocation['job_id'],
+    evidence = {'schema': 'wsp-native-evidence/2', 'mode': 'observed_raw_usage', 'invocation_id': invocation['job_id'],
                 'threshold_tokens': invocation['threshold_tokens'], 'collector_sha256': collector,
                 'runtime_identity_sha256': json_hash(invocation['runtime_identity']),
                 'invocation_sha256': json_hash(invocation), 'raw_events_sha256': json_hash(events),
                 'native_events': native, 'non_json_log_lines': non_json,
-                'capture': capture, 'exit_code': child_exit['exit_code'], 'forced_stop': terminal.get('stop_reason'),
+                'capture': capture, 'supervision': supervision, 'host_stop_ack': ack,
+                'exit_code': child_exit['child_returncode'], 'supervisor_returncode': child_exit['supervisor_returncode'],
+                'container_returncode': native_exit, 'forced_stop': terminal.get('stop_reason'),
                 'source_hashes': {name: sha256(path) for name, path in paths.items()},
-                'observability': 'Native cumulative usage, top-level JSON stop/turn events, child/container exit and final archive coverage. No request-admission IDs/timestamps are exposed; no admission chronology is inferred.'}
+                'observability': 'Raw cumulative completed usage, observed threshold notice and host closure acknowledgement, bounded child-tree termination, distinct child/supervisor/container exits and local final capture. Interrupted provider usage remains unknown. No API request-admission chronology is inferred.'}
     if write:
         json_write(root / 'editor_response_evidence.json', evidence)
     return events, evidence

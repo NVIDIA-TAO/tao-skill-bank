@@ -11,7 +11,7 @@ hashes; all scientific data/profile/budgets remain frozen.
 python scripts/wsp_diagnostic.py prepare \
   --scientific-preflight /private/preparation/preflight.proposed.driver.json \
   --output /private/preparation/diagnostic.manifest.json \
-  --run-dir /private/runs/wsp-token-diagnostic-01 \
+  --run-dir /private/runs/wsp-token-diagnostic-02 \
   --codex-binary /approved/codex \
   --auth-file /approved/private/auth.json
 ```
@@ -34,13 +34,24 @@ python scripts/wsp_diagnostic.py run \
   --approval /private/review/diagnostic.approval.json
 ```
 
-The native threshold is50,000 raw input+output, cache included once. The host
-observes180seconds (starting before the access probe),100,000 raw emergency
-tokens, bounded streams and retained bytes. It requests only its own child's
-stop, harvests final bounded tmpfs content before releasing the wrapper, then
-stops its own jobs/services on every path. Polling, stop grace and in-flight API
-usage can overshoot an observed guard; all actual usage/exit/elapsed cleanup and
-partial evidence remain recorded. An outer stop is never native-budget proof.
+The50,000 threshold is **observed raw input+output**, cache included once. The
+native config is secondary only: diagnostic01 completed a fifth response after
+the fourth crossed50k, and interrupted usage was not finally captured. Preserve
+that failed evidence. Diagnostic02 uses a new immutable directory/proposal.
+
+The surviving capture supervisor polls at100ms, records gaps, and rejects gaps
+over1s. On first observed crossing it sends TERM to its separate child group
+and descendants, notifies a close-only host endpoint (1s ack deadline), allows3s
+TERM grace then bounded KILL/reap, and captures final raw usage after cleanup.
+Accepted stop duration is at most7s. Child/supervisor/container returns remain
+separate. A normal wrapper/container exit does not turn an interrupted child
+into scientific success. Unknown interrupted provider usage remains unknown.
+
+The host observes180s (starting before the access probe),100k raw emergency and
+bounded retained bytes. It harvests final tmpfs before releasing the wrapper
+and closes only owned jobs/services. Final completed overrun and additional
+already-admitted completed responses are charged, never rejected as fabricated
+API-admission telemetry. Emergency/wall/retention failures stay inconclusive.
 
 A host-owned Unix endpoint admits at most10 requests and saves the count before
 responding; malformed requests also spend admission. Each response is less than
@@ -63,14 +74,17 @@ It inspects/cancels only IDs minted by this attempt. No packages/images are pull
 no credentials are printed, exported or hashed. Existing auth is a private
 read-only mount through the same allowlisted provider route.
 
-Only completely retained native evidence passing `response_completion`, with
-multiple genuine cumulative snapshots, cached input and native budget exhaustion
-at the actual threshold, produces `live_proof.proposed.json`. The outcome is
-`NATIVE_STOP_OBSERVED_REVIEW_REQUIRED`, never automatic scientific authorization.
-Early voluntary completion, missing cache/usage, additional completed responses,
-API errors, limits or cleanup failure produce `INCONCLUSIVE` with exact reasons.
-The later reviewer supplies proof approval. Native events do not directly expose
-per-request admission; that observability limit remains explicit.
+Only replayable evidence of actual cached multiple-response raw crossing,
+first observed stop, host admission closure, bounded termination/final local
+capture and cleanup can produce `live_proof.proposed.json`. Its schema is
+`wsp-live-observed-usage-proof/4` and status is `OBSERVED_STOP_REVIEW_REQUIRED`.
+It proves observable stopping, never native raw-token semantics, strict spending
+or per-request provider admission. Interrupted provider usage is unknown even
+on an accepted diagnostic. Early voluntary completion, missing cache/usage,
+excessive/unknown termination, other exceeded limits or cleanup failure produce
+`INCONCLUSIVE`. Scientific observed-stop outcomes always remain incomplete;
+only normal complete final usage below threshold with a frozen candidate can
+reach trusted holdout. No diagnostic proof is itself scientific approval.
 
 CPU tests use fake backends, synthetic native fixtures and tiny ordinary Python
 subprocesses. They cover resource guards, host-counter exhaustion, bounded
