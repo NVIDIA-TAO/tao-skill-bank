@@ -178,3 +178,14 @@ def test_manifest_prepare_seals_without_credential_read_or_launch(tmp_path, monk
     assert not (tmp_path / 'diagnostic').exists() and not Path(science['run_dir']).exists()
     approval = tmp_path / 'approval.json'; approval.write_text('{}')
     with pytest.raises(ValueError, match='approval'): approve_manifest(tmp_path / 'manifest.json', approval)
+
+
+def test_truncated_archive_retains_inconclusive_outcome(tmp_path):
+    task, _, _, _ = diagnostic_fixture(tmp_path)
+    (tmp_path / 'editor_results.tar').write_bytes(b'truncated archive')
+    result = assess(tmp_path, task, EvidenceBudget(tmp_path), 'retained_evidence_limit', None)
+    assert result['status'] == 'INCONCLUSIVE'
+    assert result['outer_stop'] == 'retained_evidence_limit'
+    assert result['assessment_error']
+    assert json.loads((tmp_path / 'outcome.json').read_text()) == result
+    assert not (tmp_path / 'live_proof.proposed.json').exists()

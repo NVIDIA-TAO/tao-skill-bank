@@ -14,6 +14,7 @@ import json
 import os
 import socket
 import socketserver
+import tarfile
 import subprocess
 import threading
 import time
@@ -423,7 +424,7 @@ def assess(root, science, budget, reason, error):
                  'native_evidence_sha256': json_hash(trace), 'observed_actual_usage': usage}
         budget.json('live_proof.proposed.json', proof)
         result.update(status='NATIVE_STOP_OBSERVED_REVIEW_REQUIRED', proof_sha256=sha256(root / 'live_proof.proposed.json'))
-    except (ValueError, KeyError, OSError) as caught:
+    except (ValueError, KeyError, OSError, tarfile.TarError) as caught:
         result['assessment_error'] = str(caught)
     budget.json('outcome.json', result, final=True)
     return result
