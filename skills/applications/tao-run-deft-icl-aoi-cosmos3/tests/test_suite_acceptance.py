@@ -69,6 +69,17 @@ class Boundaries(unittest.TestCase):
         missing=interval_usage(e[1:],'2026-01-01T00:00:01Z','2026-01-01T00:00:10Z','old','2025-12-31T23:00:00Z')
         self.assertIsNone(missing['input_tokens'])
         with self.assertRaises(ValueError): interval_usage(e[:2]+[event(9,1)],'2026-01-01T00:00:01Z','2026-01-01T00:00:10Z','one')
+    def test_adjacent_stage_deltas_do_not_share_boundary_usage(self):
+        def timestamp(sec): return f'2026-01-01T00:00:{sec:02d}Z'
+        def event(sec,n): return {'timestamp':timestamp(sec),'session_id':'one','type':'token_count',
+            'info':{'total_token_usage':{'input_tokens':n,'output_tokens':n//10,'cached_input_tokens':n//2}}}
+        events=[event(0,100),event(5,200),event(5,200),event(10,350)]
+        first=interval_usage(events,timestamp(0),timestamp(5),'one')
+        second=interval_usage(events,timestamp(5),timestamp(10),'one')
+        whole=interval_usage(events,timestamp(0),timestamp(10),'one')
+        for field in ('input_tokens','output_tokens','cached_input_tokens'):
+            self.assertEqual(first[field]+second[field],whole[field])
+        self.assertEqual((first['input_tokens'],second['input_tokens']),(100,150))
     def test_identity_projection_and_no_private_rows(self):
         q={'id':'images/prefix__SCN_scan_1_MBO_part_2_A1_abc123.jpg','image_sha256':'x'}
         identity=identity_from_query(q)

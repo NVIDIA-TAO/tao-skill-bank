@@ -129,6 +129,13 @@ costs, tool traces, autonomy and recovery. Dollars and unavailable measurements
 are null. WSP is a separate experiment. Export is evidence awaiting review,
 not a published report or a claim that incomplete arms succeeded.
 
+Continuing-session token accounting uses `(stage_start, stage_end]` deltas and
+the last snapshot at or before start as its baseline. Adjacent stages cannot
+share a boundary event. Preserve source/turn identity when removing replays;
+equal token counts are not a duplicate identity. Preserve the explicit session
+identity and birth timestamp; a reset needs a new session boundary. A missing
+baseline remains unknown, not a new full-session stage total.
+
 Run the Brev exporter to produce `astra_trace_analysis.json`: count actual
 tool calls across all attempts, report coverage against271 planned queries,
 success/failure and elapsed times paired from Docker item.started/item.completed
