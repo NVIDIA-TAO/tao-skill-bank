@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private separate WSP experiment export",
+  "type": "object",
+  "required": ["schema", "status", "separate_from_six_arm_suite", "task_sha256", "split_sha256", "base_fingerprint", "freeze", "budget_reservations", "known_complete_forward_usage", "failed_forward_costs", "agent_usage", "prices_usd", "ledger_head_sha256", "holdout_metrics", "paired_behavior", "limitations"],
+  "properties": {
+    "schema": {"const": "wsp-export/1"},
+    "status": {"enum": ["DEVELOPMENT", "FROZEN", "HOLDOUT", "COMPLETE", "ERROR"]},
+    "separate_from_six_arm_suite": {"const": true},
+    "task_sha256": {"$ref": "#/$defs/hash"},
+    "split_sha256": {"$ref": "#/$defs/hash"},
+    "base_fingerprint": {"$ref": "#/$defs/hash"},
+    "ledger_head_sha256": {"type": ["string", "null"]},
+    "freeze": {"type": ["object", "null"]},
+    "budget_reservations": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "known_complete_forward_usage": {
+      "type": "object", "required": ["input_tokens", "output_tokens", "gpu_wall_seconds"],
+      "properties": {
+        "input_tokens": {"type": "integer", "minimum": 0},
+        "output_tokens": {"type": "integer", "minimum": 0},
+        "gpu_wall_seconds": {"type": "number", "minimum": 0}
+      }
+    },
+    "failed_forward_costs": {"type": "object", "additionalProperties": {"type": ["object", "null"]}},
+    "agent_usage": {"type": ["object", "null"]},
+    "prices_usd": {
+      "type": "object", "required": ["agent", "gpu"],
+      "properties": {"agent": {"type": ["number", "null"]}, "gpu": {"type": ["number", "null"]}}
+    },
+    "holdout_metrics": {
+      "type": ["object", "null"],
+      "properties": {
+        "base": {"type": "object", "description": "Unmodified hash-pinned external evaluator metric object, including MCC, INVALID and class behavior"},
+        "edited": {"type": "object"},
+        "mcc_delta": {"type": ["number", "null"]}
+      }
+    },
+    "paired_behavior": {"type": ["object", "null"]},
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  },
+  "allOf": [{"if": {"properties": {"status": {"const": "COMPLETE"}}}, "then": {"properties": {"freeze": {"type": "object"}, "holdout_metrics": {"type": "object"}, "paired_behavior": {"type": "object"}}}}],
+  "$defs": {"hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}
