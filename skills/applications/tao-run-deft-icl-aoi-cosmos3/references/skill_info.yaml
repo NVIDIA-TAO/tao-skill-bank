@@ -1,0 +1,26 @@
+name: tao-run-deft-icl-aoi-cosmos3
+version: 0.1.0
+supported_platforms: [docker]
+model_skill: tao-finetune-cosmos-reason
+backend: cosmos-framework
+container_image: tao_toolkit.cosmos_framework
+data_format:
+  modes: [tht_single, bare_okng]
+  training: ShareGPT
+  evaluator: external_hash_pinned
+companion_skills:
+  - tao-in-context-learning
+  - tao-generate-image-embeddings
+  - tao-mine-nearest-neighbors
+  - tao-run-on-docker
+  - tao-launch-workflow
+actions:
+  preflight:
+    mode: args
+    command: python scripts/suite.py preflight --task {task} --output {output}
+  run:
+    mode: args
+    command: python scripts/suite.py run --preflight {preflight} --approval {approval}
+  export:
+    mode: args
+    command: python scripts/suite.py export --results-dir {results_dir}

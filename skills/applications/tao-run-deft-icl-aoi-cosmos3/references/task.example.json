@@ -1,0 +1,42 @@
+{
+  "mode": "tht_single",
+  "platform": "docker",
+  "skip_sdg": true,
+  "public_package": "/absolute/public/tht-deft-v1",
+  "private_package": "/absolute/private/tht-deft-v1-private",
+  "model_path": "/absolute/models/Cosmos3-Nano-Qwen3VL",
+  "framework_image": "nvcr.io/nvidia/tao/tao-toolkit@sha256:REPLACE_WITH_VERIFIED_DIGEST",
+  "data_services_image": "nvcr.io/nvidia/tao/tao-toolkit@sha256:REPLACE_WITH_VERIFIED_DIGEST",
+  "direct_profile": "/absolute/coordination/maxwell_direct_profile.json",
+  "siglip_path": "/absolute/models/siglip-base-patch16-224",
+  "siglip_revision": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
+  "results_dir": "/absolute/runs/formal-six-arm",
+  "m3_evidence": "/absolute/coordination/M3_EVIDENCE.json",
+  "environment_manifest": "/absolute/coordination/environment_manifest.json",
+  "icl_reference_capacity": 4,
+  "budgets": {
+    "suite_wall_seconds": null,
+    "stage_wall_seconds": null,
+    "icl_wall_seconds": null,
+    "icl_agent_tokens": null,
+    "query_wall_seconds": null,
+    "query_agent_tokens": null,
+    "trial_admission_seconds": null
+  },
+  "astra": {
+    "image": "ubuntu@sha256:REPLACE_WITH_VERIFIED_DIGEST",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "codex_binary": "/absolute/codex/bin/codex",
+    "python_binary": "/usr/bin/python3.12",
+    "python_stdlib": "/usr/lib/python3.12",
+    "system_libraries": "/usr/lib/x86_64-linux-gnu",
+    "site_packages": [
+      "/absolute/venv/lib/python3.12/site-packages/PIL",
+      "/absolute/venv/lib/python3.12/site-packages/pillow.libs"
+    ],
+    "auth_file": "/approved/private/auth.json"
+  },
+  "setup_token_exports": [],
+  "pass_fail_mapping": null
+}
