@@ -1,0 +1,100 @@
+{
+  "_comment": "Example spec for the SynWTS -> DEFT ITS (LLaVA) adapter: 33-frame overhead-view windows, four binary questions. Paths are examples; point dataset.root/annotations/videos at your SynWTS download and workspace at your DEFT workspace. No media is written into a git tree.",
+  "dataset": {
+    "name": "synwts",
+    "root": "C:/data/synwts",
+    "annotations": "C:/data/synwts/annotations/data/annotations",
+    "videos": "C:/data/synwts/videos/data/videos/val",
+    "split": "val",
+    "view": "overhead_view",
+    "fps": 30
+  },
+  "windows": {
+    "frames": 33,
+    "max_per_scenario": 3,
+    "seed": 2026,
+    "holdout_scenarios": 10,
+    "phase_labels": {
+      "prerecognition": "0",
+      "recognition": "1",
+      "judgement": "2",
+      "action": "3",
+      "avoidance": "4"
+    }
+  },
+  "questions": [
+    {
+      "key": "q1_ped_on_road",
+      "text": "Is there a pedestrian on the road?"
+    },
+    {
+      "key": "q2_ped_near_vehicle",
+      "text": "Is there a pedestrian within one car length of a moving or stopped vehicle?"
+    },
+    {
+      "key": "q3_vehicle_stopped",
+      "text": "Is a vehicle stopped or braking in this clip?"
+    },
+    {
+      "key": "q4_ped_crossing_front",
+      "text": "Is a pedestrian crossing in front of a vehicle?"
+    }
+  ],
+  "answer_suffix": " Answer with yes or no.",
+  "workspace": "C:/data/deft_workspace",
+  "media_root": "C:/data/sim2real",
+  "sets": {
+    "train": {
+      "annotations": "data/train/annotations.json",
+      "media": "data/train/media"
+    },
+    "kpi_sim": {
+      "annotations": "data/kpi/annotations.json",
+      "media": "data/kpi/media"
+    },
+    "kpi_real": {
+      "annotations": "data/kpi_real/annotations.json",
+      "media": "data/kpi_real/media"
+    },
+    "train_synth": {
+      "annotations": "data/train_synth/annotations.json",
+      "media": "data/train_synth/media"
+    },
+    "train_all": {
+      "annotations": "data/train_all/annotations.json",
+      "media": "data/train_all/media"
+    }
+  },
+  "generation": {
+    "control": "depth",
+    "depth_model": "depth-anything/Depth-Anything-V2-Base-hf",
+    "prompts": {
+      "same": "photoreal, same time of day and weather",
+      "night": "same scene at night with street lights on",
+      "rain": "same scene in heavy rain, wet road"
+    },
+    "seed": 2025,
+    "resolution": "480",
+    "aspect_ratio": "16,9",
+    "requests_per_process": 45,
+    "warmup_frames": 9,
+    "env": {
+      "COSMOS_WIN_TORCH_ATTENTION": "1",
+      "COSMOS_WIN_SDPA_ATTENTION": "1",
+      "COSMOS_VIDEO_DECODER": "torchcodec",
+      "COSMOS_CUDNN_BENCHMARK": "0",
+      "COSMOS_VAE_ENCODE_EXACT_DURATIONS": "33",
+      "COSMOS_COOLDOWN_BELOW_C": "70"
+    },
+    "clock_cap_mhz": 1600,
+    "max_start_temp_c": 62,
+    "guard_temp_c": 87
+  },
+  "verifier": {
+    "min_box_px": 16,
+    "match_iou": 0.3,
+    "frames": "1,17,33",
+    "vlm_frames": 8,
+    "vlm_resize": "832x480"
+  }
+}

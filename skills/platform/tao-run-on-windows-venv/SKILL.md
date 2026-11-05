@@ -117,6 +117,13 @@ be promised a final checkpoint or `atexit` handler. `UNKNOWN` means the durable
 exit record and the named Job Object are both unavailable; inspect logs and any
 surviving processes before resubmitting.
 
+## Thermal limiter and GPU health
+
+Laptops and compact desktops sustain a fine-tune only under a clock cap with a pacer. Run every GPU job through
+`scripts/thermal/run_measured.ps1` with `thermal_pacer.ps1` beside it and `clock_cap.ps1` around it, and run
+`scripts/thermal/gpu_probe.sh` after any power event before timing anything. The measured operating point for the
+RTX Spark N1X, the failure modes and the pattern are in `references/windows-thermal-operating-point.md`.
+
 ## Windows constraints
 
 - Stock Windows PyTorch wheels do not provide a validated CUDA-distributed path
