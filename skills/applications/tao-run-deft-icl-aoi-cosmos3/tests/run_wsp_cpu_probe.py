@@ -18,10 +18,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from suite_runtime import Docker, json_write
 from wsp_prepare import GENERIC_IMAGE
-from wsp_runtime import CapabilityServer, sandbox_mounts, submit_sandbox, tool_contract
+from wsp_runtime import CapabilityServer, accept_collected_completion, archive_tmpfs, sandbox_mounts, submit_sandbox, tool_contract
 from test_wsp import synthetic_boundary
 from test_wsp_context import context_task
 from wsp_context import build_context, verify_context
+from tht_contract import json_hash, sha256
 
 PROBE = '''import json, pathlib, sys
 sys.path.insert(0, '/tools')
@@ -81,6 +82,23 @@ print(json.dumps({'schema':'wsp-cpu-boundary-probe/1','checks':checks,'passed':a
                   'real_model_forwards':0,'real_weight_patches':0,'gpu_launches':0,'agent_launches':0}), flush=True)
 '''
 
+# A plain Python child emits clearly synthetic native-format records. This
+# exercises the production capture/host collector without invoking any agent.
+CAPTURE_CHILD = '''import datetime, json, pathlib, time
+root = pathlib.Path('/codex/sessions'); root.mkdir()
+source = root / 'synthetic.jsonl'
+def token(i, o, c):
+    return {'timestamp':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'payload':{'type':'token_count','info':{'total_token_usage':
+            {'input_tokens':i,'output_tokens':o,'cached_input_tokens':c}}}}
+source.write_text(json.dumps({'type':'session_meta','payload':{'id':'synthetic-cpu-session'}})+'\\n'+json.dumps(token(50,5,20))+'\\n')
+print(json.dumps({'type':'thread.started','thread_id':'synthetic-cpu-session'}),flush=True)
+print(json.dumps({'type':'turn.started'}),flush=True)
+time.sleep(.15)
+with source.open('a') as f: f.write(json.dumps(token(120,10,60))+'\\n')
+print(json.dumps({'type':'turn.completed','usage':{'input_tokens':120,'output_tokens':10,'cached_input_tokens':60}}),flush=True)
+'''
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -123,9 +141,10 @@ def main():
         json_write(output / 'native_controls.json', controls)
         # No Codex binary or auth is mounted. This ordinary Python subprocess
         # verifies the tmpfs/exit/harvest lifecycle used by a future editor.
-        dummy = 'from pathlib import Path; Path("/results/synthetic.txt").write_text("synthetic CPU child only"); print("synthetic child complete",flush=True)'
+        dummy = CAPTURE_CHILD
         harvest_job = submit_sandbox(runtime, 'wsp-cpu-harvest-probe',
-                                     ['/tools/wsp_isolation.py', 'editor-entry', '/usr/bin/python3', '-c', dummy], mounts)
+                                     ['/tools/wsp_isolation.py', 'editor-entry', '/usr/bin/python3', '/runtime/wsp_capture.py',
+                                      '/usr/bin/python3', '-c', dummy], mounts)
         json_write(output / 'harvest_job.json', harvest_job)
         child_exit = None
         deadline = time.time() + 30
@@ -142,20 +161,44 @@ def main():
             time.sleep(.25)
         if child_exit != {'exit_code': 0}:
             raise RuntimeError('synthetic subprocess harvest sentinel missing')
+        observed_exit_at = time.time()
         assert runtime.status(harvest_job['job_id'])['state'] == 'RUNNING'
-        with (output / 'synthetic_results.tar').open('wb') as stream:
-            subprocess.run(['docker', 'cp', harvest_job['job_id'] + ':/results/.', '-'], stdout=stream, check=True)
+        raw = subprocess.check_output(['docker', 'exec', harvest_job['job_id'], '/usr/bin/python3', '-c',
+                  'from pathlib import Path; print(Path("/results/codex_usage_events.jsonl").read_text())'], text=True)
+        json_write(output / 'editor_usage_events.json', [json.loads(line) for line in raw.splitlines() if line.strip()])
+        final_observation_at = time.time()
+        for name in ('results', 'task'):
+            archive_tmpfs(harvest_job['job_id'], name, output / ('editor_' + name + '.tar'))
+        json_write(output / 'editor_harvest.json', {'observed_exit_at_unix': observed_exit_at,
+                   'final_observation_at_unix': final_observation_at, 'archives_completed_at_unix': time.time(),
+                   'files': {name: sha256(output / name) for name in ('editor_results.tar', 'editor_task.tar', 'editor_usage_events.json')}})
         subprocess.run(['docker', 'exec', harvest_job['job_id'], '/usr/bin/python3', '-c',
                         'from pathlib import Path; Path("/tmp/harvested").touch()'], check=True)
         harvest_terminal = runtime.wait(harvest_job['job_id'], time.time() + 10)
         json_write(output / 'harvest_terminal.json', harvest_terminal)
-        (output / 'harvest.timestamped.log').write_text(runtime.logs(harvest_job['job_id'], 10000, timestamps=True))
+        native_log = subprocess.run(['docker', 'logs', '--timestamps', harvest_job['job_id']],
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=True)
+        (output / 'editor_events.timestamped.log').write_text(native_log.stdout)
+        scripts = Path(__file__).resolve().parents[1] / 'scripts'
+        identity = {'synthetic_cpu_child': True, 'code_hashes': {n: sha256(scripts / n) for n in ('wsp_collect.py', 'wsp_capture.py', 'wsp_isolation.py')}}
+        json_write(output / 'editor_invocation.json', {'schema': 'wsp-editor-invocation/1', 'kind': 'cpu_synthetic',
+                   'job_id': harvest_job['job_id'], 'threshold_tokens': boundary.b['editor_agent_tokens'],
+                   'runtime_identity': identity, 'log_limit_bytes': boundary.b['editor_log_bytes'],
+                   'warning': 'Ordinary Python child with synthetic events; not native Codex stopping evidence.'})
+        json_write(output / 'editor_terminal.json', {'backend': harvest_terminal, 'editor_exit': child_exit,
+                   'stop_reason': None, 'log_limit_hit': False, 'log_capture_returncode': native_log.returncode, 'log_thread_completed': True,
+                   'log_method': 'successful bounded native logs query after child and wrapper exit; synthetic CPU fixture only'})
+        completion = accept_collected_completion(boundary, output, harvest_job['job_id'],
+                       {'runtime_identity_sha256': json_hash(identity), 'collector_sha256': identity['code_hashes']['wsp_collect.py']}, exit_code=0)
+        assert completion['usage']['actual_input_plus_output_tokens'] == 130
+        assert completion['completed_usage_snapshots'] == 2
         boundary.export()
         success = terminal['state'] == 'COMPLETE' and harvest_terminal['state'] == 'COMPLETE' and len(calls) == 2 and all(c[1] == 'development' for c in calls)
         summary = {'passed': success, 'job_id': job['job_id'], 'backend_state': terminal['state'],
                    'synthetic_forward_calls': len(calls), 'real_model_forwards': 0, 'real_weight_patches': 0,
                    'gpu_launches': 0, 'agent_launches': 0, 'native_controls': 'native_controls.json',
                    'harvest_job_id': harvest_job['job_id'], 'synthetic_subprocess_archive_before_exit': True,
+                   'synthetic_native_collection': completion,
                    'scope': 'actual sandbox boundary; API relay/editor execution and real model remain unvalidated'}
         json_write(output / 'summary.json', summary)
         print(json.dumps(summary))

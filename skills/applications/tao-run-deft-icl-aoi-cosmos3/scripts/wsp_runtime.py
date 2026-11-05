@@ -30,7 +30,8 @@ from wsp_boundary import Boundary
 from wsp_weights import catalog, clone, finite_tensor, inventory, regular_file, strict_json
 from wsp_isolation import UnixProvider
 from wsp_context import verify_context
-from wsp_usage import RESPONSE_POLICY, actual_usage, editor_command, response_snapshots, runtime_identity, validate_live_proof
+from wsp_collect import collect_native_evidence
+from wsp_usage import RESPONSE_POLICY, actual_usage, editor_command, invocation_manifest, response_snapshots, runtime_identity, validate_live_proof
 
 HERE = Path(__file__).parent
 
@@ -183,7 +184,7 @@ def sandbox_mounts(development, tool_contract, capability_socket, *, model_conte
               (Path(tool_contract), '/task/tool_contract.json', True),
               (HERE / 'wsp_client.py', '/tools/wsp_client.py', True),
               (HERE / 'wsp_isolation.py', '/tools/wsp_isolation.py', True),
-              (HERE / 'codex_capture.py', '/runtime/codex_capture.py', True),
+              (HERE / 'wsp_capture.py', '/runtime/wsp_capture.py', True),
               (Path(capability_socket), '/channel/wsp.sock', True)]
     if model_context is not None:
         mounts.append((Path(model_context), '/model_context', True))
@@ -208,7 +209,7 @@ def sandbox_mounts(development, tool_contract, capability_socket, *, model_conte
     return mounts
 
 
-def submit_sandbox(runtime, stage, command, mounts):
+def submit_sandbox(runtime, stage, command, mounts, *, on_open=None):
     """CPU-only Docker four-verb consumer with NO writable host bind mounts.
 
     Uses the shared job-record before launch. Only named, read-only capabilities
@@ -234,7 +235,7 @@ def submit_sandbox(runtime, stage, command, mounts):
     targets = set()
     allowed_targets = {'/usr/bin/python3', '/usr/lib/python3.12', '/usr/lib/x86_64-linux-gnu', '/etc/ssl/certs',
                        '/development', '/model_context', '/task/tool_contract.json', '/tools/wsp_client.py', '/tools/wsp_isolation.py',
-                       '/runtime/codex_capture.py', '/channel/wsp.sock', '/channel/provider.sock', '/codex/auth.json',
+                       '/runtime/wsp_capture.py', '/channel/wsp.sock', '/channel/provider.sock', '/codex/auth.json',
                        '/usr/local/bin/codex', '/usr/local/bin/codex-code-mode-host', '/usr/local/bin/codex-exec-server',
                        '/opt/generic/PIL', '/opt/generic/pillow.libs', '/probe.py'}
     for source, target, readonly in mounts:
@@ -248,6 +249,8 @@ def submit_sandbox(runtime, stage, command, mounts):
     lint_cmd = [s.replace('prefill_token_weight=1,', 'prefill_weight=1,').replace('sampling_token_weight=1}', 'sampling_weight=1}') for s in cmd]
     subprocess.run([sys.executable, str(BANK / 'scripts/redact_secrets.py'), 'lint', '-'], input=shlex.join(lint_cmd), text=True, check=True)
     json_write(out / 'launch.json', {'job_id': job_id, 'argv': cmd, 'submitted_at_unix': time.time()})
+    if on_open is not None:
+        on_open(job_id)
     try:
         cid = subprocess.check_output(cmd, text=True, stderr=subprocess.PIPE, timeout=60).strip()
     except BaseException as error:
@@ -281,6 +284,22 @@ def tool_contract(boundary):
             'semantics': 'All forwards use the same complete development view. No holdout capability. No arbitrary path, code execution, model loading or inference setting is accepted.'}
 
 
+def archive_tmpfs(job_id, name, destination):
+    """Stream actual live tmpfs bytes; docker cp may return an empty directory.
+
+    Preserve symlinks as archive members; never follow/extract them on the host.
+    Only these two bounded sandbox roots are eligible (never /codex/auth.json).
+    """
+    if name not in ('task', 'results'):
+        raise ValueError('only bounded editor output roots may be harvested')
+    code = ('import sys,tarfile; '
+            'a=tarfile.open(fileobj=sys.stdout.buffer,mode="w|",dereference=False); '
+            'a.add(sys.argv[1],arcname=".",recursive=True); a.close()')
+    with Path(destination).open('xb') as stream:
+        subprocess.run(['docker', 'exec', job_id, '/usr/bin/python3', '-c', code, '/' + name],
+                       stdout=stream, check=True, timeout=30)
+
+
 def initialize_run(task, approval_evidence):
     """Only after approval: verify tensor bytes, independent copy, full finiteness."""
     root = Path(task['run_dir'])
@@ -312,6 +331,15 @@ def initialize_run(task, approval_evidence):
         path.chmod(0o400)
     json_write(root / 'base_manifest.json', manifest)
     return root, manifest
+
+
+def accept_collected_completion(boundary, root, invocation_id, live, *, exit_code, forced_stop=None):
+    """One production collection/validation path, also exercised by CPU fixtures."""
+    events, trace = collect_native_evidence(root)
+    if (trace.get('invocation_id') != invocation_id or trace.get('runtime_identity_sha256') != live['runtime_identity_sha256'] or
+            trace.get('collector_sha256') != live['collector_sha256']):
+        raise ValueError('scientific native evidence is not bound to this invocation/runtime/collector')
+    return boundary.accept_editor_completion(events, trace, exit_code=exit_code, forced_stop=forced_stop)
 
 
 def run_approved(preflight_file, approval_file, release_file, *, usage_proof, codex_binary, auth_file):
@@ -365,7 +393,11 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
         probe = submit_sandbox(editor_runtime, 'wsp-access-probe', ['/tools/wsp_isolation.py', 'probe'], mounts)
         if editor_runtime.wait(probe['job_id'], time.time() + 45)['state'] != 'COMPLETE':
             raise ValueError('actual editor sandbox access probe failed')
-        job = submit_sandbox(editor_runtime, 'wsp-editor', command, mounts)
+        def record_invocation(job_id):
+            json_write(root / 'editor_invocation.json', invocation_manifest(task, job_id, root,
+                   fixture_hashes={'development_view': task['view_hashes']['development'],
+                                   'model_context': task['model_context']['bundle_sha256']}))
+        job = submit_sandbox(editor_runtime, 'wsp-editor', command, mounts, on_open=record_invocation)
         json_write(root / 'editor_job.json', job)
         editor_deadline = time.time() + task['budgets']['editor_wall_seconds']
         editor_exit = None
@@ -390,8 +422,7 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
         def observe_editor(final=False):
             # The reader uses only this fresh container's token events. Capture
             # again after child exit so a short-lived final response is included.
-            code = ('import json,runpy; from pathlib import Path; '
-                    'runpy.run_path("/runtime/codex_capture.py")["capture_usage"](); '
+            code = ('import json; from pathlib import Path; '
                     'p=Path("/results/codex_usage_events.jsonl"); e=Path("/results/editor_exit.json"); '
                     'print(json.dumps({"events":[json.loads(x) for x in p.read_text().splitlines()] if p.is_file() else [],'
                     '"exit":json.loads(e.read_text()) if e.is_file() else None}))')
@@ -427,34 +458,36 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
                 break
             boundary.check_storage()
             time.sleep(1)
-        # A threshold stop may have a nonzero native exit. Retain it; only trusted
-        # response-admission/exit evidence can classify it as an accepted stop.
-        observe_editor(final=editor_exit is not None and stop_reason is None)
+        # The capture helper has exited and flushed its final short-lived events
+        # before this wrapper sentinel appears. Observe once more before harvest.
+        observe_editor()
+        final_observation_at = time.time()
         # Preserve raw tar bytes. Never extract editor-created paths/symlinks on
         # the trusted host. Both sources are bounded tmpfs, no host bind output.
         for name in ('task', 'results'):
-            with (root / ('editor_' + name + '.tar')).open('wb') as stream:
-                subprocess.run(['docker', 'cp', job['job_id'] + ':/' + name + '/.', '-'], stdout=stream, check=True)
+            archive_tmpfs(job['job_id'], name, root / ('editor_' + name + '.tar'))
+        json_write(root / 'editor_harvest.json', {
+            'observed_exit_at_unix': observed_exit_at, 'final_observation_at_unix': final_observation_at,
+            'archives_completed_at_unix': time.time(),
+            'files': {name: sha256(root / name) for name in ('editor_task.tar', 'editor_results.tar', 'editor_usage_events.json')}})
         subprocess.run(['docker', 'exec', job['job_id'], '/usr/bin/python3', '-c', 'from pathlib import Path; Path("/tmp/harvested").touch()'], check=True, timeout=10)
         terminal = editor_runtime.wait(job['job_id'], time.time() + 10)
         log_thread.join(timeout=5)
-        log_process.terminate(); log_process.wait(timeout=5)
-        json_write(root / 'editor_terminal.json', {'backend': terminal, 'editor_exit': editor_exit, 'stop_reason': stop_reason,
-                                                   'log_limit_hit': log_limit_hit.is_set()})
+        if log_process.poll() is None:
+            log_process.terminate()
+        log_process.wait(timeout=5)
         if not editor_exit:
             raise ValueError('editor final exit is missing')
         if (observed_exit_at is None or observed_exit_at > editor_deadline or
                 time.time() >= boundary.journal.state()['started_at_unix'] + task['budgets']['experiment_wall_seconds'] or log_limit_hit.is_set()):
             stop_reason = stop_reason or 'final_wall_or_log_limit'
-        # Required trusted-host collector output. Neither the editor's writable
-        # files, our polling loop nor CONNECT proxy can manufacture this proof.
-        trace = strict_json((root / 'editor_response_evidence.json').read_bytes())
-        live = evidence['live_actual_usage_proof']
-        if (trace.get('invocation_id') != job['job_id'] or trace.get('runtime_identity_sha256') != live['runtime_identity_sha256'] or
-                trace.get('collector_sha256') != live['collector_sha256']):
-            raise ValueError('scientific admission trace is not bound to this invocation/runtime/collector')
-        completion = boundary.accept_editor_completion(strict_json((root / 'editor_usage_events.json').read_bytes()), trace,
-                                                       exit_code=editor_exit['exit_code'], forced_stop=stop_reason)
+        json_write(root / 'editor_terminal.json', {'backend': terminal, 'editor_exit': editor_exit, 'stop_reason': stop_reason,
+                   'log_limit_hit': log_limit_hit.is_set(), 'log_capture_returncode': log_process.returncode,
+                   'log_thread_completed': not log_thread.is_alive()})
+        # Produce and consume evidence here, from this invocation's actual native
+        # records. No externally prewritten admission trace is required/accepted.
+        completion = accept_collected_completion(boundary, root, job['job_id'], evidence['live_actual_usage_proof'],
+                                                  exit_code=editor_exit['exit_code'], forced_stop=stop_reason)
         if completion['status'] == 'HOLDOUT_ELIGIBLE':
             # Stop serving editor capabilities before any private evaluation.
             server.shutdown()
@@ -473,8 +506,10 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
             for name in ('task', 'results'):
                 destination = root / ('editor_' + name + '.tar')
                 if not destination.exists():
-                    with destination.open('xb') as stream:
-                        subprocess.run(['docker', 'cp', job['job_id'] + ':/' + name + '/.', '-'], stdout=stream, stderr=subprocess.DEVNULL, timeout=20)
+                    try:
+                        archive_tmpfs(job['job_id'], name, destination)
+                    except (OSError, subprocess.SubprocessError):
+                        pass  # Retain partial bytes; still stop this invocation.
         if job and editor_runtime.status(job['job_id'])['state'] in ('RUNNING', 'PENDING'):
             editor_runtime.cancel(job['job_id'])
         if log_process and log_process.poll() is None:

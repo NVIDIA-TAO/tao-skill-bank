@@ -80,3 +80,16 @@ def test_context_rejects_path_in_template_and_invalid_vocabulary(tmp_path):
     for row in task['declared_base']['files']:
         if row['name'] == p.name: row.update(size=p.stat().st_size, sha256=sha256(p))
     with pytest.raises(ValueError, match='host path'): context_documents(task)
+
+
+def test_chat_template_literal_newline_is_not_a_windows_drive(tmp_path):
+    task = context_task(tmp_path)
+    p = Path(task['model']) / 'chat_template.jinja'
+    for text, valid in [('XML tags:\\n<tools>', True), ('C:\\private\\file', False)]:
+        p.write_text(text)
+        for row in task['declared_base']['files']:
+            if row['name'] == p.name: row.update(size=p.stat().st_size, sha256=sha256(p))
+        if valid:
+            assert context_documents(task)[0]['chat_template.jinja'] == text
+        else:
+            with pytest.raises(ValueError, match='host path'): context_documents(task)

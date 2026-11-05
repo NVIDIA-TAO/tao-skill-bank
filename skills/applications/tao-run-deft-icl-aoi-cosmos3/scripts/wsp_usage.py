@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Actual token accounting, independent of a CLI's configured budget semantics."""
-import math
+import hashlib
 from pathlib import Path
 
 from tht_contract import json_hash, sha256
@@ -51,22 +51,24 @@ def actual_usage(events):
 
 
 RESPONSE_POLICY = {
-    'schema': 'wsp-response-budget/1',
+    'schema': 'wsp-response-budget/2',
     'accounting': 'cumulative raw input_tokens + output_tokens; cached input included once; no reset',
-    'admission': 'deny a new model response once completed actual usage reaches the threshold',
-    'inflight': 'one serial response admitted below the threshold may complete; charge and disclose its entire overrun',
-    'completion': 'valid freeze plus complete final usage and trusted admission/exit evidence permits holdout; token stop without freeze is incomplete',
-    'failures': 'missing usage/evidence, counter reset, later response admission, unrelated errors or any other exceeded budget fail',
+    'admission': 'native response-boundary stopping must be established by a separately reviewed live cached-response diagnostic',
+    'inflight': 'charge and disclose the complete first threshold-crossing response; reject any later completed-response usage',
+    'completion': 'valid freeze plus complete native final usage/exit/harvest permits holdout; token stop without freeze is incomplete',
+    'failures': 'missing final usage/evidence, reset, later completed response, unrelated error, watchdog cancellation or another exceeded budget fails',
+    'observability': 'native budget-stop and completed usage evidence, not per-request admission telemetry or a strict spend ceiling',
     'spend_ceiling': False,
-    'diagnostic_threshold': 'a lower positive disclosed threshold is allowed; only limit_tokens and its derived reminder change',
+    'diagnostic_variations': ['prompt', 'synthetic text fixture/tools', 'output directory', '50000 threshold and derived reminder',
+                              '180s wall / 100000 observed emergency threshold / 10 tool requests / 128MiB retained evidence'],
 }
 
 
 def editor_command(task, threshold=None):
-    """One actual command renderer, also sealed in the diagnostic identity."""
+    """Shared actual stopping command; diagnostic prompt substitution is explicit."""
     from astra_isolation import token_cap_config
     budget = '<threshold-and-derived-reminder>' if threshold is None else token_cap_config(threshold)
-    return ['/tools/wsp_isolation.py', 'editor-entry', '/usr/bin/python3', '/runtime/codex_capture.py',
+    return ['/tools/wsp_isolation.py', 'editor-entry', '/usr/bin/python3', '/runtime/wsp_capture.py',
             '/usr/local/bin/codex', 'exec', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check',
             '--dangerously-bypass-approvals-and-sandbox', '--json', '--color', 'never',
             '-m', task['editor']['model'], '-c', 'model_reasoning_effort="' + task['editor']['effort'] + '"',
@@ -75,23 +77,48 @@ def editor_command(task, threshold=None):
 
 
 def runtime_identity(task, codex_binary):
-    """Nonsecret runtime identity. No agent execution, credential or model read."""
+    """Invariant stopping mechanism; invocation-specific inputs are bound separately."""
     binary = Path(codex_binary).resolve(strict=True)
     binaries = [binary, binary.parent / 'codex-code-mode-host', binary.parent / 'codex-exec-server', Path('/usr/bin/python3.12')]
-    return {'schema': 'wsp-editor-runtime/1', 'model': task['editor']['model'], 'effort': task['editor']['effort'],
+    command = editor_command(task)
+    command[-1] = '<invocation-prompt>'
+    return {'schema': 'wsp-editor-runtime/2', 'model': task['editor']['model'], 'effort': task['editor']['effort'],
             'codex_version': task['editor']['codex_version'], 'image': task['generic_image'],
-            'api_hosts': task['editor']['api_hosts'], 'command_template': editor_command(task),
+            'api_hosts': task['editor']['api_hosts'], 'command_template': command,
             'binary_files': {str(p): sha256(p) for p in binaries}, 'code_hashes': task['code_hashes'],
-            'budgets_except_editor_tokens': {k: v for k, v in task['budgets'].items() if k != 'editor_agent_tokens'},
-            'credential_mount_target': '/codex/auth.json',
-            'fixture_policy': 'diagnostic uses declared synthetic development/tool payloads, no real weights or GPU; same prompt, tools, wrapper, route, flags and code',
-            'threshold_variation': ['limit_tokens', 'reminder_at_remaining_tokens=threshold//2']}
+            'sandbox': {'cpus': 2, 'memory_bytes': 4 * 1024**3, 'network': 'none; provider-only CONNECT relay',
+                        'credential_mount_target': '/codex/auth.json', 'gpu': False},
+            'permitted_diagnostic_variations': RESPONSE_POLICY['diagnostic_variations']}
+
+
+def invocation_manifest(task, job_id, output, *, kind='scientific', fixture_hashes=None):
+    """Written before/at launch; binds the actual prompt, flags and fixture changes."""
+    threshold = task['budgets']['editor_agent_tokens']
+    return {'schema': 'wsp-editor-invocation/1', 'kind': kind, 'job_id': job_id,
+            'runtime_identity': task['editor']['runtime_identity'], 'output_directory': str(Path(output).resolve()),
+            'threshold_tokens': threshold, 'prompt': task['editor']['prompt'],
+            'prompt_sha256': hashlib.sha256(task['editor']['prompt'].encode()).hexdigest(),
+            'command': editor_command(task, threshold), 'fixture_hashes': fixture_hashes or {},
+            'log_limit_bytes': task['budgets']['editor_log_bytes'], 'limits': task['budgets'],
+            'model_context_sha256': task.get('model_context', {}).get('bundle_sha256')}
+
+
+def diagnostic_differences(task, invocation):
+    """Exact disclosed differences; a text diagnostic never equals a WSP prompt."""
+    return {'scientific_prompt_sha256': hashlib.sha256(task['editor']['prompt'].encode()).hexdigest(),
+            'diagnostic_prompt_sha256': invocation['prompt_sha256'],
+            'scientific_model_context_sha256': task.get('model_context', {}).get('bundle_sha256'),
+            'scientific_development_view_sha256': task.get('view_hashes', {}).get('development'),
+            'diagnostic_fixture_hashes': invocation['fixture_hashes'],
+            'scientific_output_directory': task.get('run_dir'), 'diagnostic_output_directory': invocation['output_directory'],
+            'scientific_threshold_tokens': task['budgets']['editor_agent_tokens'],
+            'diagnostic_threshold_tokens': invocation['threshold_tokens'], 'diagnostic_limits': invocation['limits'],
+            'shared_runtime_identity_sha256': json_hash(task['editor']['runtime_identity'])}
 
 
 def response_snapshots(events):
-    actual_usage(events)  # Validate every cumulative counter, including resets.
-    result = []
-    previous = None
+    actual_usage(events)
+    result, previous = [], None
     for event in events:
         payload = event.get('payload', event)
         usage = (payload.get('info') or {}).get('total_token_usage') if payload.get('type') == 'token_count' else None
@@ -104,139 +131,114 @@ def response_snapshots(events):
     return result
 
 
-def response_completion(events, evidence, threshold, *, frozen, exit_code, forced_stop=None, require_denial=False):
-    """Validate trusted serial admission chronology against the actual raw events.
-
-    This validates evidence; it cannot create it from a watchdog or CONNECT log.
-    The separately reviewed live collector must supply authentic admission,
-    completion, denial and final-exit events outside editor-writable mounts.
-    """
+def response_completion(events, evidence, threshold, *, frozen, exit_code, forced_stop=None, require_native_stop=False):
+    """Validate native observable completion; never fabricate request chronology."""
+    from wsp_collect import NATIVE_BUDGET_ERROR, epoch
     usage = actual_usage(events)
     snapshots = response_snapshots(events)
     if not snapshots or usage['actual_input_plus_output_tokens'] is None:
         raise ValueError('complete actual usage is required')
-    if forced_stop is not None:
-        raise ValueError('non-token forced stop is not successful completion')
-    if evidence.get('schema') != 'wsp-response-evidence/1' or evidence.get('threshold_tokens') != threshold:
-        raise ValueError('response evidence threshold/schema mismatch')
-    chronology = evidence.get('events')
-    if not isinstance(chronology, list) or not chronology or chronology[-1].get('kind') != 'editor_exit':
-        raise ValueError('complete admission and exit chronology required')
-    current = 0
-    active = None
-    seen = set()
-    completed = []
-    denied = 0
-    boundary_response = None
-    last_time = -math.inf
-    final = None
-    for index, row in enumerate(chronology):
-        at = row.get('at_unix')
-        if type(at) not in (int, float) or not math.isfinite(at) or at < last_time:
-            raise ValueError('invalid admission chronology time')
-        last_time = at
-        kind = row.get('kind')
-        if kind == 'response_admitted':
-            identity = row.get('response_id')
-            if not isinstance(identity, str) or not identity or identity in seen or active is not None:
-                raise ValueError('responses must have unique serial admissions')
-            if current >= threshold or row.get('actual_before') != current:
-                raise ValueError('model response admitted after actual threshold or against false usage')
-            seen.add(identity); active = identity
-        elif kind == 'response_completed':
-            if active is None or row.get('response_id') != active or len(completed) >= len(snapshots):
-                raise ValueError('completion without matching admission')
-            event_hash, total = snapshots[len(completed)]
-            if row.get('token_event_sha256') != event_hash:
-                raise ValueError('response chronology omits/reorders actual usage')
-            completed.append(event_hash)
-            current = total
-            if current >= threshold:
-                boundary_response = active
-            active = None
-        elif kind == 'response_denied':
-            if active is not None or current < threshold or row.get('reason') != 'response_threshold' or row.get('actual_before') != current:
-                raise ValueError('denial does not establish actual-threshold admission control')
-            identity = row.get('response_id')
-            if not isinstance(identity, str) or not identity or identity in seen:
-                raise ValueError('denial must identify a distinct attempted next response')
-            seen.add(identity); denied += 1
-        elif kind == 'editor_exit':
-            if index != len(chronology) - 1 or active is not None or len(completed) != len(snapshots):
-                raise ValueError('incomplete final response/usage collection')
-            if type(row.get('exit_code')) is not int or row['exit_code'] != exit_code:
-                raise ValueError('actual editor exit must be retained, not invented')
-            reason = row.get('reason')
-            if reason == 'normal':
-                if exit_code != 0:
-                    raise ValueError('unrelated nonzero editor exit')
-            elif reason == 'response_threshold':
-                if boundary_response is None or not denied or exit_code < 0:
-                    raise ValueError('token stop lacks denied followup evidence')
-            else:
-                raise ValueError('unrelated editor error')
-            final = row
-        else:
-            raise ValueError('unknown admission evidence event')
-    if final is None or current != usage['actual_input_plus_output_tokens']:
-        raise ValueError('missing complete final usage')
-    if require_denial and (boundary_response is None or denied == 0):
-        raise ValueError('diagnostic must reach its threshold and deny the attempted next response')
-    return {'schema': 'wsp-editor-completion/1', 'status': 'HOLDOUT_ELIGIBLE' if frozen else 'INCOMPLETE_NO_FREEZE',
-            'usage': usage, 'threshold_tokens': threshold, 'actual_overrun_tokens': max(0, current - threshold),
-            'boundary_response': boundary_response, 'admitted_responses': len(completed), 'denied_responses': denied,
-            'exit_code': exit_code, 'exit_reason': final['reason'], 'response_evidence_sha256': json_hash(evidence),
-            'policy_sha256': json_hash(RESPONSE_POLICY)}
+    if not (events[-1].get('payload', events[-1]).get('info') or {}).get('total_token_usage'):
+        raise ValueError('final raw usage is missing')
+    if forced_stop is not None or evidence.get('forced_stop') is not None:
+        raise ValueError('watchdog/forced stop is not native completion')
+    if (evidence.get('schema') != 'wsp-native-evidence/1' or evidence.get('threshold_tokens') != threshold or
+            evidence.get('raw_events_sha256') != json_hash(events) or evidence.get('exit_code') != exit_code or type(exit_code) is not int):
+        raise ValueError('native evidence threshold/usage/exit mismatch')
+    if any(total >= threshold for _, total in snapshots[:-1]):
+        raise ValueError('additional completed model response after actual threshold')
+    capture = evidence.get('capture', {})
+    if capture.get('events_sha256') != json_hash(events) or capture.get('child_exit') != exit_code:
+        raise ValueError('final capture evidence missing')
+    rows = evidence.get('native_events', [])
+    if not rows or any(epoch(a['timestamp']) > epoch(b['timestamp']) for a, b in zip(rows, rows[1:])):
+        raise ValueError('native event chronology missing or reversed')
+    native = [r['event'] for r in rows]
+    threads = [r for r in native if r.get('type') == 'thread.started']
+    if (len(threads) != 1 or threads[0].get('thread_id') != capture['sources'][0]['session_ids'][0] or
+            sum(r.get('type') == 'turn.started' for r in native) != 1):
+        raise ValueError('fresh native/session identity mismatch')
+    errors = [r for r in native if r.get('type') in ('error', 'turn.failed')]
+    terminals = [r for r in native if r.get('type') in ('turn.completed', 'turn.failed')]
+    if len(terminals) != 1 or native[-1] != terminals[0]:
+        raise ValueError('single complete native turn termination required')
+    def message(row):
+        return row.get('message') if row['type'] == 'error' else (row.get('error') or {}).get('message')
+    native_stop = bool(errors) and all(message(r) == NATIVE_BUDGET_ERROR for r in errors)
+    if native_stop:
+        if terminals[0]['type'] != 'turn.failed' or usage['actual_input_plus_output_tokens'] < threshold or exit_code < 0:
+            raise ValueError('native budget marker without actual threshold/failed-turn completion')
+        boundary_hash = snapshots[-1][0]
+        crossing = next(e for e in events if json_hash(e) == boundary_hash)
+        if epoch(rows[-1]['timestamp']) < epoch(crossing.get('timestamp')):
+            raise ValueError('native stop predates raw threshold crossing')
+        reason = 'native_token_budget_exhausted'
+    else:
+        if errors or exit_code != 0 or terminals[0]['type'] != 'turn.completed':
+            raise ValueError('unrelated editor error or missing normal termination')
+        observed = terminals[0].get('usage') or {}
+        if any(observed.get(k) != usage[k] for k in ('input_tokens', 'output_tokens', 'cached_input_tokens')):
+            raise ValueError('native final usage disagrees with raw capture')
+        reason = 'normal'
+    if require_native_stop and not native_stop:
+        raise ValueError('diagnostic needs native budget exhaustion, not voluntary completion')
+    total = usage['actual_input_plus_output_tokens']
+    return {'schema': 'wsp-editor-completion/2', 'status': 'HOLDOUT_ELIGIBLE' if frozen else 'INCOMPLETE_NO_FREEZE',
+            'usage': usage, 'threshold_tokens': threshold, 'actual_overrun_tokens': max(0, total - threshold),
+            'first_crossing_token_event_sha256': snapshots[-1][0] if total >= threshold else None,
+            'completed_usage_snapshots': len(snapshots), 'additional_completed_responses_after_boundary': 0,
+            'exit_code': exit_code, 'exit_reason': reason, 'response_evidence_sha256': json_hash(evidence),
+            'policy_sha256': json_hash(RESPONSE_POLICY),
+            'admission_observation': 'not directly exposed; native stopping semantics require separate reviewed live proof'}
 
 
 def validate_live_proof(path, approval, task):
-    """A lower diagnostic threshold is explicit; every other runtime binding matches."""
+    """Replay the actual collector from hashed native sources; no proof Booleans."""
+    from wsp_collect import collect_native_evidence
     path = Path(path)
     if approval.get('actual_usage_proof_sha256') != sha256(path):
         raise ValueError('coordinator has not approved this actual-usage proof')
     proof = strict_json(path.read_bytes())
-    if proof.get('schema') != 'wsp-live-actual-usage-proof/2' or proof.get('synthetic') is not False:
-        raise ValueError('reviewed live response-boundary proof v2 required')
-    expected = {'schema': 'wsp-live-actual-usage-proof/2', 'runtime': 'isolated_codex_exec',
-                'synthetic': False, 'case': 'cached_multiresponse_actual_total',
-                'runtime_identity': task['editor']['runtime_identity'],
-                'policy_sha256': json_hash(RESPONSE_POLICY),
-                'scientific_threshold_tokens': task['budgets']['editor_agent_tokens']}
+    if proof.get('schema') != 'wsp-live-actual-usage-proof/3' or proof.get('synthetic') is not False:
+        raise ValueError('reviewed live native cached-response proof v3 required')
+    expected = {'schema': 'wsp-live-actual-usage-proof/3', 'runtime': 'isolated_codex_exec', 'synthetic': False,
+                'case': 'cached_multiresponse_actual_total', 'runtime_identity': task['editor']['runtime_identity'],
+                'policy_sha256': json_hash(RESPONSE_POLICY), 'scientific_threshold_tokens': task['budgets']['editor_agent_tokens'],
+                'diagnostic_threshold_tokens': 50000}
     if any(proof.get(k) != value for k, value in expected.items()):
-        raise ValueError('live cached-response enforcement is not established for this exact editor')
-    source = Path(proof['token_events_path'])
-    gate_evidence = Path(proof['request_gate_evidence_path'])
-    if sha256(source) != proof['token_events_sha256'] or sha256(gate_evidence) != proof['request_gate_evidence_sha256']:
-        raise ValueError('live proof source changed')
-    events = [strict_json(line) for line in source.read_bytes().splitlines() if line.strip()]
+        raise ValueError('reviewed live native cached-response proof v3 required for this runtime')
+    root = Path(proof['evidence_directory'])
+    events, trace = collect_native_evidence(root, write=False)
+    saved = strict_json((root / 'editor_response_evidence.json').read_bytes())
+    if trace != saved or json_hash(trace) != proof.get('native_evidence_sha256'):
+        raise ValueError('live native evidence changed or was not produced by collector')
+    invocation = strict_json((root / 'editor_invocation.json').read_bytes())
+    diagnostic_task = {'editor': {**task['editor'], 'prompt': invocation['prompt']}}
+    limits = invocation['limits']
+    if (invocation['kind'] != 'text_diagnostic' or invocation['threshold_tokens'] != 50000 or
+            invocation['model_context_sha256'] is not None or not invocation['fixture_hashes'] or
+            invocation['runtime_identity'] != task['editor']['runtime_identity'] or
+            invocation['command'] != editor_command(diagnostic_task, 50000) or
+            invocation['prompt_sha256'] != hashlib.sha256(invocation['prompt'].encode()).hexdigest() or
+            invocation['output_directory'] != str(root.resolve()) or
+            limits.get('editor_wall_seconds') != 180 or limits.get('emergency_actual_tokens') != 100000 or
+            limits.get('tool_requests') != 10 or limits.get('retained_bytes') != 128 * 1024**2):
+        raise ValueError('diagnostic prompt/fixture/limits or stopping mechanism not explicitly bound')
+    if not proof.get('threshold_rationale') or proof.get('diagnostic_differences') != diagnostic_differences(task, invocation):
+        raise ValueError('diagnostic differences and threshold rationale required')
+    # Check the exact fixture files, not an arbitrary matching field. The later
+    # diagnostic launcher must keep these inert text fixtures in its own root.
+    for name, digest in invocation['fixture_hashes'].items():
+        from wsp_weights import regular_file
+        if sha256(regular_file(root, name)) != digest:
+            raise ValueError('diagnostic fixture changed')
     usage = actual_usage(events)
-    previous_cached = 0
-    cached_responses = 0
-    for event in events:
-        payload = event.get('payload', event)
-        value = (payload.get('info') or {}).get('total_token_usage') if payload.get('type') == 'token_count' else None
-        if value:
-            cached_responses += value['cached_input_tokens'] > previous_cached
-            previous_cached = value['cached_input_tokens']
-    if not usage.get('actual_input_plus_output_tokens') or usage.get('distinct_snapshots', 0) < 2 or cached_responses < 2:
-        raise ValueError('proof must contain multiple actual cached-response snapshots')
-    threshold = proof.get('diagnostic_threshold_tokens')
-    if type(threshold) is not int or not 2 <= threshold <= task['budgets']['editor_agent_tokens'] or not proof.get('threshold_rationale'):
-        raise ValueError('disclose the lower diagnostic threshold and its relationship to the scientific threshold')
-    if proof.get('observed_actual_usage') != usage:
-        raise ValueError('proof misstates actual usage')
-    trace = strict_json(gate_evidence.read_bytes())
-    identity_hash = json_hash(task['editor']['runtime_identity'])
-    collector = proof.get('collector_sha256')
-    if not isinstance(collector, str) or len(collector) != 64 or any(c not in '0123456789abcdef' for c in collector):
-        raise ValueError('reviewed admission collector code hash required')
-    if sha256(Path(proof['collector_path'])) != collector:
-        raise ValueError('admission collector code changed')
-    if trace.get('runtime_identity_sha256') != identity_hash or trace.get('collector_sha256') != collector:
-        raise ValueError('diagnostic chronology runtime/collector identity mismatch')
-    completion = response_completion(events, trace, threshold, frozen=False,
-                                     exit_code=proof.get('observed_exit_code'), require_denial=True)
+    if (usage.get('distinct_snapshots', 0) < 2 or not usage.get('cached_input_tokens') or
+            proof.get('observed_actual_usage') != usage):
+        raise ValueError('multiple genuine response snapshots, cached input and exact actual usage required')
+    completion = response_completion(events, trace, 50000, frozen=False,
+                                     exit_code=trace['exit_code'], require_native_stop=True)
     return {'proof_sha256': sha256(path), 'usage': usage, 'completion': completion,
-            'runtime_identity_sha256': identity_hash, 'collector_sha256': collector,
-            'diagnostic_threshold_tokens': threshold, 'scientific_threshold_tokens': task['budgets']['editor_agent_tokens'],
-            'review_note': 'authentic admission chronology and collector provenance require coordinator review; no inference from watchdog, CONNECT traffic or proof Booleans'}
+            'runtime_identity_sha256': json_hash(invocation['runtime_identity']), 'collector_sha256': trace['collector_sha256'],
+            'diagnostic_threshold_tokens': 50000, 'scientific_threshold_tokens': task['budgets']['editor_agent_tokens'],
+            'review_note': 'Native budget exhaustion correlated with cache-inclusive crossing and no later completed usage. Does not directly expose attempted-request admission; coordinator must review the live diagnostic to establish native stopping semantics.'}

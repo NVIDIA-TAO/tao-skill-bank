@@ -593,20 +593,13 @@ def test_expired_native_deadline_does_not_start_model(tmp_path):
 
 
 def response_trace(events, threshold, *, denied=False, exit_code=0, reason='normal'):
-    """Synthetic chronology fixture; never represents a performed live diagnostic."""
-    rows = []
-    total = 0
-    for index, event in enumerate(events):
-        identity = f'response-{index}'
-        rows.append({'kind': 'response_admitted', 'response_id': identity, 'actual_before': total, 'at_unix': index * 2})
-        rows.append({'kind': 'response_completed', 'response_id': identity, 'token_event_sha256': json_hash(event), 'at_unix': index * 2 + 1})
-        u = event['payload']['info']['total_token_usage']
-        total = u['input_tokens'] + u['output_tokens']
-    if denied:
-        rows.append({'kind': 'response_denied', 'response_id': 'attempted-next-response', 'reason': 'response_threshold',
-                     'actual_before': total, 'at_unix': len(events) * 2})
-    rows.append({'kind': 'editor_exit', 'exit_code': exit_code, 'reason': reason, 'at_unix': len(events) * 2 + 1})
-    return {'schema': 'wsp-response-evidence/1', 'threshold_tokens': threshold, 'events': rows}
+    """Synthetic native capture fixture; never a live admission trace."""
+    import tempfile
+    from wsp_fixtures import native_fixture
+    with tempfile.TemporaryDirectory() as root:
+        _, evidence = native_fixture(root, events, threshold, native_stop=denied, exit_code=exit_code,
+                                     error='unrelated error' if reason == 'error' else None)
+    return evidence
 
 
 @pytest.mark.parametrize('final_total', [200000, 200027])
@@ -637,7 +630,7 @@ def test_normal_final_response_at_boundary_is_accepted_without_invented_next_att
     item.task['synthetic_only'] = False
     events = [usage_event(199999, 1, 100000)]
     completion = item.accept_editor_completion(events, response_trace(events, 200000), exit_code=0)
-    assert completion['denied_responses'] == 0 and completion['exit_reason'] == 'normal'
+    assert completion['exit_reason'] == 'normal' and completion['additional_completed_responses_after_boundary'] == 0
     item.holdout()
     assert len(calls) == 4
 
@@ -652,22 +645,20 @@ def test_token_stop_without_freeze_is_incomplete(boundary):
 
 
 @pytest.mark.parametrize('failure', ['extra_response', 'missing_snapshot', 'reset', 'unrelated_error',
-                                     'invented_exit', 'no_denial', 'forced_wall', 'false_cached_accounting', 'missing_evidence'])
+                                     'invented_exit', 'no_native_stop', 'forced_wall', 'false_cached_accounting', 'missing_evidence'])
 def test_response_completion_rejects_nonpolicy_failures(failure):
     events = [usage_event(100, 5, 60), usage_event(220, 10, 150)]
-    trace = response_trace(events, 200, denied=True, exit_code=1, reason='response_threshold')
+    trace = response_trace(events, 200, denied=True, exit_code=1)
     exit_code, forced = 1, None
     if failure == 'extra_response':
-        events.append(usage_event(300, 20, 200)); trace = response_trace(events, 200, denied=True, exit_code=1, reason='response_threshold')
-    elif failure == 'missing_snapshot':
-        trace['events'] = trace['events'][2:]
-    elif failure == 'reset':
-        events[1] = usage_event(99, 10, 60)
-    elif failure == 'unrelated_error': trace['events'][-1]['reason'] = 'error'
+        events.append(usage_event(300, 20, 200)); trace = response_trace(events, 200, denied=True, exit_code=1)
+    elif failure == 'missing_snapshot': events.pop(0)
+    elif failure == 'reset': events[1] = usage_event(99, 10, 60)
+    elif failure == 'unrelated_error': trace['native_events'][-1]['event']['error']['message'] = 'unrelated failure'
     elif failure == 'invented_exit': exit_code = 0
-    elif failure == 'no_denial': trace['events'] = [r for r in trace['events'] if r['kind'] != 'response_denied']
+    elif failure == 'no_native_stop': trace['native_events'] = trace['native_events'][:2]
     elif failure == 'forced_wall': forced = 'wall_limit'
-    elif failure == 'false_cached_accounting': trace['events'][2]['actual_before'] = 45
+    elif failure == 'false_cached_accounting': events[1]['payload']['info']['total_token_usage']['input_tokens'] = 70
     elif failure == 'missing_evidence': trace = {}
     with pytest.raises(ValueError): response_completion(events, trace, 200, frozen=True, exit_code=exit_code, forced_stop=forced)
 
@@ -683,51 +674,46 @@ def test_trusted_holdout_still_obeys_independent_budgets(boundary):
 
 
 def diagnostic_fixture(tmp_path):
-    """Serialized synthetic fixtures test the validator, not live evidence truth."""
-    identity = {'model': 'fixture-only', 'code_hashes': {'wrapper': 'a' * 64}, 'binary_files': {'fixture-helper': 'b' * 64}}
-    task = {'editor': {'runtime_identity': identity}, 'budgets': BUDGETS}
-    events = [usage_event(100, 5, 60), usage_event(220, 10, 150)]
-    trace = response_trace(events, 200, denied=True, exit_code=1, reason='response_threshold')
-    collector = tmp_path / 'synthetic-collector-fixture.txt'
-    collector.write_text('Non-executable test fixture for collector identity; no live collector was run.\n')
-    trace.update(runtime_identity_sha256=json_hash(identity), collector_sha256=sha256(collector), invocation_id='synthetic-unit-test-only')
-    tokens = tmp_path / 'fixture-tokens.jsonl'; tokens.write_text(''.join(json.dumps(e) + '\n' for e in events))
-    gate = tmp_path / 'fixture-gate.json'; gate.write_text(json.dumps(trace))
-    proof = {'schema': 'wsp-live-actual-usage-proof/2', 'runtime': 'isolated_codex_exec', 'synthetic': False,
+    """Synthetic schema test input; never emitted as a live proof artifact."""
+    from wsp_fixtures import native_fixture
+    from wsp_usage import diagnostic_differences
+    events = [usage_event(24990, 10, 10000), usage_event(50020, 10, 30000)]
+    _, trace = native_fixture(tmp_path, events, 50000, native_stop=True, exit_code=1)
+    invocation = json.loads((tmp_path / 'editor_invocation.json').read_text())
+    identity = invocation['runtime_identity']
+    task = {'editor': {'runtime_identity': identity, 'model': 'fixture-only', 'effort': 'xhigh',
+                       'prompt': 'Different scientific prompt.'}, 'budgets': BUDGETS}
+    proof = {'schema': 'wsp-live-actual-usage-proof/3', 'runtime': 'isolated_codex_exec', 'synthetic': False,
              'case': 'cached_multiresponse_actual_total', 'runtime_identity': identity, 'policy_sha256': json_hash(RESPONSE_POLICY),
-             'scientific_threshold_tokens': 200000, 'diagnostic_threshold_tokens': 200,
-             'threshold_rationale': 'Synthetic validator fixture: lower threshold, all other runtime bindings identical.',
-             'collector_path': str(collector), 'collector_sha256': sha256(collector), 'observed_exit_code': 1,
-             'token_events_path': str(tokens), 'token_events_sha256': sha256(tokens),
-             'request_gate_evidence_path': str(gate), 'request_gate_evidence_sha256': sha256(gate),
-             'observed_actual_usage': actual_usage(events)}
+             'scientific_threshold_tokens': 200000, 'diagnostic_threshold_tokens': 50000,
+             'threshold_rationale': 'Synthetic validator test for the declared lower diagnostic threshold.',
+             'diagnostic_differences': diagnostic_differences(task, invocation),
+             'evidence_directory': str(tmp_path), 'native_evidence_sha256': json_hash(trace), 'observed_actual_usage': actual_usage(events)}
     path = tmp_path / 'fixture-proof.json'; path.write_text(json.dumps(proof))
-    return task, proof, path, gate
+    return task, proof, path, tmp_path / 'editor_response_evidence.json'
 
 
 def test_lower_diagnostic_threshold_binds_runtime_and_charges_overrun(tmp_path):
     task, proof, path, _ = diagnostic_fixture(tmp_path)
     result = validate_live_proof(path, {'actual_usage_proof_sha256': sha256(path)}, task)
-    assert result['diagnostic_threshold_tokens'] == 200
+    assert result['diagnostic_threshold_tokens'] == 50000
     assert result['scientific_threshold_tokens'] == 200000
     assert result['completion']['actual_overrun_tokens'] == 30
     assert result['completion']['exit_code'] == 1
-    assert result['usage']['actual_input_plus_output_tokens'] == 230
+    assert result['usage']['actual_input_plus_output_tokens'] == 50030
 
 
-@pytest.mark.parametrize('change', ['identity', 'under_threshold', 'no_denial', 'opaque_boolean', 'collector', 'threshold_rationale'])
-def test_live_proof_rejects_unbound_or_non_admission_evidence(tmp_path, change):
+@pytest.mark.parametrize('change', ['identity', 'under_threshold', 'no_native_stop', 'opaque_boolean', 'collector', 'threshold_rationale'])
+def test_live_proof_rejects_unbound_or_non_native_evidence(tmp_path, change):
     task, proof, path, gate = diagnostic_fixture(tmp_path)
     if change == 'identity': proof['runtime_identity'] = {'model': 'different-runtime'}
     elif change == 'threshold_rationale': proof['threshold_rationale'] = ''
+    elif change == 'under_threshold': proof['diagnostic_threshold_tokens'] = 60000
     else:
         trace = json.loads(gate.read_text())
-        if change == 'under_threshold':
-            proof['diagnostic_threshold_tokens'] = trace['threshold_tokens'] = 500
-        elif change == 'no_denial':
-            trace['events'] = [r for r in trace['events'] if r['kind'] != 'response_denied']
+        if change == 'no_native_stop': trace['native_events'] = trace['native_events'][:2]
         elif change == 'opaque_boolean': trace = {'actual_ceiling_enforced': True, 'followup_response_denied': True}
         elif change == 'collector': trace['collector_sha256'] = 'd' * 64
-        gate.write_text(json.dumps(trace)); proof['request_gate_evidence_sha256'] = sha256(gate)
+        gate.write_text(json.dumps(trace)); proof['native_evidence_sha256'] = json_hash(trace)
     path.write_text(json.dumps(proof))
     with pytest.raises(ValueError): validate_live_proof(path, {'actual_usage_proof_sha256': sha256(path)}, task)

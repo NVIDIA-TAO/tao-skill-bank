@@ -208,7 +208,7 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
                 raise ValueError('prepared view changed')
     code = Path(__file__).parent
     code_files = ['wsp.py', 'wsp_prepare.py', 'wsp_weights.py', 'wsp_boundary.py', 'wsp_runtime.py',
-                  'wsp_client.py', 'wsp_isolation.py', 'wsp_usage.py', 'wsp_context.py', 'tht_contract.py', 'inference_worker.py',
+                  'wsp_client.py', 'wsp_isolation.py', 'wsp_usage.py', 'wsp_context.py', 'wsp_collect.py', 'wsp_capture.py', 'tht_contract.py', 'inference_worker.py',
                   'suite_runtime.py', 'codex_capture.py', 'suite_costs.py', 'tool_evidence.py', 'astra_isolation.py']
     budgets = dict(BUDGETS)
     budgets['forward_images'] = (budgets['development_requests'] * split['roles']['development']['images']
@@ -236,7 +236,7 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
                        'network': 'none; optional provider-only CONNECT relay via Unix socket',
                        'api_hosts': ['chatgpt.com', 'api.openai.com'],
                        'token_cap_semantics': RESPONSE_POLICY['accounting'] + '; ' + RESPONSE_POLICY['inflight'],
-                       'token_enforcement_status': 'UNVALIDATED: requires reviewed live cached-response admission diagnostic and trusted per-invocation chronology',
+                       'token_enforcement_status': 'UNVALIDATED: requires reviewed live cached-response native stop diagnostic; integrated collector observes native events, not request admission',
                        'token_enforcement_limit': 'response-boundary threshold, not a zero-overshoot spend ceiling; watchdog/CONNECT traffic cannot prove next-response denial'},
             'response_budget_policy': RESPONSE_POLICY,
             'budgets': budgets, 'retry_policy': 'none; failures and interrupted reservations consume caps',
@@ -252,7 +252,7 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
                          'no valid development-tested candidate means no holdout comparison'],
             'approval_required': ['coordinator review of this exact preflight', 'primary GPU release',
                                   'runtime access probe', 'full base hash/finiteness and independent-copy validation',
-                                  'reviewed live cached-response admission diagnostic and trusted per-invocation chronology for isolated codex exec'],
+                                  'reviewed live cached-response native stop diagnostic and final native usage/exit/harvest for isolated codex exec'],
             'prices': {'agent_usd': None, 'gpu_usd': None, 'reason': 'no price supplied'}}
     if sum(f['size'] for f in files) * 4 + 1024**3 > BUDGETS['storage_bytes']:
         raise ValueError('four retained model copies exceed storage proposal')

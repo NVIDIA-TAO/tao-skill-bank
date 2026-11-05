@@ -33,7 +33,7 @@ PROCESSOR_KEYS = set('crop_size height width data_format default_to_square disab
                      'processor_class resample rescale_factor return_tensors size shortest_edge longest_edge '
                      'temporal_patch_size'.split())
 GENERATION_KEYS = set('bos_token_id do_sample eos_token_id pad_token_id temperature top_k top_p transformers_version'.split())
-PRIVATE_PATH = re.compile(r'(/(?:home|workspace|root|tmp|mnt|opt|var|Users)/|[A-Za-z]:\\|https?://)')
+PRIVATE_PATH = re.compile(r'(/(?:home|workspace|root|tmp|mnt|opt|var|Users)/|(?<![A-Za-z0-9])[A-Za-z]:\\|https?://)')
 
 
 def project(value, allowed, removed, path=''):

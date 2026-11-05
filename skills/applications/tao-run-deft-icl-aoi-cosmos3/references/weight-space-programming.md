@@ -103,48 +103,80 @@ export its entire actual usage and overrun; never clamp the ledger to200,000.
 New editor capability admissions also close at the observed threshold; already
 admitted tool work can finish. Trusted holdout admission is independent.
 
-The predeclared completion policy is:
+The completion policy accepts a valid freeze with fully collected actual usage,
+normal completion or an authentic native token-budget stop. Exact-threshold and
+first-crossing-response overrun are charged and retained. A native token stop
+without freeze is incomplete. Missing final usage, resets, a later completed
+response after crossing, unrelated native errors, a watchdog cancellation or
+any other exhausted budget fail. Trusted holdout retains its independent limits.
 
-- A token stop without a valid freeze is incomplete. It supplies no invented
-  final answer, patch, formatting retry or holdout comparison.
-- A valid freeze can reach trusted holdout after complete final usage and an
-  authentic response-admission/completion/exit chronology satisfy this policy.
-  Reaching the exact threshold or a legitimate final-response overrun alone is
-  not a failure. An evidenced native token stop can have a nonzero exit code;
-  retain that actual code and reason rather than report a successful editor exit.
-- Missing final usage/admission evidence, resets, extra model-response admission
-  after the threshold, concurrent responses, unrelated errors, watchdog-forced
-  cancellation, or violations of any other frozen budget remain failures.
+`wsp_capture.py` runs around the child in the existing editor wrapper. It exports
+only raw token events and source coverage (session ID, source SHA/size, parse
+errors and final child exit), never auth or private session text. After child
+exit the runner observes usage again and streams `/task` and `/results` tar bytes
+from inside the still-live sandbox. **Do not use `docker cp` for these tmpfs**:
+the CPU probe observed an empty directory archive. Archives stay unextracted.
+Only after collection does the host release the wrapper and collect Docker exit
+and complete timestamped native logs.
 
-A continuing TUI was observed to exceed its configured1,000,000 value on raw
-input+output; its cause and isolated-exec implications are not inferred here.
-Neither a one-second polling watchdog nor the provider CONNECT relay establishes
-next-response denial. The actual native admission mechanism remains unvalidated.
-A separately authorized live cached-response diagnostic must establish it before
-real execution. A tiny100-token stop or an under-threshold trace is insufficient.
-The diagnostic must reach its disclosed threshold, contain multiple genuine
-cached-response snapshots and show the attempted next response being denied.
+The runner calls `wsp_collect.collect_native_evidence` itself. It produces
+`editor_response_evidence.json`, bound to invocation/runtime/collector hashes,
+from the actual saved usage, native JSON log, final capture archive, host harvest
+record and terminal state. Collection compares the observed and archived usage,
+final capture/child/container exit, source/session identity and hashes. Missing,
+malformed, truncated or inconsistent evidence fails. The invocation manifest is
+written before the editor container starts. The collector never invents
+`response_admitted`, `response_completed` or `response_denied` events.
 
-The diagnostic threshold may be lower than the scientific200,000. The reviewed
-proof explains that relationship and varies only `limit_tokens` and its derived
-half-threshold reminder. It binds the actual command template, model, effort,
-Codex version, binary/helper/Python hashes, image, provider route, prompt/tool and
-wrapper code hashes and all other frozen runtime budgets. Diagnostic inputs are
-explicitly declared synthetic development/tool fixtures: no real weights or GPU.
-This input substitution does not permit a different model, tool environment or
-stopping mechanism. Exact actual runtime identity is checked again before launch.
+`wsp_usage.response_completion` classifies top-level native `turn.completed`
+versus the exact native `shared rollout token budget exhausted` error and failed
+turn. Marker text inside tool output does not count. It checks native normal
+usage against the raw final snapshot, correlates native stopping with actual
+threshold crossing, and rejects any later distinct cumulative response usage.
+All overrun is exported, including nonzero native exit codes. The evidence
+shows observable native stopping and completed usage; it does **not** expose
+per-request admission IDs/timestamps or guarantee zero-overshoot spending.
 
-`wsp_usage.response_completion` validates serial admission/completion/denial/exit
-chronology against every distinct raw cumulative token snapshot. Admissions
-must use the preceding **actual** total. Every completion must reference the
-corresponding raw event hash, in order. The trusted collector must establish the
-chronology's authenticity; proof Booleans cannot replace it. The runtime requires
-`editor_response_evidence.json` from that separately reviewed host-side collector,
-bound to the actual editor job ID, runtime identity and collector code hash. That
-file is never editor-writable. This preparation does not implement or claim a
-live admission collector or successful diagnostic: absent evidence fails closed.
-If the installed native mechanism admits a later response, repair that mechanism
-and review the changed identities before authorizing scientific execution.
+The continuing preparation TUI exceeded its configured1,000,000 raw-token value;
+neither its cause nor an implication for isolated exec is inferred. Polling and
+CONNECT routing do not prove request denial. Before scientific execution, a
+separately authorized live diagnostic must establish the native mechanism's
+cache-inclusive stopping semantics. CPU fixtures, an error marker alone, a tiny
+100-token stop, an under-threshold voluntary finish and a watchdog kill do not
+establish that claim. If later completed usage appears, admission needs repair.
+
+The declared one-attempt diagnostic is pure text:50,000 native threshold,
+180seconds,100,000 observed emergency threshold,10 deterministic fixture tool
+requests and128MiB retained evidence. It uses the exact scientific stopping
+command/configuration, gpt-6-astra/xhigh, Codex0.166.0, binaries/helpers,
+wrapper/capture/collector code, provider route and2CPU/4GiB sandbox. Its prompt,
+synthetic fixture/tools, output directory, numeric threshold/derived reminder
+and diagnostic limits differ explicitly. `runtime_identity` seals the shared
+mechanism; `invocation_manifest` and `diagnostic_differences` bind the actual
+separate inputs/limits. No scientific task prompt, model context, data, weights,
+candidate capabilities or GPU is required or permitted in that diagnostic.
+It has not been run during this preparation.
+
+### Factual read-only context
+
+`/model_context` contains architecture configuration, exact header-derived tensor
+names/dtypes/shapes, tokenizer vocabulary-to-ID mapping and added/special tokens,
+the chat template, processor configuration, base generation defaults and exact
+frozen inference prompt/preprocessing/generation/seed. It contains no preferred
+edit, class bias, hypothesis or external examples. Tokenizer merge/normalizer
+implementation is omitted: this is descriptive context, not executable code.
+
+`wsp_context.py` reads only explicit same-base JSON/text files, verifies their
+existing provenance hashes and projects allowlisted inert fields. Host paths,
+credentials and executable configuration hooks are excluded; removed field
+names are recorded. Vocabulary strings and the approved chat template remain
+literal data. The manifest binds original source hashes, derived file hashes,
+header catalogue, base fingerprint and frozen profile. Preflight and runtime
+reverify both the projection and sources. The entire bundle mounts read-only;
+no full checkpoint or host model directory enters the editor. Access gives no
+permission to change architecture, tokenizer, template, prompt, preprocessing
+or generation. CPU tests and the real sandbox probe check readability,
+immutability and the absence of weight/holdout/host additions.
 
 ## Weight tools and scientific invariants
 
@@ -201,7 +233,7 @@ The CPU/editor sandbox uses the cached Ubuntu image, explicit `runc`, a nonroot
 UID, no GPU devices, network none, private IPC, default private PID namespace,
 read-only root, all capabilities dropped, no-new-privileges, and cgroup limits.
 It receives only the development directory, generic interpreter/image libraries,
-static Codex helpers, a private auth-file mount when approved, the generic prompt/
+static Codex helpers, the factual read-only model context, a private auth-file mount when approved, the generic prompt/
 tool contract and exact Unix socket files. It never receives the host home,
 worktree, full environment, plugins/skills, other sessions, Docker socket, full
 Mining, holdout, main results or full model files. Weight access is through the
@@ -259,7 +291,7 @@ runs on the execution host; no local scientific recomputation is implied.
 Run CPU tests and the optional restricted synthetic container probe:
 
 ```bash
-THT_EVALUATOR_DIR=/approved/frozen-evaluator python -m pytest -q tests/test_wsp.py
+THT_EVALUATOR_DIR=/approved/frozen-evaluator python -m pytest -q tests/test_wsp.py tests/test_wsp_context.py tests/test_wsp_native.py
 python tests/run_wsp_cpu_probe.py --output /private/wsp/new-cpu-probe
 ```
 
@@ -271,32 +303,26 @@ separate private records. Never manufacture them from this example:
   `approved_for_real_weights: true`, `actual_usage_proof_sha256`.
 - Release: same proposal/reviewer/time fields, `primary_gpu_released: true`,
   exact `host`, `gpu_ids: ["0"]`.
-- Live usage proof: `wsp-live-actual-usage-proof/2`,
+- Live usage proof: `wsp-live-actual-usage-proof/3`,
   `runtime: isolated_codex_exec`, `synthetic: false`,
-  `case: cached_multiresponse_actual_total`, complete `runtime_identity`,
-  `policy_sha256`, `scientific_threshold_tokens: 200000`, a disclosed
-  `diagnostic_threshold_tokens` and `threshold_rationale`, `collector_path` and
-  its checked `collector_sha256`,
-  actual token-events path/SHA, reviewed request-gate evidence path/SHA, actual
-  `observed_exit_code` and `observed_actual_usage` from `wsp_usage.actual_usage`.
+  `case: cached_multiresponse_actual_total`, exact shared `runtime_identity`,
+  `policy_sha256`, `scientific_threshold_tokens: 200000`,
+  `diagnostic_threshold_tokens: 50000`, `threshold_rationale`, exact
+  `diagnostic_differences`, `evidence_directory`, `native_evidence_sha256`
+  (canonical JSON digest) and `observed_actual_usage`.
 
-The proof's raw events must contain multiple cached cumulative snapshots and
-reach its diagnostic threshold. The evidence document is `wsp-response-evidence/1`
-with `threshold_tokens`, `runtime_identity_sha256`, `collector_sha256`, an
-`invocation_id`, and ordered `events`. Each event records `at_unix` and one of:
-`response_admitted` (unique `response_id`, `actual_before`), `response_completed`
-(the admitted ID, `token_event_sha256`), `response_denied` (distinct attempted ID,
-`actual_before`, `reason: response_threshold`), or final `editor_exit` (actual
-`exit_code`, `reason: normal|response_threshold`; unrelated errors are rejected).
-The live proof must show a denied attempted next response; a normal scientific
-final response need not attempt another. Its complete chronology must still show
-no later admission. Token stops require the denial evidence. All raw snapshots
-must be accounted for; an extra response cannot be hidden by omitting its event.
+The proof validator replays the actual collector read-only from all saved
+sources and requires the regenerated evidence to equal the saved document and
+reviewed hash. It verifies the invocation's command, prompt hash, fixture bytes,
+limits and explicit differences, plus multiple actual snapshots, nonzero cached
+input and native budget exhaustion at the actual threshold. Opaque success or
+"denied" Booleans are not evidence. Source authenticity, live API compatibility
+and the relation of native exhaustion to the next model call remain subjects
+of the independent live review; the parser does not fabricate admission telemetry.
 
-Authentic collection/API compatibility and denial require independent review.
-The code checks structural consistency and bound hashes, not the truth of an
-untrusted collector's assertions. The scientific run consumes the same reviewed
-collector identity and validates its own invocation's trace before holdout.
+No proof/approval/release is created by CPU tests or preparation. The scientific
+runner separately checks current runtime/binary/helper identity, consumes the
+reviewed live proof and produces its own native evidence before trusted holdout.
 Do not run the following command during preparation:
 
 ```bash
