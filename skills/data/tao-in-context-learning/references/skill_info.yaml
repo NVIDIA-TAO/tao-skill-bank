@@ -1,0 +1,14 @@
+name: tao-in-context-learning
+description: Adaptive Proxy-selected image ICL with extensible toolsets.
+toolsets:
+  siglip-retrieval-v1:
+    version: 1
+    embedding_skill: tao-generate-image-embeddings
+    mining_skill: tao-mine-nearest-neighbors
+    encoder: google/siglip-base-patch16-224
+    output_type: multimodal_messages
+    calls_per_query: 1
+    requires_query_identity: true
+    excludes: [source_identity, image_bytes, normalized_joint]
+    policy_owner: agent
+    selection_evidence: proxy_only

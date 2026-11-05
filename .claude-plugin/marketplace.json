@@ -30,6 +30,8 @@
         "./skills/applications/tao-port-huggingface-model",
         "./skills/applications/tao-run-deft-aoi",
         "./skills/applications/tao-run-deft-aoi-cosmos3",
+        "./skills/applications/tao-run-deft-icl-aoi-cosmos3",
+        "./skills/data/tao-in-context-learning",
         "./skills/applications/tao-run-deft-pas",
         "./skills/applications/tao-run-dinov3-ssl-deft",
         "./skills/applications/tao-run-deft-cr-its-mining",
