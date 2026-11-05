@@ -23,6 +23,17 @@
     },
     "failed_forward_costs": {"type": "object", "additionalProperties": {"type": ["object", "null"]}},
     "agent_usage": {"type": ["object", "null"]},
+    "editor_completion": {
+      "type": ["object", "null"],
+      "description": "Actual response-boundary stop evidence; a legitimate final-response overrun is fully charged, not clamped",
+      "properties": {
+        "status": {"enum": ["HOLDOUT_ELIGIBLE", "INCOMPLETE_NO_FREEZE"]},
+        "threshold_tokens": {"type": "integer", "minimum": 2},
+        "actual_overrun_tokens": {"type": "integer", "minimum": 0},
+        "exit_code": {"type": "integer"},
+        "exit_reason": {"enum": ["normal", "response_threshold"]}
+      }
+    },
     "prices_usd": {
       "type": "object", "required": ["agent", "gpu"],
       "properties": {"agent": {"type": ["number", "null"]}, "gpu": {"type": ["number", "null"]}}

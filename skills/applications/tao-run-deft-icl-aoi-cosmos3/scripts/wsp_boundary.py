@@ -23,6 +23,7 @@ from pathlib import Path
 from suite_runtime import json_write
 from tht_contract import grade, json_hash, load_jsonl, sha256
 from wsp_weights import apply_patch, catalog, inventory, read_values, verify_inventory
+from wsp_usage import response_completion
 
 
 class LimitError(ValueError):
@@ -93,9 +94,9 @@ class Journal:
             if self.now() - state['started_at_unix'] >= self.task['budgets']['experiment_wall_seconds']:
                 raise LimitError('experiment wall exhausted')
             usage = state.get('agent_usage')
-            if usage and usage.get('input_tokens') is not None and usage.get('output_tokens') is not None:
+            if phase == 'DEVELOPMENT' and usage and usage.get('input_tokens') is not None and usage.get('output_tokens') is not None:
                 if usage['input_tokens'] + usage['output_tokens'] >= self.task['budgets']['editor_agent_tokens']:
-                    raise LimitError('actual input plus output token ceiling reached')
+                    raise LimitError('actual input plus output token threshold reached')
             for key, amount in charges.items():
                 if type(amount) is not int or amount < 0:
                     raise ValueError('invalid reservation')
@@ -350,8 +351,9 @@ class Boundary:
                     usage = state.get('agent_usage')
                     if not usage or not state.get('agent_usage_final') or any(type(usage.get(k)) is not int for k in ('input_tokens', 'output_tokens')):
                         raise LimitError('final actual editor usage is required before holdout')
-                    if usage['input_tokens'] + usage['output_tokens'] > self.b['editor_agent_tokens']:
-                        raise LimitError('actual editor token ceiling exceeded; no scientific comparison')
+                    completion = state.get('editor_completion')
+                    if not completion or completion['status'] != 'HOLDOUT_ELIGIBLE' or completion['usage'] != usage or completion['threshold_tokens'] != self.b['editor_agent_tokens']:
+                        raise LimitError('accepted response-boundary completion evidence is required')
                 state['phase'] = 'HOLDOUT'
             self.journal.change('holdout_open', {}, start)
             candidate = self.journal.state()['freeze']['candidate']
@@ -388,6 +390,17 @@ class Boundary:
             state['agent_usage_final'] = final
         self.journal.change('agent_usage', {'usage': usage, 'source': source}, record)
 
+    def accept_editor_completion(self, events, evidence, *, exit_code, forced_stop=None):
+        """Trusted final accounting/policy gate, separate from editor admission."""
+        self.check_storage()
+        state = self.journal.state()
+        completion = response_completion(events, evidence, self.b['editor_agent_tokens'],
+                                          frozen=state['phase'] == 'FROZEN' and state['freeze'] is not None,
+                                          exit_code=exit_code, forced_stop=forced_stop)
+        self.record_agent_usage(completion['usage'], 'complete_raw_response_evidence', final=True)
+        self.journal.change('editor_completion', completion, lambda state: state.update(editor_completion=completion))
+        return completion
+
     def export(self):
         ledger = self.journal.export()
         json_write(self.root / 'ledger.private.json', ledger)
@@ -397,10 +410,11 @@ class Boundary:
                   'base_fingerprint': self.base_manifest['fingerprint'], 'freeze': state['freeze'],
                   'budget_reservations': state['used'], 'known_complete_forward_usage': state['actual'],
                   'failed_forward_costs': {key: row.get('failure_cost') for key, row in state['forwards'].items() if row['status'] != 'COMPLETE'},
-                  'agent_usage': state['agent_usage'], 'failed_forward_usage': 'see retained native outputs; missing values remain unknown',
+                  'agent_usage': state['agent_usage'], 'editor_completion': state.get('editor_completion'),
+                  'failed_forward_usage': 'see retained native outputs; missing values remain unknown',
                   'prices_usd': {'agent': None, 'gpu': None}, 'ledger_head_sha256': ledger['head_sha256'],
                   'limitations': ['small Mining-only feasibility subset', 'no claim of paper reproduction',
-                                  'agent tokens use native response-boundary semantics',
+                                  'response-boundary policy requires reviewed live admission evidence; no zero-overshoot spend ceiling',
                                   'failed requests consume full reservations; actual usage reported separately']}
         if state['phase'] == 'COMPLETE':
             comparison = json.loads((self.root / 'holdout_comparison.private.json').read_text())

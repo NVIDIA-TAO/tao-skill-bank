@@ -16,6 +16,7 @@ from tht_contract import CLASSES, EXTERNAL_HASHES, json_hash, load_jsonl, prepro
 from suite_data import identity_from_query
 from suite_runtime import json_write
 from wsp_weights import catalog, regular_file, strict_json
+from wsp_usage import RESPONSE_POLICY, runtime_identity
 
 PROMPT_SHA = 'c2b3b9aeb4c31b6b699dad32ea6f4c00081c7aadf2a8d65384f0bba1423326f6'
 FRAMEWORK_IMAGE = 'nvcr.io/nvidia/tao/tao-toolkit@sha256:897c7cb2088e761bb48003029f1f5ed4fac32997388efe4d158e93dd8d36ac8d'
@@ -233,9 +234,10 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
                        'fresh_session': True, 'tools': 'generic Python/image + wsp-sparse-v1',
                        'network': 'none; optional provider-only CONNECT relay via Unix socket',
                        'api_hosts': ['chatgpt.com', 'api.openai.com'],
-                       'token_cap_semantics': 'actual cumulative input_tokens + output_tokens from fresh session birth; cached input is a subset, never subtracted or added; any observed overshoot aborts the experiment and blocks holdout',
-                       'token_enforcement_status': 'UNVALIDATED: requires independent live isolated-exec cached-response proof; TUI configuration and tiny100-token stop are insufficient',
-                       'token_enforcement_limit': 'watchdog observes completed response events; cannot promise a zero-overshoot spend ceiling while a response is in flight'},
+                       'token_cap_semantics': RESPONSE_POLICY['accounting'] + '; ' + RESPONSE_POLICY['inflight'],
+                       'token_enforcement_status': 'UNVALIDATED: requires reviewed live cached-response admission diagnostic and trusted per-invocation chronology',
+                       'token_enforcement_limit': 'response-boundary threshold, not a zero-overshoot spend ceiling; watchdog/CONNECT traffic cannot prove next-response denial'},
+            'response_budget_policy': RESPONSE_POLICY,
             'budgets': budgets, 'retry_policy': 'none; failures and interrupted reservations consume caps',
             'budget_origin': {'kind': 'engineering proposal, not paper reproduction',
                               'source': 'coordination/M3_HANDOFF.md, small-sample mechanical observations',
@@ -249,10 +251,14 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
                          'no valid development-tested candidate means no holdout comparison'],
             'approval_required': ['coordinator review of this exact preflight', 'primary GPU release',
                                   'runtime access probe', 'full base hash/finiteness and independent-copy validation',
-                                  'reviewed live cached-response actual-input-plus-output enforcement proof for isolated codex exec'],
+                                  'reviewed live cached-response admission diagnostic and trusted per-invocation chronology for isolated codex exec'],
             'prices': {'agent_usd': None, 'gpu_usd': None, 'reason': 'no price supplied'}}
     if sum(f['size'] for f in files) * 4 + 1024**3 > BUDGETS['storage_bytes']:
         raise ValueError('four retained model copies exceed storage proposal')
+    codex_binary = shutil.which('codex')
+    if codex_binary is None:
+        raise ValueError('installed Codex binary required to seal diagnostic runtime identity')
+    task['editor']['runtime_identity'] = runtime_identity(task, codex_binary)
     result = {'task': task, 'preflight_sha256': json_hash(task)}
     json_write(output, result)
     return result

@@ -29,7 +29,7 @@ from tht_contract import external_evaluator, json_hash, load_jsonl, sha256
 from wsp_boundary import Boundary
 from wsp_weights import catalog, clone, finite_tensor, inventory, regular_file, strict_json
 from wsp_isolation import UnixProvider
-from wsp_usage import actual_usage, validate_live_proof
+from wsp_usage import RESPONSE_POLICY, actual_usage, editor_command, response_snapshots, runtime_identity, validate_live_proof
 
 HERE = Path(__file__).parent
 
@@ -261,6 +261,7 @@ def submit_sandbox(runtime, stage, command, mounts):
 
 def tool_contract(boundary):
     return {'schema': 'wsp-toolset/1', 'base_fingerprint': boundary.base_manifest['fingerprint'],
+            'response_budget_policy': RESPONSE_POLICY,
             'budgets': boundary.b, 'operations': {
                 'metadata': {'op': 'metadata', 'offset': 0, 'limit': 64},
                 'values': {'op': 'values', 'tensor': '<exact name>', 'indices': ['<unique integer flat index>']},
@@ -310,6 +311,8 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
     preflight = load_preflight(preflight_file)
     evidence = approval_gate(preflight, approval_file, release_file)
     task = preflight['task']
+    if runtime_identity(task, codex_binary) != task['editor']['runtime_identity']:
+        raise ValueError('actual editor runtime/binary/helper/code identity changed')
     evidence['live_actual_usage_proof'] = validate_live_proof(usage_proof, strict_json(Path(approval_file).read_bytes()), task)
     # Read-only resource admission; do not communicate with the primary harness.
     occupancy = subprocess.check_output(['nvidia-smi', '-i', '0', '--query-compute-apps=pid', '--format=csv,noheader,nounits'], text=True).strip()
@@ -345,14 +348,7 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
     json_write(contract_file, tool_contract(boundary))
     mounts = sandbox_mounts(Path(task['views']) / 'development', contract_file, channel / 'wsp.sock',
                             codex_binary=codex_binary, auth_file=auth_file, provider_socket=channel / 'provider.sock')
-    from astra_isolation import token_cap_config
-    command = ['/tools/wsp_isolation.py', 'editor-entry', '/usr/bin/python3', '/runtime/codex_capture.py',
-               '/usr/local/bin/codex', 'exec', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check',
-               '--dangerously-bypass-approvals-and-sandbox', '--json', '--color', 'never',
-               '-m', task['editor']['model'], '-c', 'model_reasoning_effort="' + task['editor']['effort'] + '"',
-               '-c', 'developer_instructions=""', '-c', 'features.plugins=false', '-c', 'features.multi_agent=false',
-               '-c', token_cap_config(task['budgets']['editor_agent_tokens']), '-C', '/task',
-               '-o', '/results/final.txt', task['editor']['prompt']]
+    command = editor_command(task, task['budgets']['editor_agent_tokens'])
     job = None
     log_process = None
     log_thread = None
@@ -365,6 +361,7 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
         json_write(root / 'editor_job.json', job)
         editor_deadline = time.time() + task['budgets']['editor_wall_seconds']
         editor_exit = None
+        observed_exit_at = None
         stop_reason = None
         log_limit_hit = threading.Event()
         log_process = subprocess.Popen(['docker', 'logs', '--follow', '--timestamps', job['job_id']], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -398,27 +395,33 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
                 usage = actual_usage(record['events'])
                 boundary.record_agent_usage(usage, 'fresh_editor_raw_token_events', final=final)
                 json_write(root / 'editor_usage_events.json', record['events'])
+                snapshots = response_snapshots(record['events'])
+                if any(total >= task['budgets']['editor_agent_tokens'] for _, total in snapshots[:-1]):
+                    raise ValueError('additional completed model response after actual threshold')
             return record['exit']
         while editor_runtime.status(job['job_id'])['state'] in ('RUNNING', 'PENDING'):
             editor_exit = observe_editor()
             if editor_exit is not None:
+                observed_exit_at = time.time()
                 break
             state = boundary.journal.state()
             usage = state['agent_usage']
             if (state['phase'] not in ('DEVELOPMENT', 'FROZEN') or time.time() >= editor_deadline or
-                    time.time() >= state['started_at_unix'] + task['budgets']['experiment_wall_seconds'] or log_limit_hit.is_set() or
-                    (usage and usage.get('actual_input_plus_output_tokens') is not None and usage['actual_input_plus_output_tokens'] >= task['budgets']['editor_agent_tokens'])):
-                stop_reason = 'actual_token_wall_log_or_state_limit'
+                    time.time() >= state['started_at_unix'] + task['budgets']['experiment_wall_seconds'] or log_limit_hit.is_set()):
+                stop_reason = 'wall_log_or_state_limit'
                 subprocess.run(['docker', 'exec', job['job_id'], '/usr/bin/python3', '-c', 'from pathlib import Path; Path("/tmp/editor-stop").touch()'], check=True, timeout=10)
                 for _ in range(10):
                     editor_exit = observe_editor()
                     if editor_exit is not None:
+                        observed_exit_at = time.time()
                         break
                     time.sleep(.5)
                 break
             boundary.check_storage()
             time.sleep(1)
-        observe_editor(final=editor_exit is not None and editor_exit['exit_code'] == 0 and stop_reason is None)
+        # A threshold stop may have a nonzero native exit. Retain it; only trusted
+        # response-admission/exit evidence can classify it as an accepted stop.
+        observe_editor(final=editor_exit is not None and stop_reason is None)
         # Preserve raw tar bytes. Never extract editor-created paths/symlinks on
         # the trusted host. Both sources are bounded tmpfs, no host bind output.
         for name in ('task', 'results'):
@@ -430,9 +433,21 @@ def run_approved(preflight_file, approval_file, release_file, *, usage_proof, co
         log_process.terminate(); log_process.wait(timeout=5)
         json_write(root / 'editor_terminal.json', {'backend': terminal, 'editor_exit': editor_exit, 'stop_reason': stop_reason,
                                                    'log_limit_hit': log_limit_hit.is_set()})
-        if stop_reason or not editor_exit or editor_exit['exit_code'] != 0:
-            raise ValueError('editor did not finish with complete usage inside its actual budgets')
-        if boundary.journal.state()['phase'] == 'FROZEN':
+        if not editor_exit:
+            raise ValueError('editor final exit is missing')
+        if (observed_exit_at is None or observed_exit_at > editor_deadline or
+                time.time() >= boundary.journal.state()['started_at_unix'] + task['budgets']['experiment_wall_seconds'] or log_limit_hit.is_set()):
+            stop_reason = stop_reason or 'final_wall_or_log_limit'
+        # Required trusted-host collector output. Neither the editor's writable
+        # files, our polling loop nor CONNECT proxy can manufacture this proof.
+        trace = strict_json((root / 'editor_response_evidence.json').read_bytes())
+        live = evidence['live_actual_usage_proof']
+        if (trace.get('invocation_id') != job['job_id'] or trace.get('runtime_identity_sha256') != live['runtime_identity_sha256'] or
+                trace.get('collector_sha256') != live['collector_sha256']):
+            raise ValueError('scientific admission trace is not bound to this invocation/runtime/collector')
+        completion = boundary.accept_editor_completion(strict_json((root / 'editor_usage_events.json').read_bytes()), trace,
+                                                       exit_code=editor_exit['exit_code'], forced_stop=stop_reason)
+        if completion['status'] == 'HOLDOUT_ELIGIBLE':
             # Stop serving editor capabilities before any private evaluation.
             server.shutdown()
             boundary.holdout()

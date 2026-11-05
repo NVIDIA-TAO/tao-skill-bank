@@ -61,7 +61,7 @@ execution approval. No approved patch is prepared in advance.
 | Resource | Limit |
 |---|---:|
 | Fresh editor | gpt-6-astra, xhigh; one isolated Codex exec session |
-| Actual editor input + output | 200,000 tokens, cached input counted once within input |
+| Editor response-admission threshold | 200,000 raw input+output tokens; cache included once; final admitted response may overrun |
 | Editor wall | 2,400 seconds |
 | Entire experiment wall | 5,400 seconds, including initial verification/copy |
 | Candidate attempts, including failures | 3 |
@@ -93,22 +93,58 @@ Those tiny smoke measurements do not establish corpus throughput, worst-case
 remain null. No retries, reclaimed reservations, candidate overwrite or cap
 reset is allowed. A fresh run requires a separate review, not recovery by reset.
 
-The agent-token limit is not inferred from a CLI flag. A continuing TUI session
-was observed to exceed its configured1,000,000 budget on raw total input+output;
-that observation does not establish why or imply equivalent isolated-exec
-behavior. `wsp_usage.py` reads raw `total_token_usage`, requires monotone counters
-in one fresh session, includes cached input exactly once and rejects resets.
-The watchdog closes capabilities at the actual ceiling. Missing final usage or
-an observed overshoot blocks holdout and invalidates completion. A completed
-response can arrive after its cost has been incurred: the watchdog **does not
-guarantee a zero-overshoot spend ceiling for an in-flight response**.
+The proposed agent budget is explicitly a **response-boundary threshold**, not
+an absolute spend ceiling. Count raw cumulative `input_tokens + output_tokens`
+from the fresh session's birth. Cached input is included once within input, not
+subtracted or added again; counter resets or a second session fail. Stop admitting
+new model responses once completed actual usage reaches200,000. At most one
+serial response admitted below the threshold may finish across it. Charge and
+export its entire actual usage and overrun; never clamp the ledger to200,000.
+New editor capability admissions also close at the observed threshold; already
+admitted tool work can finish. Trusted holdout admission is independent.
 
-Consequently real execution also requires independently reviewed live evidence
-of actual-ceiling enforcement with multiple cached responses in the exact
-isolated Codex exec configuration. A tiny100-token stop and a synthetic test
-cannot satisfy that gate. If the live case cannot establish the defined ceiling,
-revise the request-admission mechanism and review the new code/preflight first.
-Do not weaken the meaning of input tokens, subtract cache or relabel an overrun.
+The predeclared completion policy is:
+
+- A token stop without a valid freeze is incomplete. It supplies no invented
+  final answer, patch, formatting retry or holdout comparison.
+- A valid freeze can reach trusted holdout after complete final usage and an
+  authentic response-admission/completion/exit chronology satisfy this policy.
+  Reaching the exact threshold or a legitimate final-response overrun alone is
+  not a failure. An evidenced native token stop can have a nonzero exit code;
+  retain that actual code and reason rather than report a successful editor exit.
+- Missing final usage/admission evidence, resets, extra model-response admission
+  after the threshold, concurrent responses, unrelated errors, watchdog-forced
+  cancellation, or violations of any other frozen budget remain failures.
+
+A continuing TUI was observed to exceed its configured1,000,000 value on raw
+input+output; its cause and isolated-exec implications are not inferred here.
+Neither a one-second polling watchdog nor the provider CONNECT relay establishes
+next-response denial. The actual native admission mechanism remains unvalidated.
+A separately authorized live cached-response diagnostic must establish it before
+real execution. A tiny100-token stop or an under-threshold trace is insufficient.
+The diagnostic must reach its disclosed threshold, contain multiple genuine
+cached-response snapshots and show the attempted next response being denied.
+
+The diagnostic threshold may be lower than the scientific200,000. The reviewed
+proof explains that relationship and varies only `limit_tokens` and its derived
+half-threshold reminder. It binds the actual command template, model, effort,
+Codex version, binary/helper/Python hashes, image, provider route, prompt/tool and
+wrapper code hashes and all other frozen runtime budgets. Diagnostic inputs are
+explicitly declared synthetic development/tool fixtures: no real weights or GPU.
+This input substitution does not permit a different model, tool environment or
+stopping mechanism. Exact actual runtime identity is checked again before launch.
+
+`wsp_usage.response_completion` validates serial admission/completion/denial/exit
+chronology against every distinct raw cumulative token snapshot. Admissions
+must use the preceding **actual** total. Every completion must reference the
+corresponding raw event hash, in order. The trusted collector must establish the
+chronology's authenticity; proof Booleans cannot replace it. The runtime requires
+`editor_response_evidence.json` from that separately reviewed host-side collector,
+bound to the actual editor job ID, runtime identity and collector code hash. That
+file is never editor-writable. This preparation does not implement or claim a
+live admission collector or successful diagnostic: absent evidence fails closed.
+If the installed native mechanism admits a later response, repair that mechanism
+and review the changed identities before authorizing scientific execution.
 
 ## Weight tools and scientific invariants
 
@@ -155,7 +191,7 @@ Freeze requires complete unchanged-base and chosen-candidate development calls,
 a fresh candidate fingerprint verification, and a development-only rationale.
 The single freeze is committed in SQLite before its JSON export and immediately
 closes all editor capabilities. Only after the editor exits, its actual final
-usage is known and its runtime is stopped may trusted code run one base/edited
+usage and stop evidence pass the declared response-boundary policy and its runtime is stopped may trusted code run one base/edited
 holdout comparison. A failed holdout is terminal. Its feedback never reopens the
 editor or selects a second patch. No main Proxy/Benchmark feedback is consumed.
 
@@ -235,19 +271,33 @@ separate private records. Never manufacture them from this example:
   `approved_for_real_weights: true`, `actual_usage_proof_sha256`.
 - Release: same proposal/reviewer/time fields, `primary_gpu_released: true`,
   exact `host`, `gpu_ids: ["0"]`.
-- Live usage proof: `wsp-live-actual-usage-proof/1`,
+- Live usage proof: `wsp-live-actual-usage-proof/2`,
   `runtime: isolated_codex_exec`, `synthetic: false`,
-  `case: cached_multiresponse_actual_total`, exact model/effort/Codex version/
-  token limit, `actual_ceiling_enforced: true`, `followup_response_denied: true`,
-  actual token-events path/SHA, reviewed request-gate evidence path/SHA and
-  `observed_actual_usage` as emitted by `wsp_usage.actual_usage`.
+  `case: cached_multiresponse_actual_total`, complete `runtime_identity`,
+  `policy_sha256`, `scientific_threshold_tokens: 200000`, a disclosed
+  `diagnostic_threshold_tokens` and `threshold_rationale`, `collector_path` and
+  its checked `collector_sha256`,
+  actual token-events path/SHA, reviewed request-gate evidence path/SHA, actual
+  `observed_exit_code` and `observed_actual_usage` from `wsp_usage.actual_usage`.
 
-The proof's raw events must contain multiple increasing cumulative snapshots
-and positive cached input. Its request-gate evidence requires independent human
-review; Boolean assertions alone cannot demonstrate enforcement. If a strict
-ceiling cannot be guaranteed with the installed CLI, the real run remains blocked
-pending a reviewed response-admission implementation. Do not run the following
-command during preparation:
+The proof's raw events must contain multiple cached cumulative snapshots and
+reach its diagnostic threshold. The evidence document is `wsp-response-evidence/1`
+with `threshold_tokens`, `runtime_identity_sha256`, `collector_sha256`, an
+`invocation_id`, and ordered `events`. Each event records `at_unix` and one of:
+`response_admitted` (unique `response_id`, `actual_before`), `response_completed`
+(the admitted ID, `token_event_sha256`), `response_denied` (distinct attempted ID,
+`actual_before`, `reason: response_threshold`), or final `editor_exit` (actual
+`exit_code`, `reason: normal|response_threshold`; unrelated errors are rejected).
+The live proof must show a denied attempted next response; a normal scientific
+final response need not attempt another. Its complete chronology must still show
+no later admission. Token stops require the denial evidence. All raw snapshots
+must be accounted for; an extra response cannot be hidden by omitting its event.
+
+Authentic collection/API compatibility and denial require independent review.
+The code checks structural consistency and bound hashes, not the truth of an
+untrusted collector's assertions. The scientific run consumes the same reviewed
+collector identity and validates its own invocation's trace before holdout.
+Do not run the following command during preparation:
 
 ```bash
 python scripts/wsp.py run \
@@ -268,5 +318,5 @@ only when reproducing a frozen result, never to reset this trial's caps.
 Remaining real-runtime checks include full checkpoint hashes/finiteness/copy
 independence, selected-patch loadability, equal native profiles, actual GPU/wall
 timeouts, live API relay behavior, fresh editor context/tool provenance, and
-actual cached-response budget enforcement. CPU tensor/output tests establish
+actual cached-response admission enforcement and trusted final-usage collection. CPU tensor/output tests establish
 none of the model's scientific performance or those unexecuted runtime claims.
