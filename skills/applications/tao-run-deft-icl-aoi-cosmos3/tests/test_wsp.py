@@ -582,6 +582,26 @@ def test_export_schema_complete_and_incomplete(boundary):
     assert result['holdout_metrics']['mcc_delta'] is None  # synthetic scorer has no MCC
 
 
+
+def test_export_schema_accepts_observed_stop_without_freeze(boundary):
+    """Synthetic regression for the native incomplete-stop export contract."""
+    import subprocess
+    validator = sys._base_executable
+    if subprocess.run([validator, '-c', 'import jsonschema'], capture_output=True).returncode:
+        pytest.skip('no existing system JSON Schema validator')
+    item, calls = boundary
+    events = [usage_event(99990, 10, 80000), usage_event(200000, 20, 160000)]
+    item.accept_editor_completion(events, response_trace(events, 200000, denied=True, exit_code=-15), exit_code=-15)
+    item.journal.change('editor_incomplete', {}, lambda state: state.update(phase='ERROR'))
+    document = item.export()
+    assert document['editor_completion']['status'] == 'INCOMPLETE_STOP'
+    assert document['editor_completion']['exit_reason'] == 'observed_raw_threshold'
+    assert document['holdout_metrics'] is None and not calls
+    schema = json.loads((SCRIPTS.parent / 'references/wsp-export.schema.json').read_text())
+    subprocess.run([validator, '-c', 'import json,sys,jsonschema; x=json.load(sys.stdin); jsonschema.validate(x["document"],x["schema"])'],
+                   input=json.dumps({'document': document, 'schema': schema}), text=True, capture_output=True, check=True)
+
+
 def test_expired_native_deadline_does_not_start_model(tmp_path):
     import time
     from wsp_runtime import NativeForward

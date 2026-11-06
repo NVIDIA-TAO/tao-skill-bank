@@ -25,13 +25,13 @@
     "agent_usage": {"type": ["object", "null"]},
     "editor_completion": {
       "type": ["object", "null"],
-      "description": "Actual response-boundary stop evidence; a legitimate final-response overrun is fully charged, not clamped",
+      "description": "Actual observed-response stop evidence; completed overrun is charged, interrupted provider usage remains unknown",
       "properties": {
-        "status": {"enum": ["HOLDOUT_ELIGIBLE", "INCOMPLETE_NO_FREEZE"]},
+        "status": {"enum": ["HOLDOUT_ELIGIBLE", "INCOMPLETE_NO_FREEZE", "INCOMPLETE_STOP"]},
         "threshold_tokens": {"type": "integer", "minimum": 2},
         "actual_overrun_tokens": {"type": "integer", "minimum": 0},
         "exit_code": {"type": "integer"},
-        "exit_reason": {"enum": ["normal", "response_threshold"]}
+        "exit_reason": {"enum": ["normal", "response_threshold", "observed_raw_threshold", "external_signal", "external_stop", "wall_log_or_state_limit", "final_wall_or_log_limit"]}
       }
     },
     "prices_usd": {
