@@ -110,7 +110,7 @@ class Suite:
                 'backend_state':native.get('Status'),'exit_code':native.get('ExitCode')})
 
     def run_job(self,stage,command,*,image=None,entrypoint='/workspace/.venv/bin/python',strip_entrypoint=False,
-                mounts=(),env=(),required_output=None,gpu=True,heartbeat=None,resume_answers=False,recover_training=None,stage_wall_seconds=None,host_result_mount=False):
+                mounts=(),env=(),required_output=None,gpu=True,heartbeat=None,resume_answers=False,recover_training=None,stage_wall_seconds=None,host_result_mount=False,extra_args=()):
         runtime=Docker(self.root/'jobs',image or self.task['framework_image'])
         stage_cap=stage_wall_seconds or self.task['budgets']['stage_wall_seconds']
         if strip_entrypoint: command=command[1:]
@@ -163,7 +163,7 @@ class Suite:
                         launch_mounts.append((prior,'/previous_raw_answers.jsonl',True))
                         launch_env.append(('TAO_RESUME_ANSWERS','/previous_raw_answers.jsonl'))
                 job=runtime.submit(stage.replace('/','-'),launch_command,mounts=launch_mounts,env=launch_env,
-                       entrypoint=entrypoint,gpu=gpu,retry_of=retry_of,host_result_mount=host_result_mount,on_open=lambda jid:self.store.attach_job(attempt,jid))
+                       entrypoint=entrypoint,gpu=gpu,retry_of=retry_of,host_result_mount=host_result_mount,extra_args=extra_args,on_open=lambda jid:self.store.attach_job(attempt,jid))
             first_started=self.store.db.execute('SELECT MIN(started) FROM attempts WHERE stage=?',(stage,)).fetchone()[0]
             stage_deadline=min(self.deadline,first_started+stage_cap)
             if self.budget_scope:

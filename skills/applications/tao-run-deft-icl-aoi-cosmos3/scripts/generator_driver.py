@@ -172,7 +172,7 @@ class GeneratorSuite(Suite):
         env=list(g.get('environment',{}).items())+[('PYTHONPATH',str(APP)+':/workspace/cdf-anomalygen')]
         result=self.run_job(f'G/generate/{number}',[str(APP/'generator_worker.py'),'--request',str(request_path)],
                             image=g['image'],entrypoint='/opt/venv/bin/python',mounts=mounts,env=env,
-                            required_output='admission.json',host_result_mount=True,
+                            required_output='admission.json',host_result_mount=True,extra_args=('--hostname','localhost'),
                             stage_wall_seconds=self.task['budgets']['generator_wall_seconds'])
         path=Path(result['job']['results_dir'])/'admission.json'
         admission=json.loads(path.read_text());validate_admission(admission,g['prepared_package'],expected_inventory=self.task['prepared_inventory'])

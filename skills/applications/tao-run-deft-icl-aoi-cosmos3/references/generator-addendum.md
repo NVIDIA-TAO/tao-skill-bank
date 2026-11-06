@@ -253,3 +253,19 @@ Model/runtime trees bind directory target contents and membership plus every
 intermediate symlink. Resume resolves the full chain again. Cycles and unknown
 dangling links fail; explicitly captured container-only interpreter targets
 remain bound to their exact image and artifact bytes.
+
+
+## Generator launch parity and runtime repairs
+
+The generator's native Docker launch uses `--network none --hostname localhost`
+and `/opt/venv/bin/python`. The explicit hostname matches the accepted isolated
+native runtime; the historical classifier/training launch defaults are unchanged.
+Acceptance must exercise this actual application launch contract. A helper that
+adds Docker flags absent from the application only validates its own invocation.
+
+If a launch mismatch is discovered during a frozen run, preserve the original
+attempt, its incomplete state or native terminal outcome, elapsed time and costs.
+Prepare repairs on a separate commit/worktree. Any subsequent authorized run must
+record the repair/intervention and bind its effective code/runtime; do not present
+it as an uninterrupted success of the original frozen harness. CPU argv tests
+prove launch construction, not native distributed initialization or generation.
