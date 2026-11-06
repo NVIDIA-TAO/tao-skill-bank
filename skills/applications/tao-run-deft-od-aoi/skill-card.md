@@ -1,5 +1,5 @@
 ## Description: <br>
-Runs a binary RT-DETR DEFT object-detection loop for industrial inspection with frozen KPI/test roles, SigLIP hard-example retrieval, cumulative COCO admission, KPI-selected adaptive training, and optional AnomalyGenNext synthesis. <br>
+Runs a binary RT-DETR DEFT object-detection loop for industrial inspection with frozen KPI/test roles, SigLIP hard-example retrieval, cumulative COCO admission, KPI-selected adaptive training, and optional AnomalyGen 1.2 synthesis. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 

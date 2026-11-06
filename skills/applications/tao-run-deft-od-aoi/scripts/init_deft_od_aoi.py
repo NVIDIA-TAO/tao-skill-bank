@@ -233,6 +233,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     if baseline_mode not in {"cold_start", "checkpoint"}:
         raise ValueError("baseline_mode must be cold_start or checkpoint")
     synthesis = policy.get("synthesis", {})
+    synthesis.update(sub_skill="tao-generate-anomalies", container_image_key="images.metropolis_sdg.anomalygen", mode="inference_only")
     synthesis_enabled = bool(synthesis.get("enabled"))
     role_reports = {}
     role_documents = {}

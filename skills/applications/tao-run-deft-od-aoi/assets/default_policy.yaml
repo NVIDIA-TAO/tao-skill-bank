@@ -75,6 +75,10 @@ training:
   late_best_window: 3
   extension_epochs: 12
 synthesis:
+  sub_skill: tao-generate-anomalies
+  container_image_key: images.metropolis_sdg.anomalygen
+  mode: inference_only
+  exclude_stems: null
   enabled: false
   fn_selection:
     mode: generated_per_type_plan

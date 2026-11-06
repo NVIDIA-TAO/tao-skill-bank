@@ -120,7 +120,7 @@ class ExtraMounts(unittest.TestCase):
         self.assertIn("readonly", line)
 
     def test_workdir_is_emitted(self):
-        self.assertIn("--workdir", _args(workdir="/workspace/paidf-anomalygen"))
+        self.assertIn("--workdir", _args(workdir="/workspace/cdf-anomalygen"))
 
     def test_managed_mounts_are_always_present(self):
         line = " ".join(_args())

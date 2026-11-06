@@ -1,11 +1,11 @@
-# AnomalyGenNext synthesis contract
+# AnomalyGen 1.2 synthesis contract
 
 Read this only when synthesis is enabled.
 
 ## Reference pool
 
 `synthesis.pool_dataset_root` points to the normalized pool consumed by
-`tao-prepare-anomalygennext-inputs`:
+`tao-generate-anomalies`:
 
 ```text
 POOL/
@@ -64,26 +64,26 @@ routes:
 `checkpoint_root` must contain the required Qwen tokenizer model assets under
 `hf/` and `facebook/dinov2-large/` with its Transformers config and weights.
 The training action mounts this entire directory over the image's
-`/workspace/paidf-anomalygen/checkpoints`; mounting only DINOv2 is insufficient.
-Reuse that same complete root for `tao-prepare-anomalygennext-inputs.run_amp`
-and `tao-generate-od-defects.generate`. Both actions require the canonical
+`/workspace/cdf-anomalygen/checkpoints`; mounting only DINOv2 is insufficient.
+Reuse that same complete root for `tao-generate-anomalies prepare --source od-gaps --prepare-stage amp`
+and `tao-generate-anomalies inference_only`. Both actions require the canonical
 mount rather than independent SAM2 or Hugging Face cache inputs, and each
 validates its action-specific assets before GPU work.
 
 Run `resolve_deft_od_aoi_synthesis.py` before the candidate cache. A missing
 handoff produces `finetune_requests.json`. Execute each request through
-`tao-finetune-anomalygennext` once, then resolve again into a new directory.
+`tao-generate-anomalies finetune_only` once, then resolve again into a new directory.
 
 Accept a completed handoff only when dataset identity matches, anomaly types
 are nonempty, and recipe/checkpoint hashes verify. Freeze the emitted
 `resolved_synthesis_policy.yaml` for the run. Never start or resume
-AnomalyGenNext training inside an iteration.
+AnomalyGen 1.2 training inside an iteration.
 
 ## Iteration handoff
 
 `prepare_deft_od_aoi_synthesis.py` converts exact strict FN/annotation matches
-to a filtering YAML for `tao-prepare-anomalygennext-inputs`. The resulting
-generation plan is passed to `tao-generate-od-defects`. Only its validated
+to a filtering YAML for `tao-generate-anomalies`. The resulting
+generation plan is passed to `tao-generate-anomalies`. Only its validated
 logical `binary_coco` output enters admission, under the cumulative synthetic
 fraction cap. Its exact relative path comes from the authoritative action
 contract; the native fine-grained COCO remains separately available as
@@ -154,3 +154,30 @@ applies after generation.
 It writes `synthetic_plan.json`, binds its SHA-256 into the request, and records
 the complete budget calculation. If no budget remains, preparation emits a
 typed `SKIPPED/no_synthetic_budget` result.
+
+AnomalyGen 1.2 synthesis uses the single `tao-generate-anomalies` skill:
+`prepare --source od-gaps` for inputs/AMP/finalize, `finetune_only` for one-time
+bootstrap, and `inference_only --pseudo-label` for each finalized group. Resolve
+`images.metropolis_sdg.anomalygen`; mount the complete selected-stage cache at
+`/workspace/cdf-anomalygen/checkpoints`. Keep the prepared manifest and its
+hash-bound artifacts. Emit COCO with application `scripts/emit_sdg_coco.py`
+using `--runs-manifest` and `--prepared-manifest`; admission uses the converter's
+`pseudo_labels/coco_annotations_od_defect.json`. Pass caller `--exclude-stems`
+at preparation, generation and conversion, and set `synthesis.exclude_stems`
+for admission. The preparation CLI option overrides the frozen YAML exclusion path; omission uses the application path. The original source/donor provenance
+remains in the prepared bundle. Existing NN improvement, box-quality, fraction,
+whole-FN planning and split/KPI policies are unchanged. Fully blocked output is
+COMPLETE with zero synthetic contribution; preserve blocked IDs without retry
+or top-up. Guardrail capability limitations remain explicit.
+
+Application COCO admission requires each generated image's `anomalygen_prepared`
+binding to the hash-bound prepared manifest and dataset group. Conversion and
+admission recheck explicit `source_mask`, `fn_filepath`, `clean_filepath`, and
+`aligned_mask` provenance against current caller exclusions, including after
+mask alignment changes the filename. Missing or altered ancestry is a hard
+stop. Standalone smoke COCO conversion without a prepared bundle demonstrates
+conversion only and is not admissible as application training data.
+
+Historical AnomalyGen 1.1 OD checkpoint execution and the full OD AOI runtime
+remain unverified in this migration; CPU converter and contract tests establish
+only their tested interfaces.

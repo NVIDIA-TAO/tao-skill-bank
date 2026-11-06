@@ -346,3 +346,20 @@ PRs must pass all three before merge.
 - **Minimum-viable skill is `SKILL.md` only.** Add `references/skill_info.yaml` only when multi-action structured metadata earns its keep.
 - **One canonical location per skill.** Model, data, platform, and application skills live only in their layer directories; `skills/core/` is for helper/router skills, not mirrored copies.
 - **Prefer portability over cleverness.** A skill that works across three coding agents is more valuable than a skill that works perfectly in one.
+
+## AnomalyGen 1.2 branch compatibility
+
+The `feat/anomalygen1.2` branch consolidates AnomalyGen data operations into
+[`tao-generate-anomalies`](skills/data/tao-generate-anomalies/SKILL.md), using
+`images.metropolis_sdg.anomalygen` and the CDF AnomalyGen 1.2 runtime. The four
+modes are prepare, full, finetune_only, and inference_only. OD preparation and
+fine-tuning share this skill; OD COCO conversion belongs to its application.
+
+The public default adapter is `nvidia/Cosmos-AnomalyGen-PCB-Nano`.
+`nvidia/Cosmos-AnomalyGen-Metal-Nano` and `nvidia/Cosmos-AnomalyGen-Glass-Nano`
+are additional public examples; always verify the downloaded adapter and paired
+recipe before use. Old Predict2 1.0 checkpoints require retraining. Unstamped
+Cosmos3 1.1 texture adapters require their exact original recipes and native
+legacy inference validation; they cannot resume training. No old image is kept
+as a fallback. Existing main-branch consumers should review these changes before
+adopting this branch; structural tests do not establish image quality.

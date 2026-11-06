@@ -114,16 +114,18 @@
     "anomalygen": {
       "sub_skill": "tao-generate-anomalies",
       "mode": "inference_only",
-      "num_search_run": 0,
-      "nn_threshold": 0,
       "project": "nvpcb",
       "num_SDG": 20,
       "container": "resolved-from-versions.yaml",
-      "checkpoint_dir": "/abs/workspace/augmentation/anomalygen/checkpoints/nvpcb",
       "dataset_dir": "/abs/workspace/augmentation/anomalygen/datasets/nvpcb",
       "defect_spec": "/abs/workspace/augmentation/anomalygen/datasets/nvpcb/defect_spec.jsonl",
       "cosmos_models_dir": "/abs/workspace/augmentation/anomalygen/base_checkpoints",
-      "label": "NG"
+      "label": "NG",
+      "checkpoint": "<workspace>/augmentation/anomalygen/checkpoints/nvpcb/model/iter_000015000.pt",
+      "recipe": "<workspace>/augmentation/anomalygen/checkpoints/nvpcb/model/exp_texture_ft_pcb.yaml",
+      "checkpoint_repo": "nvidia/Cosmos-AnomalyGen-PCB-Nano",
+      "exclude_stems": null,
+      "quality_policy": "native_search_3_no_automatic_discard"
     }
   },
   "iterations": {},

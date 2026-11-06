@@ -14,7 +14,7 @@ workspace/
 │   └── anomalygen/
 │       ├── base_checkpoints/          # Cosmos base checkpoints cache
 │       ├── checkpoints/<project>/     # HF checkpoint auto-downloads by default; optional BYO override
-│       │                                # holds ag_config.yaml + fine-tuned checkpoint.
+│       │                                # holds model/exp_texture_ft_pcb.yaml + fine-tuned checkpoint.
 │       └── datasets/<project>/        # clean boards, cad masks, defect_spec.jsonl
 ├── images/
 │   ├── ... AOI images ...
@@ -137,7 +137,7 @@ results/run_<id>/
 └── iterN/
     ├── routing/
     ├── anomalygen/
-    │   ├── sdg/                       # SDG_result.csv, reconstructed_image/, original_image/
+    │   ├── sdg/                       # texture_ft_generation_result.csv, reconstructed_image/, original_image/
     │   └── sdg_sharegpt.json          # generated bare NG records
     ├── mining/
     ├── assemble/

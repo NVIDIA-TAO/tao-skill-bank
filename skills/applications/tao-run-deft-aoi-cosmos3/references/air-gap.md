@@ -14,7 +14,7 @@ visible from the compute frame:
   mapping, and either a verified prepared PTM or enough local cache/storage to
   run `prepare_cosmos3_vlm_checkpoint.py` without network access;
 - Proxy, Benchmark, Mining JSON and all referenced images;
-- the AnomalyGen fine-tuned checkpoint (`ag_config.yaml` plus the
+- the AnomalyGen fine-tuned checkpoint (`model/exp_texture_ft_pcb.yaml` plus the
   iteration checkpoint), its dataset directory (`defect_spec.jsonl`,
   `semantic_segmentation_labels.json`, clean images, cad masks), and the Cosmos
   base-checkpoints cache — required only when the AnomalyGen stage will run;
@@ -53,3 +53,11 @@ Benchmark hash, and bare annotation contract still apply.
 Never read `references/network-bootstrap.md` in this mode.
 
 When AnomalyGen will run, its base cache and Guardrail safety model must be fully pre-staged, and the base cache must be verified offline with the container's own check before SDG.
+
+For AnomalyGen 1.2, stage the image resolved from `images.metropolis_sdg.anomalygen`,
+PCB-Nano's actual `model/iter_000015000.pt` and `model/exp_texture_ft_pcb.yaml`,
+Nano DCP base, Wan VAE, Qwen tokenizer and both guardrail repositories. Add only
+the models required by AMP or quality evaluation when selected. Record native
+`preflight_env_ckpt.sh` and CUDA 13.2 / driver evidence; distinguish optional
+unused groups from missing generation assets. A download is never an offline
+repair. See the unified skill's checkpoint and runtime contracts.

@@ -23,7 +23,7 @@ The **Run Configuration & Outcome** card always contains the two-column DEFT
 experiment summary followed by **Training Set Growth** with the exact columns
 `Iteration`, `KNN Raw Mined`, `SDG Generated`,
 `New Unique Images (After Dedup)`, `Training Set Total`, and `Δ`. `SDG
-Generated` is the row count of the committed `SDG_result.csv`; the two final
+Generated` is the row count of the committed `texture_ft_generation_result.csv`; the two final
 growth columns come from the cumulative combined training CSV, so `New Unique
 Images (After Dedup)` always equals `Δ`. Runtime totals are sums of positive measured
 `duration_sec` values from `deft_state.json.events`; identify missing historical

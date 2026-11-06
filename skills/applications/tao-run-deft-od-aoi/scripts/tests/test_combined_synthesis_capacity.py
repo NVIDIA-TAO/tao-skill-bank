@@ -53,6 +53,7 @@ def _admit(root: Path, basis: str, prior_synthetic: int):
     previous = root / "previous.json"
     previous.write_text(json.dumps({"images": images, "annotations": annotations,
                                     "categories": [{"id": 1, "name": "defect"}]}))
+    ADMISSION.bind_coco(previous, root, only_synthetic=True)
     output = root / "admitted"
     report = ADMISSION.MODULE.admit(policy, candidates, retrieval, output, previous, "copy")
     state = root / "state.json"

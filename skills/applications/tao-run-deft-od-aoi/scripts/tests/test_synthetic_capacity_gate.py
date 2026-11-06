@@ -9,6 +9,12 @@ import pytest
 
 
 SCRIPT = Path(__file__).parents[1] / "commit_deft_od_aoi_stage.py"
+import sys
+_shared_test = Path(__file__).resolve().parents[4] / "data/tao-generate-anomalies/scripts"
+sys.path.insert(0, str(_shared_test))
+sys.path.insert(0, str(_shared_test / "tests"))
+from native_fixture import bind_coco, write_generation_report
+
 SPEC = importlib.util.spec_from_file_location("capacity_gate_commit", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
@@ -145,10 +151,7 @@ def test_zero_synthetic_admission_uses_whole_iteration_growth(tmp_path: Path, ne
                  new_training_images=0, role_status={})
     post.write_text(json.dumps(value))
     generation = tmp_path / "generation.json"
-    generation.write_text(json.dumps({
-        "status": "COMPLETE", "generated": 0,
-        "groups": [{"requested": 2, "generated": 0, "guardrail_blocked": 2}],
-    }))
+    write_generation_report(generation, 0, 2)
     result = MODULE.commit(state, "iteration_synthesis", 1, [
         f"generation_report={generation}", f"admission_report={post}",
     ])

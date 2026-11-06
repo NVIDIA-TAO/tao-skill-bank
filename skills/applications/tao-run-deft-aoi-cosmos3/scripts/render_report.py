@@ -563,6 +563,13 @@ def _augmentation_rows(state: dict[str, Any]) -> str:
         phase = iterations[label]
         sdg_rows = _csv_rows(phase.get("anomalygen_sdg_csv"))
         generated = 0 if phase.get("anomalygen_skipped") else (len(sdg_rows) if sdg_rows else None)
+        native = phase.get("anomalygen_accounting") or {}
+        blocked_detail = ""
+        if native:
+            generated = native["generated"]
+            blocked_detail = f"; guardrail blocked: {native['guardrail_blocked']}"
+            if not native["training_ready"]:
+                blocked_detail += "; no synthetic training data"
         summary = _optional_json(phase.get("mining_summary"))
         raw = _first_number(summary, ("raw_candidates", "candidate_count", "input_rows", "raw_rows"))
         kept = phase.get("mining_mined_count")
@@ -587,7 +594,7 @@ def _augmentation_rows(state: dict[str, Any]) -> str:
                 allocated = None
         rows.append(
             f'<tr><td><strong>{_escape(label.title())}</strong></td><td class="num">{_fmt(requested)}</td><td class="num">{_fmt(allocated)}</td>'
-            f'<td class="num">{_fmt(generated)}</td><td>{_defect_breakdown(sdg_rows)}</td><td class="num">{_fmt(raw)}</td>'
+            f'<td class="num">{_fmt(generated)}</td><td>{_defect_breakdown(sdg_rows)}{_escape(blocked_detail)}</td><td class="num">{_fmt(raw)}</td>'
             f'<td class="num">{_fmt(kept)}</td><td class="num">{_fmt(new_unique)}</td><td class="num">{_fmt(train_count)}</td></tr>'
         )
     return "\n".join(rows) or '<tr><td colspan="9">No augmentation has been committed yet.</td></tr>'
@@ -619,7 +626,7 @@ def _artifact_rows(state: dict[str, Any], contract: dict[str, Any]) -> str:
         ("proxy_results_json", "Proxy results"),
         ("proxy_gaps_summary", "Proxy RCCA"),
         ("mining_targets_json", "Routing targets"),
-        ("anomalygen_sdg_csv", "AnomalyGen SDG_result.csv"),
+        ("anomalygen_sdg_csv", "AnomalyGen texture_ft_generation_result.csv"),
         ("anomalygen_allocation_json", "AnomalyGen AMP allocation"),
         ("anomalygen_sharegpt_json", "AnomalyGen ShareGPT"),
         ("mining_mined_parquet", "Mined candidates"),

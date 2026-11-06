@@ -22,7 +22,7 @@ template (`references/baseline_spec.yaml`), and offer to scaffold the tree.
 
 **Auto-fetched on first use (do not pre-stage unless air-gapped):** the
 ChangeNet backbone (`nvidia/C-RADIOv2-B`), the AnomalyGen fine-tuned checkpoint
-(`nvidia/Cosmos-AnomalyGen-PCB-2B`), the Cosmos/AnomalyGen base checkpoints,
+(`nvidia/Cosmos-AnomalyGen-PCB-Nano`), the Cosmos/AnomalyGen base checkpoints,
 and the AnomalyGen PCB reference dataset
 (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) — all gated by `HF_TOKEN` and cached
 in their documented locations below. **Note:** the AnomalyGen PCB
@@ -63,7 +63,7 @@ creates (paths under `<workspace>` unless absolute):
 │       │                                    # `<project>` is the project label (e.g. UC1).
 │       │                                    # See references/tao-generate-anomalies.md for details.
 │       ├── checkpoints/<project>/           # Optional BYO override; HF checkpoint auto-downloads by default.
-│       ├── base_checkpoints/                # Manifest-pinned Cosmos base models cache (~22 GB; Predict2 Text2Image 2B).
+│       ├── base_checkpoints/                # Manifest-pinned Cosmos base models cache (Nano DCP + Wan VAE + tokenizer + guardrails).
 │       └── datasets/<project>/              # PCB reference data override — defect_spec.jsonl + per-texture image/mask subdirs.
 └── results/run_<YYYYMMDD_HHMMSS>/           # created/resumed by this workflow (= ${RESULTS_DIR})
 ```
@@ -120,16 +120,15 @@ results/run_<YYYYMMDD_HHMMSS>/               # = ${RESULTS_DIR}
     ├── routing_results/<TS>/                # mining_gaps.parquet, anomalygen_gaps.parquet, routing_summary.txt
     ├── anomalygen/
     │   ├── amp/                             # AMP testcase intermediates (one subdir per sample row in testcase.jsonl)
-    │   ├── testcase.jsonl                   # built by prep_testcase.sh; consumed by run_sdg.sh
+    │   ├── testcase.jsonl                   # native testcase with source and mask identities
     │   └── sdg/                             # `synthetic_dataset_generation.py` output (= tao-generate-anomalies `output_dir`)
-    │       ├── SDG_result.csv               # one row per generated sample with params + PSNR
+    │       ├── texture_ft_generation_result.csv               # one row per generated sample with params + PSNR
     │       ├── reconstructed_image/         # NG outputs (used as ChangeNet input_path)
     │       ├── original_image/              # OK inputs paired 1-to-1 (used as ChangeNet golden_path)
     │       ├── original_mask/
     │       ├── cropped_image/
     │       ├── cropped_mask/
     │       └── annotated_image/
-    ├── ag_config_sdg.yaml                   # sanitized config (job + model only); bind-mounted at SDG launch onto the real checkpoint's ag_config.yaml
     ├── mining_filter/
     │   ├── mining_pool.csv                  # combined SDG rows + real mined rows (similarity ≥ 0.9); used for training
     │   ├── sdg_rows.csv                     # raw output of scripts/changenet_data_pair_prepare.py before path rewriting

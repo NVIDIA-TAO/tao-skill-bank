@@ -16,11 +16,11 @@ DEFT_SKILLS = {
     REPO_ROOT / "skills/applications/tao-run-deft-aoi": (
         "images.tao_toolkit.pyt",
         "images.tao_toolkit.data_services",
-        "images.metropolis_sdg.paidf_anomalygen",
+        "images.metropolis_sdg.anomalygen",
     ),
     REPO_ROOT / "skills/applications/tao-run-deft-aoi-cosmos3": (
         "images.tao_toolkit.data_services",
-        "images.metropolis_sdg.paidf_anomalygen",
+        "images.metropolis_sdg.anomalygen",
     ),
     REPO_ROOT / "skills/applications/tao-run-deft-pas": (
         "images.tao_toolkit.deft_pas_pyt",
@@ -64,7 +64,7 @@ def test_cosmos3_deft_resolves_model_image_from_skill_info() -> None:
 
 
 def test_active_deft_references_do_not_pin_anomalygen_release() -> None:
-    pinned = re.compile(r"nvcr\.io/nvidia/paidf-anomalygen:[^\s`'\"]+")
+    pinned = re.compile(r"nvcr\.io/nvidia/(?:paidf|cdf)-anomalygen:[^\s`'\"]+")
     offenders: list[str] = []
     for skill_root in DEFT_SKILLS:
         for path in sorted((skill_root / "references").glob("*.md")):
@@ -72,6 +72,22 @@ def test_active_deft_references_do_not_pin_anomalygen_release() -> None:
                 offenders.append(str(path.relative_to(REPO_ROOT)))
 
     assert not offenders, (
-        "DEFT references must resolve images.metropolis_sdg.paidf_anomalygen "
+        "DEFT references must resolve images.metropolis_sdg.anomalygen "
         "from versions.yaml instead of pinning a tag: " + ", ".join(offenders)
     )
+
+
+def test_anomalygen_single_version_key_and_unified_actions() -> None:
+    import subprocess
+    import sys
+    import yaml
+    versions = yaml.safe_load((REPO_ROOT / 'versions.yaml').read_text())
+    images = versions['images']['metropolis_sdg']
+    assert images['anomalygen'] == 'nvcr.io/nvidia/cdf-anomalygen:1.2.0'  # versions-key: images.metropolis_sdg.anomalygen
+    assert 'paidf_anomalygen' not in images and 'anomalygen_next' not in images
+    resolved = subprocess.run([sys.executable, str(REPO_ROOT / 'scripts/resolve_versions_key.py'),
+                               'images.metropolis_sdg.anomalygen'], capture_output=True, text=True, check=True)
+    assert resolved.stdout.strip() == images['anomalygen']
+    info = yaml.safe_load((REPO_ROOT / 'skills/data/tao-generate-anomalies/references/skill_info.yaml').read_text())
+    assert info['container_image'] == images['anomalygen']
+    assert set(info['actions']) == {'prepare', 'full', 'finetune_only', 'inference_only'}

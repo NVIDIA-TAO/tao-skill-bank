@@ -115,12 +115,12 @@ path contract gets what it needs through `mounts`, plus `workdir` and `env`:
 
 ```
 tao_run(
-  image="nvcr.io/nvidia/paidf-anomalygen:1.0.1",
+  image="nvcr.io/nvidia/cdf-anomalygen:1.2.0",
   command=[...],
   mounts=[{"subdir": "augmentation/anomalygen/base_checkpoints",
-           "target": "/workspace/paidf-anomalygen/checkpoints", "ro": true}],
-  workdir="/workspace/paidf-anomalygen",
-  env={"PYTHONPATH": "/workspace/paidf-anomalygen"})
+           "target": "/workspace/cdf-anomalygen/checkpoints", "ro": true}],
+  workdir="/workspace/cdf-anomalygen",
+  env={"PYTHONPATH": "/workspace/cdf-anomalygen"})
 ```
 
 Prefer a mount to copying: no duplication, no staleness, and `ro` keeps the job

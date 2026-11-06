@@ -35,10 +35,10 @@ def test_cosmos_image_allowlist_includes_compute_capability_variant():
 
 def test_pas_image_families_have_a_shared_checker_architecture_gate():
     assert preflight.known_supported_sms(
-        "nvcr.io/nvstaging/tao/tao-toolkit-pyt:test", []
+        "nvcr.io/nvstaging/tao/tao-toolkit-pyt:test", []  # unpinned: synthetic image-acquisition test fixture
     )
     assert preflight.known_supported_sms(
-        "nvcr.io/nvstaging/tao/tao-toolkit-ds:test", []
+        "nvcr.io/nvstaging/tao/tao-toolkit-ds:test", []  # unpinned: synthetic image-acquisition test fixture
     )
 
 
@@ -70,7 +70,7 @@ def test_docker_container_probe_is_deferred_when_preapproval_requests_it(
     )
     assert preflight.check_local_docker(
         [], {}, 20, False,
-        "nvcr.io/nvstaging/tao/tao-toolkit-pyt:test",
+        "nvcr.io/nvstaging/tao/tao-toolkit-pyt:test",  # unpinned: synthetic image-acquisition test fixture
         "ubuntu:22.04", False, [], None, 50.0, False, [], True,
     )
     assert "deferred until approval" in capsys.readouterr().out

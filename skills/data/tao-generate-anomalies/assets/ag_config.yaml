@@ -1,50 +1,44 @@
-# DDP config template (default, use with predict2_anomaly_gen_ddp_{2b,14b}).
-# Placeholders in <angle-brackets> are filled by scripts/utilities/generate_config.py.
-# Keep sections minimal — the experiment provides defaults for everything else.
-job:
-  project: anomaly_gen
-  group: <NAME>
-  name: <NAME>_training_FP32_lr<LR>_bs=<BATCH_SIZE>_<MODEL_SIZE>_<IMAGE_SIZE>x<IMAGE_SIZE>
-optimizer:
-  lr: <LR>
-checkpoint:
-  save_iter: <SAVE_ITER>
-trainer:
-  max_iter: <MAX_ITER>
-  logging_iter: 10
-  validation_iter: <VALIDATION_ITER>
-  run_validation: True
-  early_stop:
-    enabled: <EARLY_STOP_ENABLED>
-    metric: nn
-    patience: <EARLY_STOP_PATIENCE>
-    min_delta: 0
-    min_delta_mode: rel
-dataloader_train:
-  batch_size: <BATCH_SIZE>
-  dataset:
-    dataset_dir: <DATASET_DIR>
-    image_size:
-      - <IMAGE_SIZE>
-      - <IMAGE_SIZE>
-    anomaly_types: <ANOMALY_TYPES>
-    seed: 1
-    data_augprob: 0.5
-    aug_type: <AUG_TYPE>
-    ratio_range: <RATIO_RANGE>
-dataloader_val:
-  batch_size: 32
-  dataset:
-    input_data_path: <VALIDATION_JSONL>
-model:
-  config:
-    ag_config:
-      ad_precision: float32
-      t5_model_name: checkpoints/google-t5/t5-large
-      anomaly_embedding:
-        anomaly_types: <ANOMALY_TYPES>
-        freeze: False
-      mask_encoder:
-        encoder_config:
-          init_cfg:
-            checkpoint: checkpoints/NVDINOV2/nv_dinov2_classification_model.ckpt
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# AnomalyGen 1.2 training recipe template. Set dataset paths and class pairs before use.
+task_type: texture_ft
+experiment: anomalygen_texture_ft
+model_size: nano
+per_class_lora_rank: 8
+per_class_lora_alpha: 8
+max_iter: 5000
+validation_iter: 1000
+run_validation_on_start: true
+save_iter: 1000
+cycle_lengths: 5000
+warm_up_steps: 500
+logging_iter: 10
+seed: 42
+lr: 0.001
+betas:
+- 0.9
+- 0.95
+eps: 1.0e-06
+weight_decay: 0.0
+batch_size: 4
+num_workers: 4
+shift: 1.0
+validation_batch_size: 16
+early_stop_enabled: false
+early_stop_metric: nn
+early_stop_patience: 5
+early_stop_min_delta: 0.0
+early_stop_min_delta_mode: rel
+crop_mode: scale
+input_size_ladder:
+- 256
+- 512
+- 1024
+- 1536
+crop_ratio_range:
+- 1.5
+- 2.5
+scale_range:
+- 0.3333333333333333
+- 3.0
+inference_scale: 1.0

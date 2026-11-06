@@ -12,6 +12,12 @@ import pytest
 
 
 SCRIPT = Path(__file__).parents[1] / "commit_deft_od_aoi_stage.py"
+import sys
+_shared_test = Path(__file__).resolve().parents[4] / "data/tao-generate-anomalies/scripts"
+sys.path.insert(0, str(_shared_test))
+sys.path.insert(0, str(_shared_test / "tests"))
+from native_fixture import bind_coco, write_generation_report
+
 SPEC = importlib.util.spec_from_file_location("commit_deft_od_aoi_stage", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
@@ -432,10 +438,7 @@ def test_synthesis_reconciles_generated_and_blocked_counts(tmp_path: Path) -> No
                  current_iteration=1, last_stage="iteration_admission")
     state.write_text(json.dumps(value))
     generation = tmp_path / "generation_report.json"
-    generation.write_text(json.dumps({
-        "status": "COMPLETE", "generated": 2,
-        "groups": [{"requested": 3, "generated": 2, "guardrail_blocked": 1}],
-    }))
+    write_generation_report(generation, 2, 1)
     admission = tmp_path / "admission_report.json"
     admission.write_text(json.dumps({"status": "COMPLETE", "iteration": 1,
                                      "role_status": {

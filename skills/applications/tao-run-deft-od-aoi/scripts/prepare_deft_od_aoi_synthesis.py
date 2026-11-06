@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Normalize DEFT AOI false negatives into AnomalyGenNext preparation inputs."""
+"""Normalize DEFT AOI false negatives into AnomalyGen 1.2 preparation inputs."""
 
 from __future__ import annotations
 
@@ -326,6 +326,8 @@ def prepare(
               "amp": {"model_id": synthesis["amp_model_id"], "seed": 43}}
     if plan_contract is not None:
         config["synthetic_plan"] = plan_contract
+    if synthesis.get("exclude_stems"):
+        config["exclude_stems"] = str(Path(synthesis["exclude_stems"]).resolve())
     config_path = output / "anomalygen_filtering.yaml"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
     report = {

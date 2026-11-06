@@ -22,7 +22,7 @@ Set `PYTHON=$(bash scripts/deft_python.sh)`, then run host Python scripts with
 | `submit_cfw_evaluate.py` | Compose and execute recorded Framework Evaluate submission. |
 | `submit_cfw_inference.py` | Compose and execute recorded Framework Inference submission. |
 | `analyze_gaps.py` | Proxy RCCA artifacts or Benchmark aggregate metric evidence. |
-| `emit_sdg_sharegpt.py` | Resolve documented or PAIDF 1.0.1 SDG path forms and emit bare `NG` ShareGPT records. |
+| `emit_sdg_sharegpt.py` | Verify native manifests, generated/blocked identities and source/mask lineage; emit paired bare `NG` records. |
 | `filter_mined_by_cosine.py` | Recompute max cosine to Proxy targets and enforce the floor. |
 | `emit_mined_sharegpt.py` | Align filtered paths to Mining prompts, golden images, and labels. |
 | `assemble_training_json.py` | Monotonic bare training-data merge with dedupe/leakage checks. |

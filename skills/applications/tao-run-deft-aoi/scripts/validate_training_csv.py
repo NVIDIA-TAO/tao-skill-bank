@@ -45,6 +45,12 @@ import json
 import pathlib
 import sys
 
+_shared_candidates = (pathlib.Path(__file__).resolve().parents[2] / "tao-generate-anomalies/scripts",
+                      pathlib.Path(__file__).resolve().parents[3] / "data/tao-generate-anomalies/scripts")
+sys.path.insert(0, str(next((p for p in _shared_candidates if p.is_dir()), _shared_candidates[-1])))
+from anomalygen_consumer import validate_lineage, load_generation
+from anomalygen_contract import sha256, load_exclusions, _excluded
+
 _REQUIRED_COLUMNS = ("input_path", "golden_path", "label", "object_name")
 _PATH_COLUMNS = ("input_path", "golden_path")
 _LEAK_KEY_CANDIDATES = (
@@ -135,6 +141,8 @@ def validate(
     validation_csv: pathlib.Path | None = None,
     light: str = "SolderLight",
     image_ext: str = ".jpg",
+    exclude_stems: pathlib.Path | None = None,
+    synthetic_csvs=(),
 ) -> list[str]:
     """Return a list of human-readable validation errors (empty == valid).
 
@@ -168,6 +176,7 @@ def validate(
     if not rows:
         errors.append("CSV is empty (0 data rows)")
 
+    resolved_rows = [{} for _ in rows]
     siamese_mode = "object_name" in columns
     for col in _PATH_COLUMNS:
         if col not in columns:
@@ -203,6 +212,7 @@ def validate(
                 )
             else:
                 resolved = direct_candidates[0]
+            resolved_rows[i][col] = resolved.resolve()
             if not resolved.is_file():
                 missing.append((i, f"{raw} -> {resolved}"))
         if missing:
@@ -231,6 +241,58 @@ def validate(
                     "an iteration CSV"
                 )
 
+    forbidden = set()
+    if validation_csv is not None and validation_csv.is_file():
+        with validation_csv.open(newline="") as stream:
+            for row in csv.DictReader(stream):
+                forbidden.update(str(_resolve(row[key], workspace_root)) for key in _PATH_COLUMNS if row.get(key))
+                if row.get("object_name"):
+                    forbidden.add(row["object_name"])
+    try:
+        sources = list(synthetic_csvs)
+        if csv_path.with_name(csv_path.name + ".anomalygen.json").is_file() and csv_path not in sources:
+            sources.append(csv_path)
+        bindings = []
+        for source in sources:
+            source = pathlib.Path(source)
+            receipt = json.loads(source.with_name(source.name + ".anomalygen.json").read_text())
+            if receipt.get("output_sha256") != sha256(source):
+                raise ValueError("synthetic source CSV changed after emission")
+            report, native = load_generation(receipt["manifest"], exclude_stems)
+            current = receipt.get("pair_bindings", [])
+            expected = {json.dumps(row["lineage"], sort_keys=True) for row in native}
+            if len(current) != report["generated"] or {json.dumps(b["lineage"], sort_keys=True) for b in current} != expected:
+                raise ValueError("synthetic source lacks complete converted pair bindings")
+            for binding in current:
+                validate_lineage(binding["lineage"], forbidden, exclude_stems)
+            bindings.extend(current)
+        used = set()
+        excluded = load_exclusions(exclude_stems)
+        for row, resolved in zip(rows, resolved_rows):
+            for path in resolved.values():
+                if _excluded(path, excluded):
+                    raise ValueError(f"training pair uses excluded image: {path}")
+            candidates = [b for b in bindings if row.get("object_name") == b["object_name"] or
+                          any(str(resolved.get(key)) == b[key]["path"] for key in _PATH_COLUMNS)]
+            raw = row.get("anomalygen_lineage")
+            lineage = json.loads(raw) if raw else None
+            if lineage:
+                validate_lineage(lineage, forbidden, exclude_stems)
+                candidates.extend(b for b in bindings if b["lineage"] == lineage and b not in candidates)
+                if not candidates:
+                    raise ValueError("synthetic row requires authoritative --synthetic-csv source")
+            if candidates:
+                matches = [b for b in candidates if b["lineage"] == lineage and b["label"] == row.get("label") and
+                           b["object_name"] == row.get("object_name") and
+                           all(key in resolved and str(resolved[key]) == b[key]["path"] and
+                               sha256(resolved[key]) == b[key]["sha256"] for key in _PATH_COLUMNS)]
+                if len(matches) != 1:
+                    raise ValueError("synthetic training pair/label/lineage differs from emission binding")
+                used.add(json.dumps(matches[0], sort_keys=True))
+        if used != {json.dumps(b, sort_keys=True) for b in bindings}:
+            raise ValueError("assembled training CSV omits authoritative synthetic rows")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        errors.append(str(error))
     if "label" in columns:
         errors.extend(_check_label_case(rows))
 
@@ -238,6 +300,30 @@ def validate(
         errors.extend(_check_leakage(rows, list(columns), validation_csv))
 
     return errors
+
+
+def state_synthetic_sources(state_path, iter_label):
+    state_path = pathlib.Path(state_path)
+    state = json.loads(state_path.read_text())
+    limit = int(iter_label.removeprefix("iter"))
+    sources = []
+    for label, phase in state.get("iterations", {}).items():
+        if not label.startswith("iter") or int(label[4:]) > limit:
+            continue
+        manifest = phase.get("anomalygen_manifest")
+        if not manifest:
+            if phase.get("anomalygen_training_ready"):
+                raise ValueError("synthetic state lacks native manifest")
+            continue
+        report, _ = load_generation(manifest)
+        if not report["generated"]:
+            continue
+        source = state_path.parent / label / "mining_filter/sdg_rows_raw.csv"
+        receipt = json.loads(source.with_name(source.name + ".anomalygen.json").read_text())
+        if pathlib.Path(receipt["manifest"]).resolve() != pathlib.Path(manifest).resolve():
+            raise ValueError("synthetic source manifest differs from committed generation")
+        sources.append(source)
+    return sources
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -298,6 +384,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "missing_file_count, and train_val_leakage_overlap_count."
         ),
     )
+    parser.add_argument("--exclude-stems", type=pathlib.Path)
+    parser.add_argument("--synthetic-csv", action="append", default=[], type=pathlib.Path, help="Immutable emitted CSV; repeat for every contributing iteration")
+    parser.add_argument("--state", type=pathlib.Path, help="Derive mandatory synthetic sources from durable DEFT state")
+    parser.add_argument("--iter-label", help="Iteration paired with --state")
     return parser
 
 
@@ -308,6 +398,10 @@ def _write_success_report(args: argparse.Namespace) -> None:
         rows_checked = sum(1 for _ in csv.DictReader(f))
     report = {
         "status": "ok",
+        "training_csv_sha256": sha256(args.csv),
+        "workspace_root": str(args.workspace_root.resolve()),
+        "light": args.light, "image_ext": args.image_ext,
+        "synthetic_csvs": [str(p.resolve()) for p in args.synthetic_csv],
         "training_csv": str(args.csv.resolve()),
         "validation_csv": (
             str(args.validation_csv.resolve())
@@ -328,12 +422,19 @@ def _write_success_report(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if bool(args.state) != bool(args.iter_label):
+        raise ValueError("--state requires --iter-label")
+    if args.state:
+        args.synthetic_csv.extend(state_synthetic_sources(args.state, args.iter_label))
+    args.synthetic_csv = list(dict.fromkeys(args.synthetic_csv))
     errors = validate(
         args.csv,
         args.workspace_root,
         args.validation_csv,
         light=args.light,
         image_ext=args.image_ext,
+        exclude_stems=args.exclude_stems,
+        synthetic_csvs=args.synthetic_csv,
     )
     if errors:
         print(

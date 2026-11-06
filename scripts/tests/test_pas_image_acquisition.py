@@ -80,17 +80,17 @@ def test_brev_inspects_each_image_with_one_remote_command_argument(monkeypatch):
             "--brev-instance",
             "pas-gpu",
             "--image",
-            "nvcr.io/pyt:tag",
+            "nvcr.io/pyt:tag",  # unpinned: synthetic image-acquisition test fixture
             "--image",
-            "nvcr.io/ds:tag",
+            "nvcr.io/ds:tag",  # unpinned: synthetic image-acquisition test fixture
         )
     )
 
     assert report["image_acquisition"] == "not-required"
     assert report["ngc_key_requirement"] == "not-required"
     assert commands == [
-        ["brev", "exec", "pas-gpu", "docker image inspect nvcr.io/pyt:tag"],
-        ["brev", "exec", "pas-gpu", "docker image inspect nvcr.io/ds:tag"],
+        ["brev", "exec", "pas-gpu", "docker image inspect nvcr.io/pyt:tag"],  # unpinned: synthetic image-acquisition test fixture
+        ["brev", "exec", "pas-gpu", "docker image inspect nvcr.io/ds:tag"],  # unpinned: synthetic image-acquisition test fixture
     ]
 
 

@@ -56,6 +56,11 @@ class _CommitArgumentParser(argparse.ArgumentParser):
         super().error(message)
 
 
+_shared_candidates = (pathlib.Path(__file__).resolve().parents[2] / "tao-generate-anomalies/scripts",
+                      pathlib.Path(__file__).resolve().parents[3] / "data/tao-generate-anomalies/scripts")
+sys.path.insert(0, str(next((p for p in _shared_candidates if p.is_dir()), _shared_candidates[-1])))
+from anomalygen_consumer import load_generation, validate_sharegpt_emission
+
 def _rca_target_label(value: str) -> str:
     label = value.strip()
     if not label:
@@ -423,6 +428,7 @@ def _apply_success(
     args: argparse.Namespace,
     results_dir: pathlib.Path,
     iter_label: str,
+    config: dict[str, Any],
 ) -> None:
     if stage == "train":
         checkpoint = _required_file(args.best_ckpt, "--best-ckpt")
@@ -470,14 +476,22 @@ def _apply_success(
             phase["anomalygen_skipped"] = True
             phase["anomalygen_skip_reason"] = args.summary.strip()
         else:
-            phase["anomalygen_sdg_csv"] = _required_file(
-                args.anomalygen_sdg, "--anomalygen-sdg"
-            )
-            allocation, allocated = _required_allocation(
-                args.anomalygen_allocation, "--anomalygen-allocation"
-            )
-            phase["anomalygen_allocation_json"] = allocation
-            phase["anomalygen_amp_allocated"] = allocated
+            manifest = _required_file(args.anomalygen_manifest, "--anomalygen-manifest")
+            _require_within(manifest, results_dir / iter_label, "--anomalygen-manifest")
+            exclusions = config.get("anomalygen", {}).get("exclude_stems")
+            accounting, native_rows = load_generation(manifest, exclusions)
+            phase["anomalygen_manifest"] = manifest
+            phase["anomalygen_sdg_csv"] = str(pathlib.Path(accounting["output_dir"]) / "texture_ft_generation_result.csv")
+            phase["anomalygen_accounting"] = accounting
+            phase["anomalygen_amp_allocated"] = accounting["testcases"]
+            phase["anomalygen_training_ready"] = accounting["training_ready"]
+            if args.anomalygen_sdg and pathlib.Path(args.anomalygen_sdg).resolve() != pathlib.Path(phase["anomalygen_sdg_csv"]).resolve():
+                raise ValueError("--anomalygen-sdg differs from verified native manifest")
+            if args.anomalygen_allocation:
+                allocation, allocated = _required_allocation(args.anomalygen_allocation, "--anomalygen-allocation")
+                if allocated != accounting["testcases"]:
+                    raise ValueError("allocation differs from native testcase identities")
+                phase["anomalygen_allocation_json"] = allocation
     elif stage == "data_mining":
         if args.skip:
             routed = phase.get("routing_mining_parquet")
@@ -543,6 +557,22 @@ def _apply_success(
                 )
             phase["mining_mined_count"] = args.mining_count
     elif stage == "data_merge":
+        from validate_training_csv import state_synthetic_sources, validate as validate_training
+        from anomalygen_contract import sha256
+        state_path = results_dir / "deft_state.json"
+        sources = state_synthetic_sources(state_path, iter_label)
+        if sources:
+            proof = json.loads(pathlib.Path(_required_file(args.merge_validation_report, "--merge-validation-report")).read_text())
+            if proof.get("status") != "ok" or proof.get("training_csv_sha256") != sha256(args.combined_csv):
+                raise ValueError("merge validation proof does not bind the assembled training CSV")
+            if set(proof.get("synthetic_csvs", [])) != {str(p.resolve()) for p in sources}:
+                raise ValueError("merge validation proof omits authoritative synthetic sources")
+            errors = validate_training(pathlib.Path(args.combined_csv), pathlib.Path(proof["workspace_root"]),
+                                       pathlib.Path(config["validation_csv"]) if config.get("validation_csv") else None,
+                                       exclude_stems=config.get("anomalygen", {}).get("exclude_stems"), synthetic_csvs=sources,
+                                       light=proof.get("light", "SolderLight"), image_ext=proof.get("image_ext", ".jpg"))
+            if errors:
+                raise ValueError("; ".join(errors))
         phase["combined_training_csv"] = _required_file(
             args.combined_csv, "--combined-csv"
         )
@@ -623,7 +653,7 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
         else:
             if args.stage != "loop_stop":
                 _apply_success(
-                    existing, args.stage, args, results_dir, args.iter_label
+                    existing, args.stage, args, results_dir, args.iter_label, state.get("config", {})
                 )
                 state["status"] = "in_progress"
                 state.pop("completed_at", None)
@@ -772,6 +802,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--routing-mining", type=pathlib.Path)
     parser.add_argument("--routing-anomalygen", type=pathlib.Path)
+    parser.add_argument("--anomalygen-manifest", type=pathlib.Path)
     parser.add_argument("--anomalygen-sdg", type=pathlib.Path)
     parser.add_argument("--anomalygen-allocation", type=pathlib.Path)
     parser.add_argument("--mining-parquet", type=pathlib.Path)

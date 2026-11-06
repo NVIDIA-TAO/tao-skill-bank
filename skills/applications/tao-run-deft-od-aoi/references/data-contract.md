@@ -57,7 +57,7 @@ substitutes for the mask.
 The real role must start with at least one boxed image. The clean role may start
 with zero images; initialization emits a warning and a typed `UNAVAILABLE`
 clean retrieval capability. The clean retrieval role is independent from the
-AnomalyGenNext synthesis reference pool.
+AnomalyGen 1.2 synthesis reference pool.
 
 `synthesis.routes` is an allowlist: a valid ID absent from it skips synthesis
 but still participates in the separate real-data DEFT path. A missing ID is
@@ -122,3 +122,30 @@ otherwise-eligible generated images excluded by the cap. Training is allowed
 only when the iteration adds images. Cap formulas and whole-FN allocation
 are unchanged; a zero cumulative real count still permits no synthetic
 admissions.
+
+AnomalyGen 1.2 synthesis uses the single `tao-generate-anomalies` skill:
+`prepare --source od-gaps` for inputs/AMP/finalize, `finetune_only` for one-time
+bootstrap, and `inference_only --pseudo-label` for each finalized group. Resolve
+`images.metropolis_sdg.anomalygen`; mount the complete selected-stage cache at
+`/workspace/cdf-anomalygen/checkpoints`. Keep the prepared manifest and its
+hash-bound artifacts. Emit COCO with application `scripts/emit_sdg_coco.py`
+using `--runs-manifest` and `--prepared-manifest`; admission uses the converter's
+`pseudo_labels/coco_annotations_od_defect.json`. Pass caller `--exclude-stems`
+at preparation, generation and conversion, and set `synthesis.exclude_stems`
+for admission. The preparation CLI option overrides the frozen YAML exclusion path; omission uses the application path. The original source/donor provenance
+remains in the prepared bundle. Existing NN improvement, box-quality, fraction,
+whole-FN planning and split/KPI policies are unchanged. Fully blocked output is
+COMPLETE with zero synthetic contribution; preserve blocked IDs without retry
+or top-up. Guardrail capability limitations remain explicit.
+
+Application COCO admission requires each generated image's `anomalygen_prepared`
+binding to the hash-bound prepared manifest and dataset group. Conversion and
+admission recheck explicit `source_mask`, `fn_filepath`, `clean_filepath`, and
+`aligned_mask` provenance against current caller exclusions, including after
+mask alignment changes the filename. Missing or altered ancestry is a hard
+stop. Standalone smoke COCO conversion without a prepared bundle demonstrates
+conversion only and is not admissible as application training data.
+
+Historical AnomalyGen 1.1 OD checkpoint execution and the full OD AOI runtime
+remain unverified in this migration; CPU converter and contract tests establish
+only their tested interfaces.

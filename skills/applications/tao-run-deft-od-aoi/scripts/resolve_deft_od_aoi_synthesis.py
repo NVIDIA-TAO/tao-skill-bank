@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Resolve synthesis routes or emit one-time AnomalyGenNext fine-tune requests."""
+"""Resolve synthesis routes or emit one-time AnomalyGen 1.2 fine-tune requests."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def resolve(policy_path: Path, output: Path) -> dict[str, Any]:
                           "training_handoff": str(handoff.resolve())}
     if requests:
         report = {"status": "NEEDS_TRAINING", "requests": requests,
-                  "message": "Run tao-finetune-anomalygennext once per request, then resolve again."}
+                  "message": "Run tao-generate-anomalies finetune_only once per request; use its training/training_handoff.json, then resolve again."}
         (output / "finetune_requests.json").write_text(json.dumps(report, indent=2) + "\n")
         return report
     policy["synthesis"]["routes"] = resolved

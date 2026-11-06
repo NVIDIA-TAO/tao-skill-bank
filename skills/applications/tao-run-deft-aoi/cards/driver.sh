@@ -34,8 +34,8 @@ case "$WS" in *[[:space:]]*) echo "[driver] ABORT: WS must not contain whitespac
 RESULTS=$WS/results
 SKILL_ROOT=${SKILL_ROOT:-$(cd "$PACK/.." && pwd)}   # the tao-run-deft-aoi skill this pack ships with
 DPY=$SKILL_ROOT/scripts/deft_python.sh
-TRAIN_IMG=${TRAIN_IMG:-nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt}
-DS_IMG=${DS_IMG:-nvcr.io/nvidian/iva/tao-toolkit-ds:aoi}
+TRAIN_IMG=${TRAIN_IMG:-nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt}  # unpinned: existing standalone card fallback; runtime TRAIN_IMG override is authoritative
+DS_IMG=${DS_IMG:-nvcr.io/nvidian/iva/tao-toolkit-ds:aoi}  # unpinned: existing standalone card fallback; runtime DS_IMG override is authoritative
 # C-RADIOv2-B backbone on the host; default is what scripts/stage_backbone.py writes.
 if [ -z "${BACKBONE:-}" ]; then
   BACKBONE=$WS/augmentation/backbone/c_radio_v2_b.safetensors

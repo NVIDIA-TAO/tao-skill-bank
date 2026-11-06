@@ -19,7 +19,7 @@ tags: [application, workflow, deft, object-detection, aoi, rtdetr]
 > **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
 
 This application is a disk-backed RT-DETR loop for one foreground class,
-`defect`. Its core is real-data-only; AnomalyGenNext synthesis is an optional
+`defect`. Its core is real-data-only; AnomalyGen 1.2 synthesis is an optional
 route with separate preparation, generation, and admission gates.
 
 ## References
@@ -271,7 +271,7 @@ Enable `synthesis` only when every KPI sample retains its real, nonempty
 `synthesis.routes` is the synthesis allowlist. Dataset IDs absent from it skip
 synthesis but remain in the separate normal real-data DEFT path. Every FN in a
 configured route must also carry `texture_id`, `defect_class`, and a pixel
-`fn_mask_source`, and the route must provide an existing AnomalyGenNext
+`fn_mask_source`, and the route must provide an existing AnomalyGen 1.2
 checkpoint and matching recipe. After strict gap analysis, normalize exact
 FN/annotation matches:
 
@@ -308,14 +308,11 @@ supplied legacy `retrieval.candidate_overfetch` into synthesis when
 retain that fallback.
 Set both fields explicitly to configure them independently.
 
-Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
+Pass the emitted filtering YAML through `tao-generate-anomalies`,
 mounting the complete checkpoint root for its `run_amp` action, then pass its
-finalized generation plan through `tao-generate-od-defects` with the same
+finalized generation plan through `tao-generate-anomalies` with the same
 checkpoint root mounted at the same canonical path. Commit
-`iteration_synthesis` before training. Read the selected
-`tao-generate-od-defects` action contract and resolve
-`actions.generate.outputs.binary_coco.relative_path` against that action's
-results directory. Re-run admission with the resolved file passed through
+`iteration_synthesis` before training. Run application `scripts/emit_sdg_coco.py --runs-manifest runs.json --prepared-manifest prepared_inputs_manifest.json --output-dir NEWDIR`; resolve its `pseudo_labels/coco_annotations_od_defect.json` against NEWDIR. Re-run admission with the resolved file passed through
 `--synthetic-coco` and the generation results directory passed through
 `--synthetic-images`; admission never locates a companion skill itself. Synthetic
 categories are folded to `defect`, and
@@ -345,17 +342,32 @@ If no FN remains eligible, the preparation-level reason is
 If every producer is unavailable, the typed skip commits convergence instead of
 training on an unchanged iteration.
 
-## Missing AnomalyGenNext task weights
+## Missing AnomalyGen 1.2 task weights
 
 A synthesis route may replace `checkpoint` and `recipe` with a `finetune` block
 containing `dataset_root`, frozen `validation_testcase`, Cosmos3-Nano
 `base_checkpoint`, `vae_path`, `checkpoint_root`, future `result_handoff`, and
-optional user `recipe_template`/`defect_spec`. These are AnomalyGenNext inputs;
+optional user `recipe_template`/`defect_spec`. These are AnomalyGen 1.2 inputs;
 the application policy is not an upstream training recipe.
 
 Run `resolve_deft_od_aoi_synthesis.py` before the candidate cache. If a handoff
 is absent, it emits `finetune_requests.json`; execute each request through
-`tao-finetune-anomalygennext` once. Resolve again into a new directory, verify
+`tao-generate-anomalies finetune_only` once. Resolve again into a new directory, verify
 the hash-bound handoff, commit `synthesis_bootstrap`, and use the emitted
 `resolved_synthesis_policy.yaml` for all later synthesis preparation. Never
-start or resume AnomalyGenNext training inside a DEFT iteration.
+start or resume AnomalyGen 1.2 training inside a DEFT iteration.
+
+AnomalyGen 1.2 synthesis uses the single `tao-generate-anomalies` skill:
+`prepare --source od-gaps` for inputs/AMP/finalize, `finetune_only` for one-time
+bootstrap, and `inference_only --pseudo-label` for each finalized group. Resolve
+`images.metropolis_sdg.anomalygen`; mount the complete selected-stage cache at
+`/workspace/cdf-anomalygen/checkpoints`. Keep the prepared manifest and its
+hash-bound artifacts. Emit COCO with application `scripts/emit_sdg_coco.py`
+using `--runs-manifest` and `--prepared-manifest`; admission uses the converter's
+`pseudo_labels/coco_annotations_od_defect.json`. Pass caller `--exclude-stems`
+at preparation, generation and conversion, and set `synthesis.exclude_stems`
+for admission. The preparation CLI option overrides the frozen YAML exclusion path; omission uses the application path. The original source/donor provenance
+remains in the prepared bundle. Existing NN improvement, box-quality, fraction,
+whole-FN planning and split/KPI policies are unchanged. Fully blocked output is
+COMPLETE with zero synthetic contribution; preserve blocked IDs without retry
+or top-up. Guardrail capability limitations remain explicit.

@@ -67,7 +67,7 @@ activation source; never load or execute the network bootstrap in air-gap mode.
 
    | Variable | Required for | Image prefix it gates |
    |---|---|---|
-   | `NGC_KEY` | All nvcr.io image pulls — TAO toolkit (train/infer/deploy/data services) and the paidf-anomalygen SDG container | the registry orgs of the manifest-resolved image URIs in step 5 |
+   | `NGC_KEY` | All nvcr.io image pulls — TAO toolkit (train/infer/deploy/data services) and the cdf-anomalygen SDG container | the registry orgs of the manifest-resolved image URIs in step 5 |
    | `HF_TOKEN` | Pre-Flight HuggingFace model downloads (ChangeNet backbone, Cosmos diffusion, T5, C-RADIO-V3, DINOv2, SAM2, Qwen-VL, SigLIP) — cached under `augmentation/anomalygen/base_checkpoints/`. Also gates the PCB fine-tuned checkpoint and reference dataset auto-fetch. | huggingface.co |
 
    For planned network actions both variables must be non-empty in the process
@@ -97,11 +97,11 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    AG_IMAGE=$(
      "$PYTHON" \
        "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
-       images.metropolis_sdg.paidf_anomalygen --skill-bank "$TAO_SKILL_BANK_PATH"
+       images.metropolis_sdg.anomalygen --skill-bank "$TAO_SKILL_BANK_PATH"
    )
    : "${TAO_PYT_IMAGE:?versions key images.tao_toolkit.pyt did not resolve}"
    : "${TAO_DS_IMAGE:?versions key images.tao_toolkit.data_services did not resolve}"
-   : "${AG_IMAGE:?versions key images.metropolis_sdg.paidf_anomalygen did not resolve}"
+   : "${AG_IMAGE:?versions key images.metropolis_sdg.anomalygen did not resolve}"
    export TAO_PYT_IMAGE TAO_DS_IMAGE AG_IMAGE
    ```
 
@@ -113,7 +113,7 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    |---|---|---|
    | `TAO_PYT_IMAGE` | `images.tao_toolkit.pyt` | `train`, `evaluate`, `rca` (TAO toolkit pyt container) |
    | `TAO_DS_IMAGE` | `images.tao_toolkit.data_services` | `data_mining` (TAO data services container) |
-   | `AG_IMAGE` | `images.metropolis_sdg.paidf_anomalygen` | `anomalygen` (paidf-anomalygen container) |
+   | `AG_IMAGE` | `images.metropolis_sdg.anomalygen` | `anomalygen` (cdf-anomalygen container) |
 
    Hard stop here if any export is missing — without it, bash silently substitutes `""`, the next step's `docker image inspect` reports `0` MISSING for every image, and the failure mode points at the wrong root cause.
 6. Verify every image resolved in step 5 is present locally (`docker image inspect "$TAO_PYT_IMAGE" "$AG_IMAGE" "$TAO_DS_IMAGE"`).
@@ -147,17 +147,13 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    Summary. In network-enabled mode, empty slots may be a post-approval fetch
    plan. In air-gap mode every required slot must already be non-empty and a
    missing asset is a hard stop. NVIDIA publishes the PCB fine-tuned
-   checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset
-   (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on Hugging Face; the
-   `tao-generate-anomalies` skill downloads them automatically on first use.
+   checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-Nano`) and the PCB reference dataset
+   (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on Hugging Face; the application bootstrap stages the selected public assets after approval.
    Users can pre-stage their own fine-tuned checkpoint or dataset to override
-   the default; a checkpoint override must match the pinned container's PAIDF
-   major.minor. Do not ask about missing AnomalyGen assets in network-enabled
+   the default; a checkpoint override requires its exact training recipe and native stamp/legacy validation. Do not ask about missing AnomalyGen assets in network-enabled
    mode: report `will auto-fetch from HF (default)` and proceed. If
    `base_checkpoints/` is pre-staged, export its host path as
-   `COSMOS_MODELS_DIR` for downstream mounts. Before SDG, use the
-   executable file check in `references/tao-generate-anomalies.md` to gate the
-   AnomalyGen Guardrail safety model; a missing file is a hard stop.
+   `COSMOS_MODELS_DIR` for downstream mounts. Before SDG, run native `bash scripts/preflight_env_ckpt.sh` inside the resolved image, record CUDA 13.2 / driver compatibility, and require the selected-stage Nano/VAE/tokenizer/guardrail assets. Missing required assets are a hard stop; preserve unused optional-group omissions.
    Stage the ChangeNet pretrained
    backbone by running `"$PYTHON" scripts/stage_backbone.py --workspace <workspace>`,
    then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path`
@@ -226,9 +222,9 @@ be a staged local path and no download fallback may appear.
 
 | Field              | Value                                                                                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| AnomalyGen ckpt    | `<path>` (FOUND, step N) **or** will auto-fetch from HF (`nvidia/Cosmos-AnomalyGen-PCB-2B`, ~5 GB) **[default]** |
+| AnomalyGen ckpt    | `<adapter file>` + `<original recipe>` (FOUND) **or** will auto-fetch from HF (`nvidia/Cosmos-AnomalyGen-PCB-Nano`, model/ adapter and original recipe) **[default]** |
 | Defect spec        | `<N types: type1, type2, ...>` (from staged dataset) **or** will auto-fetch from HF **[default]**                 |
-| Cosmos base models | `<path>` (container check FOUND) **or** will auto-download the 2B workflow set on first container run (~22 GB) **[default]** |
+| Cosmos base models | `<path>` (container check FOUND) **or** will auto-download the Nano generation set on first container run (selected-stage assets) **[default]** |
 | SigLIP model       | `<cached / download / local path>`                                                                                 |
 | Backbone           | `<path>` (FOUND) **or** will auto-download from HF (`nvidia/C-RADIOv2-B`, ~393 MB) **[default]**                  |
 
@@ -240,7 +236,7 @@ Print one row per env var so the audit trail shows exactly which tag will run.
 | Env var          | Image (resolved in Pre-Flight step 5)                                          | Status     |
 | ---------------- | ------------------------------------------------------------------------------ | ---------- |
 | `TAO_PYT_IMAGE`  | `<$TAO_PYT_IMAGE>` (key: `images.tao_toolkit.pyt`)                             | OK/MISSING |
-| `AG_IMAGE`       | `<$AG_IMAGE>` (key: `images.metropolis_sdg.paidf_anomalygen`)                 | OK/MISSING |
+| `AG_IMAGE`       | `<$AG_IMAGE>` (key: `images.metropolis_sdg.anomalygen`)                 | OK/MISSING |
 | `TAO_DS_IMAGE`   | `<$TAO_DS_IMAGE>` (key: `images.tao_toolkit.data_services`)                    | OK/MISSING |
 ```
 
@@ -248,7 +244,8 @@ To populate the summary, run:
 ```bash
 wc -l <training_csv> <validation_csv> <kpi_testing_csv>
 python3 -c "import pandas as pd; df=pd.read_csv('<kpi_testing_csv>'); print(df['label'].value_counts().to_string())"
-cat <workspace>/augmentation/anomalygen/checkpoints/<project>/checkpoints/latest_checkpoint.txt
+test -s <workspace>/augmentation/anomalygen/checkpoints/<project>/model/iter_000015000.pt
+test -s <workspace>/augmentation/anomalygen/checkpoints/<project>/model/exp_texture_ft_pcb.yaml
 cat <workspace>/augmentation/anomalygen/datasets/<project>/defect_spec.jsonl | python3 -c "import sys,json; [print(json.loads(l)['defect_type']) for l in sys.stdin]"
 nvidia-smi --list-gpus | wc -l
 # ${TAO_PYT_IMAGE}, ${AG_IMAGE}, ${TAO_DS_IMAGE} are exported by Pre-Flight step 5
@@ -277,6 +274,6 @@ done
 | train | ~11 min | train rows × epochs |
 | evaluate | ~2 min | KPI-test rows |
 
-`total ≈ baseline + max_iterations × ~33 min` + overhead (10 iters ≈ ~6.5h wall). Add the one-time ~22 GB base-checkpoint/image pull separately when image/Cosmos rows are `MISSING`.
+`total ≈ baseline + max_iterations × ~33 min` + overhead (10 iters ≈ ~6.5h wall). Add the one-time selected-stage assets base-checkpoint/image pull separately when image/Cosmos rows are `MISSING`.
 
 **Ask the user to confirm before proceeding.** Wait for explicit approval ("looks good", "go", "yes"). Do not start the loop until the user confirms.

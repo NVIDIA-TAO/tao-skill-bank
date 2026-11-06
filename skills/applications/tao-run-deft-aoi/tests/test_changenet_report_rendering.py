@@ -183,7 +183,6 @@ class ReportRenderingTests(unittest.TestCase):
                 "--num-epochs", "1",
                 "--num-sdg", "1",
                 "--project", "nvpcb",
-                "--step", "1",
             ]
         )
         contract, _ = init_deft_state._build_metric_contract(args)
@@ -1246,8 +1245,6 @@ class ReportRenderingTests(unittest.TestCase):
                     "2",
                     "--project",
                     "nvpcb",
-                    "--step",
-                    "1",
                     "--train-container",
                     "example/train:1",
                     "--ag-container",

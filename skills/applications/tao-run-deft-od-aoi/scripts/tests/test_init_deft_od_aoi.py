@@ -760,3 +760,12 @@ def test_initialize_defers_routed_mask_content_validation(tmp_path: Path) -> Non
     state = MODULE.initialize(config, tmp_path / "results")
 
     assert state["synthesis_enabled"] is True
+
+
+def test_frozen_synthesis_routes_to_one_native_skill_and_version_key(tmp_path):
+    config = _config(tmp_path)
+    result = MODULE.initialize(config, tmp_path / "output")
+    frozen = yaml.safe_load(Path(result["policy"]).read_text())
+    assert frozen["synthesis"]["sub_skill"] == "tao-generate-anomalies"
+    assert frozen["synthesis"]["container_image_key"] == "images.metropolis_sdg.anomalygen"
+    assert frozen["synthesis"]["mode"] == "inference_only"

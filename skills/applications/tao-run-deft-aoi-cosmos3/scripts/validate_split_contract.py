@@ -15,6 +15,10 @@ import sys
 from itertools import combinations
 
 from validate_sharegpt import load_records, prompt_and_label
+_shared_candidates = (pathlib.Path(__file__).resolve().parents[2] / "tao-generate-anomalies/scripts",
+                      pathlib.Path(__file__).resolve().parents[3] / "data/tao-generate-anomalies/scripts")
+sys.path.insert(0, str(next((p for p in _shared_candidates if p.is_dir()), _shared_candidates[-1])))
+from anomalygen_consumer import validate_lineage, validate_empty_emission, validate_pair
 
 
 ROLE_PATHS = {
@@ -58,6 +62,7 @@ def validate(
     *,
     media_root: pathlib.Path,
     expected_benchmark_sha256: str | None = None,
+    exclude_stems: pathlib.Path | None = None,
 ) -> dict:
     missing_roles = {"proxy", "benchmark", "mining"} - set(role_paths)
     if missing_roles:
@@ -66,7 +71,7 @@ def validate(
     role_records: dict[str, set[str]] = {}
     counts: dict[str, int] = {}
     for role, path in role_paths.items():
-        records = load_records(path)
+        records = validate_empty_emission(path) if role == "synthetic" and json.loads(path.read_text()) == [] else load_records(path)
         if role == "synthetic":
             for index, record in enumerate(records):
                 context = f"{path}[{index}]"
@@ -174,6 +179,25 @@ def validate(
                 f"{sorted(outside_eligible)[:5]}"
             )
 
+    # Target membership comes from the verified synthetic source, never from an
+    # optional key in the assembled record. Preserve prompt, pair, label and lineage.
+    if "synthetic" in role_paths and "train" in role_paths:
+        source_records = role_records["synthetic"]
+        for index, record in enumerate(json.loads(role_paths["train"].read_text())):
+            target = _target(record, role_paths["train"], index, media_root)
+            if target in role_targets["synthetic"] and json.dumps(record, sort_keys=True, separators=(",", ":")) not in source_records:
+                raise ValueError("assembled synthetic record differs from verified source pair/NG/lineage")
+
+    forbidden = role_targets["proxy"] | role_targets["benchmark"]
+    for role in ("synthetic", "train", "previous_train"):
+        if role not in role_paths:
+            continue
+        for record in json.loads(role_paths[role].read_text()):
+            if role == "synthetic" or "anomalygen_lineage" in record:
+                validate_lineage(record.get("anomalygen_lineage"), forbidden, exclude_stems)
+                validate_pair(record, media_root)
+                if prompt_and_label(record, context=role)[1] != "NG":
+                    raise ValueError("synthetic label must remain bare NG")
     benchmark_hash = _sha256(role_paths["benchmark"])
     benchmark_hash_verified = (
         expected_benchmark_sha256 is not None
@@ -260,6 +284,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional workspace manifest containing the frozen Benchmark sha256.",
     )
     parser.add_argument("--summary", default=None, type=pathlib.Path)
+    parser.add_argument("--exclude-stems", type=pathlib.Path)
     return parser
 
 
@@ -288,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
             role_paths,
             media_root=workspace,
             expected_benchmark_sha256=expected_hash,
+            exclude_stems=args.exclude_stems,
         )
         if args.summary is not None:
             args.summary.parent.mkdir(parents=True, exist_ok=True)

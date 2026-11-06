@@ -66,3 +66,11 @@ Include these rows in the Summary:
 | Container images | Local image inspection result or post-approval pull plan |
 | Models and datasets | Staged local path or post-approval fetch plan |
 | Credentials | `N/A (offline)` or presence-only status for required networked actions |
+
+For AnomalyGen 1.2, stage the image resolved from `images.metropolis_sdg.anomalygen`,
+PCB-Nano's actual `model/iter_000015000.pt` and `model/exp_texture_ft_pcb.yaml`,
+Nano DCP base, Wan VAE, Qwen tokenizer and both guardrail repositories. Add only
+the models required by AMP or quality evaluation when selected. Record native
+`preflight_env_ckpt.sh` and CUDA 13.2 / driver evidence; distinguish optional
+unused groups from missing generation assets. A download is never an offline
+repair. See the unified skill's checkpoint and runtime contracts.

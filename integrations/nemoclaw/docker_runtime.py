@@ -585,7 +585,7 @@ def build_docker_run_args(
     # Registry/model credentials, forwarded BY NAME so the value never reaches
     # the command line (docker reads it from the bridge's own environment).
     # GPU jobs need these for the same reason the CPU shell does: some workloads
-    # bootstrap their own model cache on first run — paidf-anomalygen's
+    # bootstrap their own model cache on first run — cdf-anomalygen's
     # `download_checkpoints.sh` fetches gated Cosmos weights from inside the
     # container. Without this the documented auto-download path is unreachable
     # through the bridge and fails as an opaque 401 / RepositoryNotFoundError.
@@ -613,15 +613,15 @@ def build_docker_run_args(
     # Extra mounts exist for images with a baked-in path contract — the
     #
     # Do NOT mount the workspace at /workspace by default. It is the most
-    # collision-prone path in the NVIDIA container ecosystem: paidf-anomalygen
-    # keeps its entire code tree at /workspace/paidf-anomalygen, and the TAO
+    # collision-prone path in the NVIDIA container ecosystem: cdf-anomalygen
+    # keeps its entire code tree at /workspace/cdf-anomalygen, and the TAO
     # toolkit image ships README/WarpConvNet/tutorials there. Mounting over it
     # hides the code the job is supposed to run, and the failure looks like a
     # missing module rather than a shadowed directory. A caller that wants
     # workspace parity must ask for it explicitly, at a path it knows is free.
     #
-    # paidf-anomalygen container reads its Cosmos base checkpoints from
-    # /workspace/paidf-anomalygen/checkpoints and cannot be told otherwise, so
+    # cdf-anomalygen container reads its Cosmos base checkpoints from
+    # /workspace/cdf-anomalygen/checkpoints and cannot be told otherwise, so
     # without this the stage is unrunnable through the bridge at any price.
     # Sources still come from the one fixed-root workspace volume through
     # traversal-safe subpaths; only the container-side destination is free.

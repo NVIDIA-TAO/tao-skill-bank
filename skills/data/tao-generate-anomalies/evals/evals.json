@@ -1,14 +1,42 @@
 [
   {
-    "id": "tao-generate-anomalies-basic",
-    "question": "A user request: \"Use the tao-generate-anomalies skill.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools \u2014 describe the plan only.",
+    "id": "anomalygen12-public-inference",
+    "question": "Generate PCB-Nano images using its published adapter and exact recipe.",
     "expected_skill": "tao-generate-anomalies",
-    "expected_script": null,
-    "ground_truth": "Identify tao-generate-anomalies as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
+    "expected_script": "scripts/run_anomalygen.py",
+    "ground_truth": "Resolve only the 1.2 image, verify selected-stage assets, use inference_only, native guardrail and exact accounting.",
     "expected_behavior": [
-      "Identifies tao-generate-anomalies as the relevant skill",
-      "Outlines the documented workflow steps from SKILL.md",
-      "Does not run commands, scripts, or web searches"
+      "Resolve only the 1.2 image, verify selected-stage assets, use inference_only, native guardrail and exact accounting."
+    ]
+  },
+  {
+    "id": "anomalygen12-od-prepare",
+    "question": "Prepare normalized OD false negatives for generation.",
+    "expected_skill": "tao-generate-anomalies",
+    "expected_script": "scripts/run_anomalygen.py",
+    "ground_truth": "Use prepare source od-gaps; freeze exclusions and embedding specs; delegate embeddings; AMP/finalize; shared inference_only; application COCO projection.",
+    "expected_behavior": [
+      "Use prepare source od-gaps; freeze exclusions and embedding specs; delegate embeddings; AMP/finalize; shared inference_only; application COCO projection."
+    ]
+  },
+  {
+    "id": "anomalygen12-blocked",
+    "question": "All testcases were guardrail blocked.",
+    "expected_skill": "tao-generate-anomalies",
+    "expected_script": "scripts/run_anomalygen.py",
+    "ground_truth": "Account for every index, do not regenerate to bypass guardrail, complete generation with training_ready=false.",
+    "expected_behavior": [
+      "Account for every index, do not regenerate to bypass guardrail, complete generation with training_ready=false."
+    ]
+  },
+  {
+    "id": "anomalygen12-legacy",
+    "question": "Generate using an unstamped 1.1 adapter.",
+    "expected_skill": "tao-generate-anomalies",
+    "expected_script": "scripts/run_anomalygen.py",
+    "ground_truth": "Require its original recipe; native legacy generation only, no training resume or fabricated stamp.",
+    "expected_behavior": [
+      "Require its original recipe; native legacy generation only, no training resume or fabricated stamp."
     ]
   }
 ]

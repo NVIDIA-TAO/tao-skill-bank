@@ -9,7 +9,7 @@ Complete this gate before creating a job record or submitting any action.
 - Confirm the trainable RT-DETR base checkpoint and maximum iterations.
 - Confirm KPI is used for selection and test is report-only.
 - Resolve the RT-DETR, Data Services, SigLIP embedding, mining, and optional
-  AnomalyGenNext images from their owning skills.
+  AnomalyGen 1.2 images from their owning skills.
 - Confirm GPU shape, storage mappings, runtime estimate, and durable
   `results_dir`.
 - Confirm synthesis is disabled or has exact pixel masks, a defect
@@ -53,3 +53,18 @@ scheduler success does not override a missing or invalid completion artifact.
 Platform-specific staging, cache, filesystem, scheduler, and recovery policy
 belongs to the selected platform skill; it is intentionally not duplicated
 here.
+
+AnomalyGen 1.2 synthesis uses the single `tao-generate-anomalies` skill:
+`prepare --source od-gaps` for inputs/AMP/finalize, `finetune_only` for one-time
+bootstrap, and `inference_only --pseudo-label` for each finalized group. Resolve
+`images.metropolis_sdg.anomalygen`; mount the complete selected-stage cache at
+`/workspace/cdf-anomalygen/checkpoints`. Keep the prepared manifest and its
+hash-bound artifacts. Emit COCO with application `scripts/emit_sdg_coco.py`
+using `--runs-manifest` and `--prepared-manifest`; admission uses the converter's
+`pseudo_labels/coco_annotations_od_defect.json`. Pass caller `--exclude-stems`
+at preparation, generation and conversion, and set `synthesis.exclude_stems`
+for admission. The preparation CLI option overrides the frozen YAML exclusion path; omission uses the application path. The original source/donor provenance
+remains in the prepared bundle. Existing NN improvement, box-quality, fraction,
+whole-FN planning and split/KPI policies are unchanged. Fully blocked output is
+COMPLETE with zero synthetic contribution; preserve blocked IDs without retry
+or top-up. Guardrail capability limitations remain explicit.

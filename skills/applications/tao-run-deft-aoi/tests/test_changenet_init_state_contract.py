@@ -55,8 +55,6 @@ class ChangeNetInitStateContractTests(unittest.TestCase):
                     "2",
                     "--project",
                     "nvpcb",
-                    "--step",
-                    "1",
                     "--train-container",
                     "example/train:1",
                     "--ag-container",

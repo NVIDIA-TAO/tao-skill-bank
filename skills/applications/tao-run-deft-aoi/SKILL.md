@@ -113,7 +113,7 @@ file. `NGC_KEY` gates container pulls. SigLIP mining is owned by
 `references/tao-mine-aoi-images.md`; AnomalyGen assets and network/air-gap rules
 are owned by `references/tao-generate-anomalies.md` and
 `references/air-gap.md`. The container owns its base-asset list; this workflow
-keeps bootstrap on Text2Image 2B by passing `--model_sizes 2B` explicitly.
+uses the Nano DCP base, Wan VAE, Qwen tokenizer and guardrail groups required by the selected stages.
 
 ## Train AutoML Policy
 
@@ -263,4 +263,6 @@ directory to `/results/iterN`.
 
 Run the full Pre-Flight (`references/preflight.md`), print the Pre-Flight Summary, then STOP at the one user gate. After approval, run the baseline (with the pre-seed/skip-train logic) and the 7-step iteration Pipeline, all detailed in `references/pipeline-and-state.md`.
 
-Hard-stop and never auto-retry on: any stage `status=error`; train/validation leakage; a missing or zero-row mining pool; a failed CSV existence check; silent-drop; AMP allocation mismatch; a PAIDF-incompatible AnomalyGen fine-tuned checkpoint; a missing AnomalyGen Guardrail checkpoint; or an SDG log showing disabled screening. The loop stops when the KPI target is met, `max_iterations` is reached, or an unrecoverable gate fires. Each terminal path commits `loop_stop` through `commit_stage.py`, then follows the loop-end sequence in `references/pipeline-and-state.md`.
+Hard-stop and never auto-retry on: any stage `status=error`; train/validation leakage; a missing or zero-row mining pool; a failed CSV existence check; silent-drop; AMP allocation mismatch; a stamp/recipe-incompatible AnomalyGen fine-tuned checkpoint; a missing AnomalyGen Guardrail checkpoint; or a native receipt showing guardrails disabled or incomplete identity accounting. The loop stops when the KPI target is met, `max_iterations` is reached, or an unrecoverable gate fires. Each terminal path commits `loop_stop` through `commit_stage.py`, then follows the loop-end sequence in `references/pipeline-and-state.md`.
+
+Development branch: unsigned.

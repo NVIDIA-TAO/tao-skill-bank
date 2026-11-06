@@ -1,0 +1,351 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+network_arch: tao-generate-anomalies
+type: data
+container_image: nvcr.io/nvidia/cdf-anomalygen:1.2.0  # versions-key: images.metropolis_sdg.anomalygen
+execution_environment: container
+gpu_spec_key: num_gpus
+required_credentials: []
+optional_credentials:
+- name: NGC_KEY
+  source: env_var
+  only_when: selected platform requires nvcr.io authentication
+- name: HF_TOKEN
+  source: env_var
+  only_when: native public preparation or gated model download requires authentication
+actions:
+  prepare:
+    command: python3 scripts/run_anomalygen.py prepare
+    mode: args
+    inputs:
+      dataset_dir: &id001
+        type: folder
+        optional: true
+      input_data_path: &id002
+        type: file
+        optional: true
+      validation_testcase: &id003
+        type: file
+        optional: true
+      checkpoint: &id004
+        type: folder
+        optional: true
+      recipe: &id005
+        type: file
+        optional: true
+      base_checkpoint: &id006
+        type: folder
+        optional: true
+      vae_path: &id007
+        type: file
+        optional: true
+      defect_spec: &id008
+        type: file
+        optional: true
+      exclude_stems: &id009
+        type: file
+        optional: true
+      checkpoint_root: &id010
+        type: folder
+        container_path: /workspace/cdf-anomalygen/checkpoints
+        optional: true
+      config:
+        type: file
+        optional: true
+      pool_dataset_root:
+        type: folder
+        optional: true
+      prepared_root:
+        type: folder
+        optional: true
+      published_root:
+        type: folder
+        optional: true
+      checkpoint_file:
+        type: file
+        optional: true
+      amg_model_registry:
+        type: file
+        optional: true
+    outputs:
+      results_dir:
+        type: folder
+    args:
+      name: --name {name}
+      output_dir: --output-dir {results_dir}
+      dataset_dir: --dataset-dir {dataset_dir}
+      input_data_path: --input-data-path {input_data_path}
+      validation_testcase: --validation-testcase {validation_testcase}
+      checkpoint: --checkpoint {checkpoint}
+      recipe: --recipe {recipe}
+      base_checkpoint: --base-checkpoint {base_checkpoint}
+      vae_path: --vae-path {vae_path}
+      defect_spec: --defect-spec {defect_spec}
+      exclude_stems: --exclude-stems {exclude_stems}
+      checkpoint_root: --checkpoint-root {checkpoint_root}
+      num_gpus: --num-gpus {num_gpus}
+      num_sdg: --num-sdg {num_sdg}
+      num_search_run: --num-search-run {num_search_run}
+      score: --score {score}
+      base_seed: --base-seed {base_seed}
+      mask_backend: --mask-backend {mask_backend}
+      config: --config {config}
+      pool_dataset_root: --pool-dataset-root {pool_dataset_root}
+      prepared_root: --prepared-root {prepared_root}
+      published_root: --published-root {published_root}
+      source: --source {source}
+      prepare_stage: --prepare-stage {prepare_stage}
+      checkpoint_file: --checkpoint {checkpoint_file}
+      amg_model_registry: --amg-model-registry {amg_model_registry}
+      amp_seed: --amp-seed {amp_seed}
+      amg_gen_model: --amg-gen-model {amg_gen_model}
+      amg_judge_model: --amg-judge-model {amg_judge_model}
+      per_defect_counts: --per-defect-counts {per_defect_counts}
+      min_nn_improvement: --min-nn-improvement {min_nn_improvement}
+      parallelism: --parallelism {parallelism}
+      compile: --compile {compile}
+      # Optional flag tokens: empty omits the argument; never append a boolean value.
+      # Set pseudo_label_flag to --pseudo-label or skip_quality_flag to --skip-quality.
+      pseudo_label: '{pseudo_label_flag}'
+      skip_quality: '{skip_quality_flag}'
+    defaults:
+      num_gpus: 1
+      num_search_run: 3
+      score: nn
+      base_seed: 1
+      mask_backend: amp
+      source: texture
+      prepare_stage: inputs
+      amp_seed: 43
+      min_nn_improvement: 0.0
+      parallelism: ddp
+      compile: 'true'
+      pseudo_label_flag: ''
+      skip_quality_flag: ''
+    upload_excludes:
+    - dataset-view/
+    - runtime/anomalygen/*/*/checkpoints/optim/
+    - runtime/anomalygen/*/*/checkpoints/scheduler/
+    - runtime/anomalygen/*/*/checkpoints/trainer/
+  full:
+    command: python3 scripts/run_anomalygen.py full
+    mode: args
+    inputs:
+      dataset_dir: *id001
+      input_data_path: *id002
+      validation_testcase: *id003
+      checkpoint: *id004
+      recipe: *id005
+      base_checkpoint: *id006
+      vae_path: *id007
+      defect_spec: *id008
+      exclude_stems: *id009
+      checkpoint_root: *id010
+      checkpoint_file:
+        type: file
+        optional: true
+      amg_model_registry:
+        type: file
+        optional: true
+    outputs:
+      results_dir:
+        type: folder
+      runtime_results:
+        type: folder
+        container_path: /workspace/cdf-anomalygen/results
+    args:
+      name: --name {name}
+      output_dir: --output-dir {results_dir}
+      dataset_dir: --dataset-dir {dataset_dir}
+      input_data_path: --input-data-path {input_data_path}
+      validation_testcase: --validation-testcase {validation_testcase}
+      checkpoint: --checkpoint {checkpoint}
+      recipe: --recipe {recipe}
+      base_checkpoint: --base-checkpoint {base_checkpoint}
+      vae_path: --vae-path {vae_path}
+      defect_spec: --defect-spec {defect_spec}
+      exclude_stems: --exclude-stems {exclude_stems}
+      checkpoint_root: --checkpoint-root {checkpoint_root}
+      num_gpus: --num-gpus {num_gpus}
+      num_sdg: --num-sdg {num_sdg}
+      num_search_run: --num-search-run {num_search_run}
+      score: --score {score}
+      base_seed: --base-seed {base_seed}
+      mask_backend: --mask-backend {mask_backend}
+      checkpoint_file: --checkpoint {checkpoint_file}
+      amg_model_registry: --amg-model-registry {amg_model_registry}
+      amp_seed: --amp-seed {amp_seed}
+      amg_gen_model: --amg-gen-model {amg_gen_model}
+      amg_judge_model: --amg-judge-model {amg_judge_model}
+      per_defect_counts: --per-defect-counts {per_defect_counts}
+      min_nn_improvement: --min-nn-improvement {min_nn_improvement}
+      parallelism: --parallelism {parallelism}
+      compile: --compile {compile}
+      # Optional flag tokens: empty omits the argument; never append a boolean value.
+      # Set pseudo_label_flag to --pseudo-label or skip_quality_flag to --skip-quality.
+      pseudo_label: '{pseudo_label_flag}'
+      skip_quality: '{skip_quality_flag}'
+    defaults:
+      num_gpus: 1
+      num_search_run: 3
+      score: nn
+      base_seed: 1
+      mask_backend: amp
+      amp_seed: 43
+      min_nn_improvement: 0.0
+      parallelism: ddp
+      compile: 'true'
+      pseudo_label_flag: ''
+      skip_quality_flag: ''
+    upload_excludes:
+    - dataset-view/
+    - runtime/anomalygen/*/*/checkpoints/optim/
+    - runtime/anomalygen/*/*/checkpoints/scheduler/
+    - runtime/anomalygen/*/*/checkpoints/trainer/
+  finetune_only:
+    command: python3 scripts/run_anomalygen.py finetune_only
+    mode: args
+    inputs:
+      dataset_dir: *id001
+      input_data_path: *id002
+      validation_testcase: *id003
+      checkpoint: *id004
+      recipe: *id005
+      base_checkpoint: *id006
+      vae_path: *id007
+      defect_spec: *id008
+      exclude_stems: *id009
+      checkpoint_root: *id010
+      checkpoint_file:
+        type: file
+        optional: true
+      amg_model_registry:
+        type: file
+        optional: true
+    outputs:
+      results_dir:
+        type: folder
+      runtime_results:
+        type: folder
+        container_path: /workspace/cdf-anomalygen/results
+    args:
+      name: --name {name}
+      output_dir: --output-dir {results_dir}
+      dataset_dir: --dataset-dir {dataset_dir}
+      input_data_path: --input-data-path {input_data_path}
+      validation_testcase: --validation-testcase {validation_testcase}
+      checkpoint: --checkpoint {checkpoint}
+      recipe: --recipe {recipe}
+      base_checkpoint: --base-checkpoint {base_checkpoint}
+      vae_path: --vae-path {vae_path}
+      defect_spec: --defect-spec {defect_spec}
+      exclude_stems: --exclude-stems {exclude_stems}
+      checkpoint_root: --checkpoint-root {checkpoint_root}
+      num_gpus: --num-gpus {num_gpus}
+      num_sdg: --num-sdg {num_sdg}
+      num_search_run: --num-search-run {num_search_run}
+      score: --score {score}
+      base_seed: --base-seed {base_seed}
+      mask_backend: --mask-backend {mask_backend}
+      checkpoint_file: --checkpoint {checkpoint_file}
+      amg_model_registry: --amg-model-registry {amg_model_registry}
+      amp_seed: --amp-seed {amp_seed}
+      amg_gen_model: --amg-gen-model {amg_gen_model}
+      amg_judge_model: --amg-judge-model {amg_judge_model}
+      per_defect_counts: --per-defect-counts {per_defect_counts}
+      min_nn_improvement: --min-nn-improvement {min_nn_improvement}
+      parallelism: --parallelism {parallelism}
+      compile: --compile {compile}
+      # Optional flag tokens: empty omits the argument; never append a boolean value.
+      # Set pseudo_label_flag to --pseudo-label or skip_quality_flag to --skip-quality.
+      pseudo_label: '{pseudo_label_flag}'
+      skip_quality: '{skip_quality_flag}'
+    defaults:
+      num_gpus: 1
+      num_search_run: 3
+      score: nn
+      base_seed: 1
+      mask_backend: amp
+      amp_seed: 43
+      min_nn_improvement: 0.0
+      parallelism: ddp
+      compile: 'true'
+      pseudo_label_flag: ''
+      skip_quality_flag: ''
+    upload_excludes:
+    - dataset-view/
+    - runtime/anomalygen/*/*/checkpoints/optim/
+    - runtime/anomalygen/*/*/checkpoints/scheduler/
+    - runtime/anomalygen/*/*/checkpoints/trainer/
+  inference_only:
+    command: python3 scripts/run_anomalygen.py inference_only
+    mode: args
+    inputs:
+      dataset_dir: *id001
+      input_data_path: *id002
+      validation_testcase: *id003
+      checkpoint: *id004
+      recipe: *id005
+      base_checkpoint: *id006
+      vae_path: *id007
+      defect_spec: *id008
+      exclude_stems: *id009
+      checkpoint_root: *id010
+      checkpoint_file:
+        type: file
+        optional: true
+      amg_model_registry:
+        type: file
+        optional: true
+    outputs:
+      results_dir:
+        type: folder
+    args:
+      name: --name {name}
+      output_dir: --output-dir {results_dir}
+      dataset_dir: --dataset-dir {dataset_dir}
+      input_data_path: --input-data-path {input_data_path}
+      validation_testcase: --validation-testcase {validation_testcase}
+      checkpoint: --checkpoint {checkpoint}
+      recipe: --recipe {recipe}
+      base_checkpoint: --base-checkpoint {base_checkpoint}
+      vae_path: --vae-path {vae_path}
+      defect_spec: --defect-spec {defect_spec}
+      exclude_stems: --exclude-stems {exclude_stems}
+      checkpoint_root: --checkpoint-root {checkpoint_root}
+      num_gpus: --num-gpus {num_gpus}
+      num_sdg: --num-sdg {num_sdg}
+      num_search_run: --num-search-run {num_search_run}
+      score: --score {score}
+      base_seed: --base-seed {base_seed}
+      mask_backend: --mask-backend {mask_backend}
+      checkpoint_file: --checkpoint {checkpoint_file}
+      amg_model_registry: --amg-model-registry {amg_model_registry}
+      amp_seed: --amp-seed {amp_seed}
+      amg_gen_model: --amg-gen-model {amg_gen_model}
+      amg_judge_model: --amg-judge-model {amg_judge_model}
+      per_defect_counts: --per-defect-counts {per_defect_counts}
+      min_nn_improvement: --min-nn-improvement {min_nn_improvement}
+      parallelism: --parallelism {parallelism}
+      compile: --compile {compile}
+      # Optional flag tokens: empty omits the argument; never append a boolean value.
+      # Set pseudo_label_flag to --pseudo-label or skip_quality_flag to --skip-quality.
+      pseudo_label: '{pseudo_label_flag}'
+      skip_quality: '{skip_quality_flag}'
+    defaults:
+      num_gpus: 1
+      num_search_run: 3
+      score: nn
+      base_seed: 1
+      mask_backend: amp
+      amp_seed: 43
+      min_nn_improvement: 0.0
+      parallelism: ddp
+      compile: 'true'
+      pseudo_label_flag: ''
+      skip_quality_flag: ''
+    upload_excludes:
+    - dataset-view/
+    - runtime/anomalygen/*/*/checkpoints/optim/
+    - runtime/anomalygen/*/*/checkpoints/scheduler/
+    - runtime/anomalygen/*/*/checkpoints/trainer/

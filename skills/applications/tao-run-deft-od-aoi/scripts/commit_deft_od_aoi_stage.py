@@ -20,6 +20,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from deft_od_aoi_round_robin_contract import ADMISSION_INDEX_WIDTH
+from emit_sdg_coco import inspect_runs
 
 NEXT = {"synthesis_bootstrap": "candidate_cache", "candidate_cache": "baseline_measurement",
         "baseline_measurement": "baseline_gaps",
@@ -305,6 +306,16 @@ def _validate_synthesis(iteration: int, artifacts: dict[str, dict[str, Any]],
         return report, None
     generation = _read_json(artifacts, "generation_report")
     admission = _read_json(artifacts, "admission_report")
+    runs_path = Path(str(generation.get("runs_manifest") or ""))
+    if not runs_path.is_file() or _sha(runs_path) != generation.get("runs_manifest_sha256"):
+        raise ValueError("generation report lacks unchanged native runs manifest")
+    prepared_path = Path(str(generation.get("prepared_manifest") or ""))
+    if not prepared_path.is_file() or _sha(prepared_path) != generation.get("prepared_manifest_sha256"):
+        raise ValueError("generation report lacks unchanged prepared inputs manifest")
+    native_runs = inspect_runs(runs_path, prepared_path, generation.get("exclude_stems"))
+    expected_groups = [{"dataset_id": row["group"]["dataset_id"], "requested": row["group"]["requested_rows"], "generated": row["generated"], "guardrail_blocked": row["blocked"]} for row in native_runs]
+    if generation.get("groups") != expected_groups:
+        raise ValueError("generation counts differ from native identity accounting")
     if generation.get("status") != "COMPLETE":
         raise ValueError("generation report is incomplete")
     generated = blocked = requested = 0

@@ -37,7 +37,9 @@ This writes `mining_candidates.parquet` (pre-history), `mined_filtered.parquet` 
 
 3) Mid-iteration leakage check (hard stop on any hit):
 ```bash
-$DPY $SKILL_ROOT/scripts/validate_training_csv.py --csv $RD/$ITER/mining_filter/mining_pool.csv --workspace-root $WS --validation-csv $WS/train/base/validation_set.csv
+SYNTHETIC_ARGS=()
+if [ -f "$RD/$ITER/mining_filter/sdg_rows_raw.csv" ]; then SYNTHETIC_ARGS=(--synthetic-csv "$RD/$ITER/mining_filter/sdg_rows_raw.csv"); fi
+$DPY $SKILL_ROOT/scripts/validate_training_csv.py "${SYNTHETIC_ARGS[@]}" --csv $RD/$ITER/mining_filter/mining_pool.csv --workspace-root $WS --validation-csv $WS/train/base/validation_set.csv
 ```
 On leakage: commit data_mining `--status error --summary "train/val leakage in mined rows"` → `STAGE_DONE 50` → stop.
 

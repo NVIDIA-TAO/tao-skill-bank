@@ -11,11 +11,19 @@ Supports two modes:
 """
 
 import argparse
+import csv
+import json
+import sys
 import os
 import shutil
 from pathlib import Path
 
 from PIL import Image
+_shared_candidates = (Path(__file__).resolve().parents[2] / "tao-generate-anomalies/scripts",
+                      Path(__file__).resolve().parents[3] / "data/tao-generate-anomalies/scripts")
+sys.path.insert(0, str(next((p for p in _shared_candidates if p.is_dir()), _shared_candidates[-1])))
+from anomalygen_consumer import load_generation, write_emission_receipt
+from anomalygen_contract import sha256
 
 
 HEADER_14 = (
@@ -203,16 +211,52 @@ def generate_csv_siamese(
         print(f"  converted {converted} files to {image_ext}")
 
 
+def generate_native(manifest, output_csv, *, images_dir=None, subdirname="sdg", light="SolderLight", image_ext=".jpg", label=None, exclude_stems=None):
+    report, native = load_generation(manifest, exclude_stems)
+    rows, bindings = [], []
+    for row in native:
+        generated, clean = Path(row["generated_image"]), Path(row["paired_original"])
+        if not clean.is_file() or not Path(row["paired_mask"]).is_file():
+            raise ValueError("native paired original image or mask missing")
+        values = {key: "" for key in HEADER_14.split(",")}
+        values.update(label=normalize_label(label or row["anomaly_type"].split("+", 1)[1]), object_name=generated.stem)
+        binding = {"lineage": row["lineage"], "label": values["label"], "object_name": values["object_name"]}
+        for source, key, suffix in ((generated, "input_path", "ng"), (clean, "golden_path", "ok")):
+            if images_dir is None:
+                values[key] = str(source)
+                destination = source
+            else:
+                destination = Path(images_dir) / f"{subdirname}_{suffix}" / f"{generated.stem}_{light}{image_ext}"
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if image_ext.lower() == ".jpg":
+                    convert_to_jpg(str(source), str(destination))
+                else:
+                    Image.open(source).save(destination)
+                values[key] = f"{subdirname}_{suffix}/"
+            binding[key] = {"path": str(destination.resolve()), "sha256": sha256(destination)}
+        values["anomalygen_lineage"] = json.dumps(row["lineage"], sort_keys=True)
+        rows.append(values)
+        bindings.append(binding)
+    output_csv = Path(output_csv)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    with output_csv.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=HEADER_14.split(",") + ["anomalygen_lineage"])
+        writer.writeheader()
+        writer.writerows(rows)
+    write_emission_receipt(output_csv, manifest, {**report, "pair_bindings": bindings})
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--input-dir",
-        required=True,
+        required=False,
         help="Directory of NG defect images (the ChangeNet input_path side)",
     )
     parser.add_argument(
         "--golden-dir",
-        required=True,
+        required=False,
         help="Directory containing golden (OK) images",
     )
     parser.add_argument(
@@ -246,7 +290,14 @@ def main():
         default=".jpg",
         help="Target image extension (default: .jpg)",
     )
+    parser.add_argument("--manifest", type=Path, help="Verified native AnomalyGen manifest; required for synthetic data")
+    parser.add_argument("--exclude-stems", type=Path)
     args = parser.parse_args()
+    if args.manifest:
+        generate_native(args.manifest, args.output, images_dir=args.images_dir, subdirname=args.subdir, light=args.light, image_ext=args.image_ext, label=args.label, exclude_stems=args.exclude_stems)
+        return
+    if not args.input_dir or not args.golden_dir:
+        parser.error("provide --manifest or both paired directories")
 
     if args.images_dir:
         generate_csv_siamese(

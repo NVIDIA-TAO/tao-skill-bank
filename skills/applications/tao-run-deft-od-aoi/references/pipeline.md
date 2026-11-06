@@ -91,8 +91,8 @@ from missing evidence or merely from zero new real images.
 Only when the committed next stage is `iteration_synthesis`, run
 `prepare_deft_od_aoi_synthesis.py` against strict FN gaps with the current
 iteration and admitted real COCO. The default generated plan bounds work before
-passing the filtering YAML through `tao-prepare-anomalygennext-inputs`; complete
-its embedding and AMP actions, then invoke `tao-generate-od-defects`.
+passing the filtering YAML through `tao-generate-anomalies`; complete
+its embedding and AMP actions, then invoke `tao-generate-anomalies`.
 
 Re-run admission with the generated binary COCO and image root, the
 same-iteration real admission `train.json` as `--previous-coco`, and
@@ -100,7 +100,7 @@ same-iteration real admission `train.json` as `--previous-coco`, and
 supplying synthetic and previous COCO inputs alone does not disable mining.
 Resolve the binary COCO from the producer action contract before invoking
 admission: join the generation action's results directory to
-`actions.generate.outputs.binary_coco.relative_path`, pass that file through
+the application converter output `pseudo_labels/coco_annotations_od_defect.json`, pass that file through
 `--synthetic-coco`, and pass the results directory through `--synthetic-images`.
 Do not make the admission script discover the producer skill or its metadata.
 In the current producer contract, `binary_coco.relative_path` is
@@ -157,3 +157,18 @@ admission report, generation report when synthesis runs, checkpoint-selection
 report, measurement manifest, and both gap reports and gap parquets. The
 committer validates their identities and counts before advancing. The state is
 durable history; native platform status remains authoritative while work is live.
+
+AnomalyGen 1.2 synthesis uses the single `tao-generate-anomalies` skill:
+`prepare --source od-gaps` for inputs/AMP/finalize, `finetune_only` for one-time
+bootstrap, and `inference_only --pseudo-label` for each finalized group. Resolve
+`images.metropolis_sdg.anomalygen`; mount the complete selected-stage cache at
+`/workspace/cdf-anomalygen/checkpoints`. Keep the prepared manifest and its
+hash-bound artifacts. Emit COCO with application `scripts/emit_sdg_coco.py`
+using `--runs-manifest` and `--prepared-manifest`; admission uses the converter's
+`pseudo_labels/coco_annotations_od_defect.json`. Pass caller `--exclude-stems`
+at preparation, generation and conversion, and set `synthesis.exclude_stems`
+for admission. The preparation CLI option overrides the frozen YAML exclusion path; omission uses the application path. The original source/donor provenance
+remains in the prepared bundle. Existing NN improvement, box-quality, fraction,
+whole-FN planning and split/KPI policies are unchanged. Fully blocked output is
+COMPLETE with zero synthetic contribution; preserve blocked IDs without retry
+or top-up. Guardrail capability limitations remain explicit.

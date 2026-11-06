@@ -12,12 +12,17 @@ import json
 import math
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import yaml
+_shared_candidates = (Path(__file__).resolve().parents[2] / "tao-generate-anomalies/scripts",
+                      Path(__file__).resolve().parents[3] / "data/tao-generate-anomalies/scripts")
+sys.path.insert(0, str(next((p for p in _shared_candidates if p.is_dir()), _shared_candidates[-1])))
+from anomalygen_consumer import validate_lineage, validate_prepared_ancestry
 
 
 def _json(path: Path, value: Any) -> None:
@@ -135,6 +140,13 @@ def _place(source: Path, images: Path, mode: str) -> Path:
     return target
 
 
+def validate_synthetic_lineage(document, exclude_stems=None):
+    for image in document.get("images", []):
+        lineage = image.get("anomalygen_lineage")
+        validate_lineage(lineage, exclude_stems=exclude_stems)
+        validate_prepared_ancestry(image.get("anomalygen_prepared"), lineage, exclude_stems)
+
+
 def _synthetic_candidates(document: dict[str, Any], images_root: Path,
                           minimum_area: float, maximum_aspect: float
                           ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -188,6 +200,8 @@ def _synthetic_candidates(document: dict[str, Any], images_root: Path,
             source = images_root / source
         if not source.is_file():
             raise FileNotFoundError(f"synthetic image is missing: {source}")
+        if image.get("anomalygen_lineage") and str(source.resolve()) != image["anomalygen_lineage"]["generated_image"]:
+            raise ValueError("synthetic image differs from native lineage")
         candidates.append({"source": source.resolve(), "image": image, "rows": rows,
                            "stratum": str(image.get("dataset_id") or "unknown")})
     quality["eligible_images"] = len(candidates)
@@ -247,6 +261,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     manifest = json.loads((retrieval_root / "query_manifest.json").read_text())
     previous = ({"images": [], "annotations": [], "categories": []} if previous_path is None
                 else json.loads(previous_path.read_text()))
+    validate_synthetic_lineage({"images": [row for row in previous.get("images", []) if row.get("deft_kind") == "synthetic_defect"]}, (policy.get("synthesis") or {}).get("exclude_stems"))
     existing_sources = {str(row.get("source_path") or Path(str(row["file_name"])).resolve())
                         for row in previous.get("images", [])}
     by_kind = {kind: sum(row.get("deft_kind") == kind for row in previous.get("images", []))
@@ -388,6 +403,8 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
         source = Path(str(image.get("source_path") or image["file_name"]))
         if not source.is_file() and previous_path:
             source = previous_path.parent / "images" / Path(str(image["file_name"])).name
+        if image.get("deft_kind") == "synthetic_defect" and str(source.resolve()) != image["anomalygen_lineage"]["generated_image"]:
+            raise ValueError("previous synthetic image differs from native lineage")
         append(source, image, old_annotations.get(int(image["id"]), []),
                str(image["deft_kind"]), image.get("retrieval_similarity"))
     admitted_rows = []
@@ -434,6 +451,8 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
         raise ValueError("pass both synthetic COCO and synthetic images, or neither")
     if synthetic_coco and synthetic_images:
         document = json.loads(synthetic_coco.read_text())
+        exclusions = (policy.get("synthesis") or {}).get("exclude_stems")
+        validate_synthetic_lineage(document, exclusions)
         admission = policy.get("admission") or {}
         candidates, synthetic_quality = _synthetic_candidates(
             document, synthetic_images,

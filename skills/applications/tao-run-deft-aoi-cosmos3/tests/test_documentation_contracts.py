@@ -50,7 +50,7 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("model skill predates PR 230", text)
         for key in (
             "images.tao_toolkit.data_services",
-            "images.metropolis_sdg.paidf_anomalygen",
+            "images.metropolis_sdg.anomalygen",
         ):
             self.assertIn(key, source)
         self.assertGreaterEqual(source.count("resolve_versions_key.py"), 2)

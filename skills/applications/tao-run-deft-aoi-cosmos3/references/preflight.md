@@ -166,7 +166,7 @@ TAO_DS_IMAGE=$(
 AG_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
     --skill-bank "$TAO_SKILL_BANK_PATH" \
-    images.metropolis_sdg.paidf_anomalygen
+    images.metropolis_sdg.anomalygen
 )
 ```
 
@@ -196,16 +196,14 @@ this fail-closed negative signature for shared contract validation, never as an
 executable preparation or action command.
 
 Probe the AnomalyGen assets read-only and report each as present or
-`WILL_AUTO_FETCH`: the fine-tuned checkpoint directory holding `ag_config.yaml`,
+`WILL_AUTO_FETCH`: the actual adapter file `model/iter_000015000.pt` with its original `model/exp_texture_ft_pcb.yaml`,
 the dataset directory with `defect_spec.jsonl` and
 `semantic_segmentation_labels.json`, and the Cosmos base-checkpoints cache.
-The default fine-tuned checkpoint is `nvidia/Cosmos-AnomalyGen-PCB-2B`; a BYO
-override must match the pinned container's PAIDF major.minor. Probing only —
+The default fine-tuned checkpoint is `nvidia/Cosmos-AnomalyGen-PCB-Nano`; a BYO
+override must match the pinned container's native recipe contract. Probing only —
 the bootstrap that populates missing assets is post-gate and is owned by
 `references/tao-generate-anomalies.md`. In air-gapped runs every asset must be
-pre-staged; report a missing one instead of planning a download. Before Phase
-3, use the executable file check in that reference to gate the AnomalyGen
-Guardrail safety model; a missing file is a hard stop.
+pre-staged; report a missing one instead of planning a download. Before generation, run native `bash scripts/preflight_env_ckpt.sh` in the resolved image and record CUDA 13.2 / driver compatibility. Require selected-stage Nano DCP, Wan VAE, Qwen tokenizer and guardrail assets; report optional unused groups separately. A missing required asset is a hard stop.
 
 ## 6. Model and evaluator contract
 

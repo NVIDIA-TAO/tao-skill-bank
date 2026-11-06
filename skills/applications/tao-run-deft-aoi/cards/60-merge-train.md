@@ -35,7 +35,7 @@ print(f\"rows={len(comb)} mined={len(mined)}\")"'
 
 2) Validate (existence + leakage + REQUIRED proof JSON) — hard stop on failure:
 ```bash
-$DPY $SKILL_ROOT/scripts/validate_training_csv.py --csv $RD/$ITER/dataset/train_combined_$ITER.csv --workspace-root $WS --validation-csv $WS/train/base/validation_set.csv --report-json $RD/$ITER/dataset/merge_validation.json
+$DPY $SKILL_ROOT/scripts/validate_training_csv.py --csv $RD/$ITER/dataset/train_combined_$ITER.csv --workspace-root $WS --validation-csv $WS/train/base/validation_set.csv --report-json $RD/$ITER/dataset/merge_validation.json --state $RD/deft_state.json --iter-label $ITER
 ```
 Known fix — FATAL "file missing" on base rows only: the `kpi/images/` prefix was applied wrong; fix the CSV (never bypass the FATAL), rerun step 1 then 2.
 On leakage: commit data_merge `--status error` → `STAGE_DONE 60` → stop.

@@ -80,7 +80,7 @@ ag_df = df[ag_mask]
 ag_df.to_parquet(anomalygen_gaps_parquet, index=False)
 ```
 
-Rows whose label is in the AnomalyGen-supported set are written verbatim to `anomalygen_gaps.parquet`. The schema matches the input parquet exactly — downstream AnomalyGen (Cosmos SDG) needs no other changes.
+Rows whose label is in the AnomalyGen-supported set are written verbatim to `anomalygen_gaps.parquet`. The schema matches the input parquet exactly — the calling application validates this handoff and invokes the unified `tao-generate-anomalies` AnomalyGen 1.2 preparation/generation contract. Routing labels alone do not establish checkpoint class coverage.
 
 ### Step 4 — Per-label routing breakdown
 
@@ -191,7 +191,7 @@ Write everything into a timestamped folder. Any runtime packaging hook may add `
 <output_dir>/routing_results/YYYY-MM-DD_HHMMSS/
 ├── Routing_Report.md           # Full routing report
 ├── mining_gaps.parquet         # Subset routed to k-NN Mining
-├── anomalygen_gaps.parquet     # Subset routed to AnomalyGen (Cosmos SDG)
+├── anomalygen_gaps.parquet     # Subset routed to AnomalyGen 1.2
 ├── routing_summary.txt         # Plain-text per-label breakdown
 ├── routing_config/             # Auto-copied by hook
 └── session log/artifacts       # Optional, runtime-dependent packaging capture
@@ -236,7 +236,7 @@ Use `neither (DROPPED)` whenever no module accepted the label. Sort by count des
 - Total rows routed: <N_mn>
 - Per-label row counts: <breakdown>
 
-### 4.2 AnomalyGen (Cosmos SDG)
+### 4.2 AnomalyGen 1.2
 - Eligible labels (configured): PASS, EXCESS_SOLDER, MISSING, BRIDGE
 - Labels accepted from input: <list>
 - Total rows routed: <N_ag>

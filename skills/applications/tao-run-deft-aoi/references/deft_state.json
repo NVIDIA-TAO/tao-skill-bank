@@ -51,11 +51,14 @@
       "mode": "inference_only",
       "project": "nvpcb",
       "defect_spec": "/home/user/workspace/augmentation/anomalygen/datasets/nvpcb/defect_spec.jsonl",
-      "checkpoint_dir": "/home/user/workspace/augmentation/anomalygen/checkpoints/nvpcb",
       "dataset_dir_source": "/home/user/workspace/augmentation/anomalygen/datasets/nvpcb",
-      "step": 14000,
       "num_SDG": 20,
-      "container": "<resolved from AG_IMAGE or versions.yaml at init time>"
+      "container": "<resolved from AG_IMAGE or versions.yaml at init time>",
+      "checkpoint": "<workspace>/augmentation/anomalygen/checkpoints/nvpcb/model/iter_000015000.pt",
+      "recipe": "<workspace>/augmentation/anomalygen/checkpoints/nvpcb/model/exp_texture_ft_pcb.yaml",
+      "checkpoint_repo": "nvidia/Cosmos-AnomalyGen-PCB-Nano",
+      "exclude_stems": null,
+      "quality_policy": "native_search_3_no_automatic_discard"
     },
     "mining_filter": {
       "sub_skill": "tao-mine-aoi-images",

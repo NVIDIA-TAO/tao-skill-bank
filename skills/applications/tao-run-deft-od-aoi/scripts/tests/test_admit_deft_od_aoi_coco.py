@@ -17,6 +17,12 @@ from PIL import Image
 
 SCRIPT = Path(__file__).parents[1] / "admit_deft_od_aoi_coco.py"
 sys.path.insert(0, str(SCRIPT.parent))
+import sys
+_shared_test = Path(__file__).resolve().parents[4] / "data/tao-generate-anomalies/scripts"
+sys.path.insert(0, str(_shared_test))
+sys.path.insert(0, str(_shared_test / "tests"))
+from native_fixture import bind_coco, write_generation_report
+
 SPEC = importlib.util.spec_from_file_location("admit_deft_od_aoi_coco", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
@@ -489,10 +495,7 @@ def test_empty_max_similarity_mining_routes_through_admission(
         MODULE.admit(policy, candidates, retrieval, post_synthesis, previous, "copy",
                      generated, tmp_path)
         generation_report = tmp_path / "generation_report.json"
-        generation_report.write_text(json.dumps({
-            "status": "COMPLETE", "generated": 0,
-            "groups": [{"requested": 1, "generated": 0, "guardrail_blocked": 1}],
-        }))
+        write_generation_report(generation_report, 0, 1)
         result = COMMIT_MODULE.commit(state, "iteration_synthesis", 1, [
             f"generation_report={generation_report}",
             f"admission_report={post_synthesis / 'admission_report.json'}",
@@ -539,6 +542,7 @@ def test_capacity_gate_uses_actual_cumulative_admission(
         "images": images, "annotations": [], "categories": [{"id": 1, "name": "defect"}],
     }))
     output = tmp_path / "admitted"
+    bind_coco(previous, tmp_path, only_synthetic=True)
     report = MODULE.admit(policy, candidates, retrieval, output, previous, "copy")
     assert report["synthetic_admission"]["available_room_before_admission"] == room
     assert report["new_training_images"] == int(new_real)
@@ -624,6 +628,7 @@ def test_admission_folds_capped_synthetic_categories_to_defect(tmp_path: Path) -
                                 "annotations": [{"id": 8, "image_id": 2, "category_id": 4,
                                                  "bbox": [1, 1, 3, 3]}],
                                 "categories": [{"id": 4, "name": "texture+defect"}]}))
+    bind_coco(coco, generated)
     report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy",
                           coco, generated)
     assert report["admitted"]["synthetic"] == 1
@@ -649,6 +654,7 @@ def test_flat_install_cli_accepts_explicit_synthetic_artifacts(tmp_path: Path) -
     )
     flat_script.parent.mkdir(parents=True)
     shutil.copy2(SCRIPT, flat_script)
+    shutil.copytree(_shared_test, flat_script.parents[2] / "tao-generate-anomalies/scripts")
     help_result = subprocess.run(
         [sys.executable, str(flat_script), "--help"],
         check=True, capture_output=True, text=True,
@@ -656,6 +662,7 @@ def test_flat_install_cli_accepts_explicit_synthetic_artifacts(tmp_path: Path) -
     assert "--generation-root" not in help_result.stdout
 
     output = tmp_path / "out"
+    bind_coco(coco, generated)
     completed = subprocess.run([
         sys.executable, str(flat_script),
         "--policy", str(policy),
@@ -705,6 +712,7 @@ def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) ->
     synthetic.write_text(json.dumps({"images": images, "annotations": annotations,
                                      "categories": [{"id": 7, "name": "defect-variant"}]}))
 
+    bind_coco(synthetic, generated)
     report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", previous, "copy",
                           synthetic, generated, synthetic_only=True)
 
@@ -753,6 +761,8 @@ def test_synthetic_inputs_do_not_implicitly_disable_mining(tmp_path: Path) -> No
         "categories": [{"id": 1, "name": "defect"}],
     }))
 
+    bind_coco(previous, tmp_path, only_synthetic=True)
+    bind_coco(synthetic, generated)
     report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", previous, "copy",
                           synthetic, generated)
 
@@ -789,6 +799,7 @@ def test_synthetic_cap_selection_is_independent_of_coco_order(tmp_path: Path) ->
             "annotations": annotations,
             "categories": [{"id": 1, "name": "defect"}],
         }))
+        bind_coco(synthetic, generated)
         MODULE.admit(policy, candidates, retrieval, output, None, "copy", synthetic, generated)
         coco = json.loads((output / "train.json").read_text())
         return next(row["source_path"] for row in coco["images"]

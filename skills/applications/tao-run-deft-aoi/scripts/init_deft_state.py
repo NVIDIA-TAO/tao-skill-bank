@@ -25,7 +25,8 @@ CLI:
         --num-epochs 20 \
         --num-sdg 20 \
         --project nvpcb \
-        --step 14000
+        --anomalygen-checkpoint /assets/model/iter_000015000.pt \
+        --anomalygen-recipe /assets/model/exp_texture_ft_pcb.yaml
 
 The output schema mirrors `references/deft_state.json` exactly.
 """
@@ -39,6 +40,11 @@ import os
 import pathlib
 import sys
 import tempfile
+
+_shared_candidates = (pathlib.Path(__file__).resolve().parents[2] / "tao-generate-anomalies/scripts",
+                      pathlib.Path(__file__).resolve().parents[3] / "data/tao-generate-anomalies/scripts")
+sys.path.insert(0, str(next((p for p in _shared_candidates if p.is_dir()), _shared_candidates[-1])))
+from anomalygen_consumer import checkpoint_binding
 
 from metric_contract import parse_target_expression, render_target, validate_contract
 from render_report import render as render_html_report
@@ -99,33 +105,8 @@ _DEFAULT_TRAIN_CONTAINER = os.environ.get(
 _DEFAULT_AG_CONTAINER = os.environ.get(
     "AG_IMAGE"
 ) or _resolve_image_from_versions_yaml(
-    "images", "metropolis_sdg", "paidf_anomalygen"
+    "images", "metropolis_sdg", "anomalygen"
 )
-
-
-def _resolve_anomalygen_checkpoint_dir(ws: pathlib.Path, project: str) -> pathlib.Path:
-    base = ws / "augmentation" / "anomalygen" / "checkpoints" / project
-    direct_config = base / "ag_config.yaml"
-    direct_latest = base / "checkpoints" / "latest_checkpoint.txt"
-    if direct_config.is_file() and direct_latest.is_file():
-        return base
-    search_base = base.resolve() if base.exists() else base
-    candidates = sorted(
-        path.parent
-        for path in search_base.glob("**/ag_config.yaml")
-        if (path.parent / "checkpoints" / "latest_checkpoint.txt").is_file()
-        or len(
-            [
-                model
-                for model in path.parent.glob("iter_[0-9]*.pt")
-                if "_reg_model" not in model.name and model.is_file()
-            ]
-        )
-        == 1
-    )
-    if len(candidates) == 1:
-        return candidates[0]
-    return base
 
 
 def _resolve_workspace_images_dir(ws: pathlib.Path) -> pathlib.Path:
@@ -144,7 +125,6 @@ def _resolve_workspace_images_dir(ws: pathlib.Path) -> pathlib.Path:
 def build_state(args: argparse.Namespace) -> dict:
     ws = args.workspace.resolve()
     rd = args.results_dir.resolve()
-    ag_checkpoint_dir = _resolve_anomalygen_checkpoint_dir(ws, args.project)
 
     images_dir = _resolve_workspace_images_dir(ws)
     network_mode = getattr(args, "network_mode", None) or (
@@ -221,16 +201,13 @@ def build_state(args: argparse.Namespace) -> dict:
                     / args.project
                     / "defect_spec.jsonl"
                 ),
-                # ag_checkpoint_dir: the directory holding ag_config.yaml +
-                # checkpoints/{latest_checkpoint.txt, model/iter_<step>.pt, ...}.
-                # The underlying skill takes this as `ag_checkpoint_dir`.
-                "checkpoint_dir": str(ag_checkpoint_dir),
+                **checkpoint_binding(ws, args.project,
+                    getattr(args, "anomalygen_checkpoint", None), getattr(args, "anomalygen_recipe", None), getattr(args, "exclude_stems", None)),
                 # dataset_dir: parent-staged pool root; not the raw datasets/.
                 # Resolved per-iteration to `${RESULTS_DIR}/iter${N}/pool_anomalygen/inputs/`.
                 "dataset_dir_source": str(
                     ws / "augmentation" / "anomalygen" / "datasets" / args.project
                 ),
-                "step": args.step,
                 "num_SDG": args.num_sdg,
                 "container": args.ag_container,
             },
@@ -370,7 +347,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-epochs", required=True, type=int)
     parser.add_argument("--num-sdg", required=True, type=int)
     parser.add_argument("--project", required=True, help="AnomalyGen project name (e.g. nvpcb)")
-    parser.add_argument("--step", required=True, type=int, help="AnomalyGen checkpoint step")
+    parser.add_argument("--anomalygen-checkpoint", type=pathlib.Path, help="BYO native run directory or iter_N.pt; requires training recipe")
     parser.add_argument("--batch-size", default=16, type=int)
     parser.add_argument("--top-k-per-target", default=5, type=int)
     parser.add_argument(
@@ -397,7 +374,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=_DEFAULT_AG_CONTAINER,
         help=(
             "Cosmos AnomalyGen container URI. Defaults to AG_IMAGE, then "
-            "versions.yaml::images.metropolis_sdg.paidf_anomalygen via "
+            "versions.yaml::images.metropolis_sdg.anomalygen via "
             "TAO_SKILL_BANK_PATH."
         ),
     )
@@ -406,6 +383,8 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite an existing deft_state.json. Off by default to protect resume state.",
     )
+    parser.add_argument("--anomalygen-recipe", type=pathlib.Path, help="Exact checkpoint training recipe")
+    parser.add_argument("--exclude-stems", type=pathlib.Path, help="Caller-provided forbidden source and donor stems")
     return parser
 
 

@@ -275,7 +275,7 @@ Fixed:
 
 - Reworded data setup/output instructions to refer to the installed skill bank
   and optional runtime-dependent session capture.
-- Removed remaining harness/delegation wording from the PAIDF AnomalyGen and VCN
+- Removed remaining harness/delegation wording from the AnomalyGen and VCN
   gap-analysis data skills.
 - Replaced the Brev harness-local agent-skill check with a portable `brev --help`
   availability check.
@@ -496,3 +496,12 @@ Results:
 - The migration dry-run reported zero applicable migrations and one intentionally
   kept absolute image path for BevFusion.
 - `py_compile` and `git diff --check` passed.
+
+### AnomalyGen 1.2 consolidation
+
+All generation and fine-tuning now use `tao-generate-anomalies` and the single
+`images.metropolis_sdg.anomalygen` version key. OD preparation is its
+`prepare --source od-gaps` mode; application-specific COCO projection remains in
+`tao-run-deft-od-aoi`. Container lifecycle remains delegated to the selected
+platform. Claims about real image quality require pinned-image GPU receipts and
+visual review, independent of unit and contract tests.

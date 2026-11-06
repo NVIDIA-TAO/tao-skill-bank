@@ -282,6 +282,7 @@ class ExecBitAndPackagingTests(unittest.TestCase):
             ("applications", "tao-run-deft-aoi"),
             ("models", "tao-finetune-cosmos-reason"),
             ("data", "tao-mine-aoi-images"),
+            ("data", "tao-generate-anomalies"),
         )
         with tempfile.TemporaryDirectory() as temporary:
             skills_root = pathlib.Path(temporary) / "skills-only"
