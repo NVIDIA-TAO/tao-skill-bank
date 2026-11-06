@@ -65,10 +65,9 @@ count against `max_iterations`.
 1. Build `mining_targets.json` only from the preceding Proxy false-accept /
    false-reject artifacts. Never read Benchmark per-sample errors here.
 2. Run `tao-generate-anomalies` in `inference_only` mode against the recorded
-   AnomalyGen project. Commit Phase 2's defect-to-count `allocation.json` as
-   the canonical AMP-allocation evidence, then run `emit_sdg_sharegpt.py` to turn each generated pair
+   checkpoint plus original recipe. Verify the native manifest and complete generated/blocked identity coverage; commit `--anomalygen-manifest`. Run `emit_sdg_sharegpt.py --manifest` to turn each generated pair
    into a bare `NG` record. When the driving Proxy RCCA recorded zero false
-   accepts, commit `--skip` instead of launching the generator after checking
+   accepts, `--skip` is permitted after checking
    the recorded `false_accepts_json` on disk. See
    `references/tao-generate-anomalies.md`.
 3. Invoke `tao-mine-aoi-images` on the recorded Mining pool. Persist raw mined

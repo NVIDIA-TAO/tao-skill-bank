@@ -13,10 +13,15 @@ import sys
 from collections import Counter
 
 from validate_sharegpt import load_records, prompt_and_label
+_shared_candidates = (pathlib.Path(__file__).resolve().parents[2] / "tao-generate-anomalies/scripts",
+                      pathlib.Path(__file__).resolve().parents[3] / "data/tao-generate-anomalies/scripts")
+sys.path.insert(0, str(next((p for p in _shared_candidates if p.is_dir()), _shared_candidates[-1])))
+from anomalygen_consumer import validate_lineage, validate_empty_emission
 
 
 def _load_json_list(path: pathlib.Path) -> list[dict]:
-    data = load_records(path)
+    raw = json.loads(path.read_text())
+    data = validate_empty_emission(path) if raw == [] else load_records(path)
     for index, record in enumerate(data):
         images = record.get("images")
         if not isinstance(images, list) or len(images) != 2:
@@ -54,6 +59,7 @@ def assemble(
     *,
     dedupe: bool,
     validation_paths: list[pathlib.Path],
+    exclude_stems: pathlib.Path | None = None,
 ) -> tuple[list[dict], dict]:
     if not new_paths:
         raise ValueError("at least one --new-json input is required")
@@ -100,6 +106,8 @@ def assemble(
                         "evaluation_split": str(validation_targets[target_key]),
                     }
                 )
+            if "anomalygen_lineage" in record:
+                validate_lineage(record["anomalygen_lineage"], validation_targets, exclude_stems)
             merged.append(record)
             labels[_assistant_label(record)] += 1
             provenance.append({"source": str(source_path), "source_index": index})
@@ -156,6 +164,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help="Evaluation JSON excluded from training. Repeat for Proxy val and Benchmark test.",
     )
+    parser.add_argument("--exclude-stems", type=pathlib.Path)
     return parser
 
 
@@ -167,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
             args.new_json,
             dedupe=args.dedupe,
             validation_paths=args.validation_json,
+            exclude_stems=args.exclude_stems,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(merged, indent=2) + "\n")

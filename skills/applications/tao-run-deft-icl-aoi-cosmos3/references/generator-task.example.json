@@ -1,0 +1,192 @@
+{
+  "mode": "tht_single",
+  "platform": "docker",
+  "public_package": "/data/frozen/public",
+  "private_package": "/data/frozen/private",
+  "model_path": "/models/classifier-base",
+  "framework_image": "registry/classifier@sha256:REPLACE",
+  "data_services_image": "registry/data-services@sha256:REPLACE",
+  "direct_profile": "/protocol/direct-profile.json",
+  "siglip_path": "/models/siglip",
+  "siglip_revision": "REPLACE_WITH_IMMUTABLE_REVISION",
+  "results_dir": "/runs/generator-addendum",
+  "budgets": {
+    "suite_wall_seconds": 345600,
+    "stage_wall_seconds": 172800,
+    "generator_wall_seconds": 7200,
+    "max_attempts": 2
+  },
+  "m3_evidence": "/evidence/classifier-native.json",
+  "generator_evidence": "/evidence/generator-acceptance.json",
+  "environment_manifest": "/evidence/environment.json",
+  "storage_required_bytes": 0,
+  "epoch_selection": {
+    "path": "/prior-run/selections/F.json",
+    "sha256": "REPLACE_WITH_SHA256"
+  },
+  "training": {
+    "rank": 16,
+    "alpha": 32,
+    "dropout": 0.05,
+    "lr": 0.0001,
+    "weight_decay": 0.01,
+    "targets": "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+    "seed": 42,
+    "effective_batch": 1,
+    "precision": "bfloat16"
+  },
+  "generator": {
+    "prepared_package": "/private-data/prepared",
+    "source_counts": {
+      "clean": 0,
+      "donor_reference": 0
+    },
+    "checkpoint": "/models/generator/adapter.pt",
+    "recipe": "/models/generator/training-recipe.yaml",
+    "checkpoint_root": "/models/generator/checkpoints",
+    "base_checkpoint": "/models/generator/checkpoints/nano/model",
+    "base_source": "/models/generator/base-source",
+    "image": "registry/anomalygen@sha256:REPLACE",
+    "runtime_mounts": [
+      {
+        "source": "/models/generator/checkpoints",
+        "target": "/ag12/checkpoints"
+      },
+      {
+        "source": "/runtime/hf-cli-env",
+        "target": "/ag12/hf-cli-env"
+      }
+    ],
+    "environment": {
+      "IMAGINAIRE_HF_CLI_ENVIRONMENT": "/ag12/hf-cli-env"
+    },
+    "policy": {
+      "version": "proxy-rate-rarity-decay-anchor-v1",
+      "rounds": 5,
+      "requested_per_round": 28,
+      "weighted_slots": 25,
+      "exploration_slots": 3,
+      "rarity_power": "-0.5",
+      "decay_factor": "0.5",
+      "decay_floor": "0.125",
+      "arithmetic": "binary64",
+      "remainder_tie": "class_map_order",
+      "exploration_count": "cumulative_successful_final_logical_before_training_dedup",
+      "exploration_remaining": "separate_largest_remainder_effective_weights",
+      "zero_weight_fallback": "rarity",
+      "missing_proxy_support": "preflight_reject",
+      "anchors": "sorted_error_ids_cycle_else_sorted_class_ids_else_native",
+      "clean_selection": "maximum_cosine_same_mining_embeddings_unique_within_round",
+      "clean_tie": "unique_canonical_stem",
+      "class_order": "external_class_map",
+      "base_seed": 42,
+      "amp_seed": 42,
+      "seed_increment_per_round": 1,
+      "quality_guidance_range": [
+        1.0,
+        10.0
+      ],
+      "quality_crop_range": [
+        1.5,
+        2.5
+      ],
+      "quality_draw_mode": "native_per_sample_bayesopt_else_uniform",
+      "quality_bo_min_obs": 2,
+      "quality_bo_candidates": 1024,
+      "quality_draw_seeds": [
+        1,
+        2,
+        3
+      ],
+      "quality_selection": "best_nn_earliest_tie",
+      "quality_search_rounds": 3,
+      "score": "nn",
+      "filter": null,
+      "top_up": false,
+      "guidance": 3.0,
+      "num_steps": 35,
+      "crop_ratio": 2.0,
+      "poisson_blend": false,
+      "num_generated_images": 1,
+      "placement": "cad_tht",
+      "donor_largest_component": true
+    },
+    "container_symlink_targets": {
+      "/opt/image-python/bin/python": {
+        "image": "registry/anomalygen@sha256:REPLACE",
+        "artifact": {
+          "path": "/evidence/captured-native-interpreter",
+          "sha256": "REPLACE_WITH_SHA256",
+          "bytes": 0
+        }
+      }
+    }
+  },
+  "retrieval_cache": {
+    "provenance": {
+      "path": "/evidence/cache-provenance.json",
+      "sha256": "REPLACE_WITH_SHA256",
+      "bytes": 0
+    },
+    "approved_preflight": {
+      "path": "/evidence/original-preflight.json",
+      "sha256": "REPLACE_WITH_SHA256",
+      "bytes": 0
+    },
+    "mining": {
+      "vectors": {
+        "path": "/evidence/mining-vectors.parquet",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      },
+      "input": {
+        "path": "/evidence/mining-input.parquet",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      },
+      "spec": {
+        "path": "/evidence/mining-spec.yaml",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      },
+      "launch": {
+        "path": "/evidence/mining-launch.json",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      },
+      "terminal": {
+        "path": "/evidence/mining-terminal.json",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      }
+    },
+    "proxy": {
+      "vectors": {
+        "path": "/evidence/proxy-vectors.parquet",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      },
+      "input": {
+        "path": "/evidence/proxy-input.parquet",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      },
+      "spec": {
+        "path": "/evidence/proxy-spec.yaml",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      },
+      "launch": {
+        "path": "/evidence/proxy-launch.json",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      },
+      "terminal": {
+        "path": "/evidence/proxy-terminal.json",
+        "sha256": "REPLACE_WITH_SHA256",
+        "bytes": 0
+      }
+    }
+  },
+  "setup_token_exports": []
+}

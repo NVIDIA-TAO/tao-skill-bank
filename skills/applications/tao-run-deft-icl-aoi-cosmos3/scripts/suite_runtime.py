@@ -30,7 +30,7 @@ class Docker:
         if '@sha256:' not in image: raise ValueError('resolved immutable image required')
     def record(self,*args):
         return subprocess.check_output([sys.executable,str(BANK/'scripts/tao_job_record.py'),*args],text=True).strip()
-    def submit(self,stage,command,*,mounts=(),env=(),gpu=True,network='none',entrypoint='/workspace/.venv/bin/python',retry_of=None,extra_args=(),on_open=None,launch_timeout=120):
+    def submit(self,stage,command,*,mounts=(),env=(),gpu=True,network='none',entrypoint='/workspace/.venv/bin/python',retry_of=None,extra_args=(),on_open=None,launch_timeout=120,host_result_mount=False):
         # Inspect cached runtime; never pull implicitly.
         subprocess.run(['docker','image','inspect',self.image],stdout=subprocess.DEVNULL,check=True)
         args=['open','--platform','docker','--image',self.image,'--network-arch','cosmos-reason','--action',stage,'--storage-tier','A','--results-root',str(self.root)]
@@ -46,6 +46,8 @@ class Docker:
              '-e','TAO_JOB_ID='+job,
              '-e','HF_HUB_OFFLINE=1','-e','TRANSFORMERS_OFFLINE=1','-e','PYTHONDONTWRITEBYTECODE=1',
              '-v',f'{result}:/results']
+        if host_result_mount:
+            cmd += ['--mount',f'type=bind,src={result},dst={result}', '-e','TAO_HOST_RESULTS_DIR='+str(result)]
         if gpu: cmd+=['--gpus',self.gpus]
         for host,target,readonly in mounts:
             host=Path(host).resolve(strict=True)

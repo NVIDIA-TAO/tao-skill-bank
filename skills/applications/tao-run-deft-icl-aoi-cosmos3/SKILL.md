@@ -1,7 +1,10 @@
 ---
 name: tao-run-deft-icl-aoi-cosmos3
-description: Run Cosmos3 AOI DEFT with adaptive in-context learning, including the frozen six-arm THT single-image eight-class suite and compatible paired PCB OK/NG workflows. Uses native Cosmos Framework LoRA, external strict evaluation, isolated Codex classification, SigLIP retrieval, durable recovery and evidence export. Use for THT ICL/DEFT comparisons or Cosmos3 AOI plus ICL, not generic model training.
+description: Run Cosmos3 AOI DEFT with adaptive in-context learning, including the frozen six-arm THT suite, a separately approved AnomalyGen 1.2 single-image generator addendum, and compatible paired PCB OK/NG workflows. Uses native Cosmos Framework LoRA, external strict evaluation, isolated Codex classification, SigLIP retrieval, durable recovery and evidence export. Use for THT ICL/DEFT comparisons or Cosmos3 AOI plus ICL, not generic model training.
 license: Apache-2.0 AND CC-BY-4.0
+compatibility: Linux, Python 3.11 or later, Docker with NVIDIA GPU support, pinned model and data-service images, and external frozen experiment inputs.
+tags: [computer-vision, aoi, deft, in-context-learning, anomaly-generation]
+allowed-tools: Read, Bash, Write
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -13,13 +16,18 @@ This is a separate application copied from `tao-run-deft-aoi-cosmos3`.
 Keep the original application and shared model/platform implementation intact.
 Model-first routing resolves Cosmos3 to the existing model skill and selects
 `cosmos-framework` for the validated native Nano conversion/training path.
-Read its backend contract and the Docker platform skill before execution.
+Read its backend contract, the [application metadata](references/skill_info.yaml),
+and the Docker platform skill before execution.
 
 ## Route the task explicitly
 
 - THT: `mode: tht_single`, one image, eight original class names, exactly one
   JSON label. Use `scripts/suite.py` and the protocol below. No golden image;
   A1/A2 are views of a joint. No multilabel mode.
+- Generator addendum: explicit separate `generator-addendum-v1` arm G in
+  `tht_single` mode. Use `scripts/generator_addendum.py` and the
+  [native generator contract](references/generator-addendum.md). It preserves
+  same-D classifier controls and consumes external prepared source manifests.
 - Paired PCB: retain default `bare_okng`, two ordered images, exact OK/NG
   target and the copied [paired workflow](references/paired-workflow.md).
   Its binary Benchmark-gate behavior does not apply to the THT suite.

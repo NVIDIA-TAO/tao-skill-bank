@@ -143,13 +143,14 @@ class SyntheticSplitTruthfulnessTests(unittest.TestCase):
     def test_ng_only_synthetic_records_are_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            synthetic = _write_json(
-                root / "synthetic.json",
-                [
-                    _record("images/synthetic-1.png", "NG"),
-                    _record("images/synthetic-2.png", "NG"),
-                ],
-            )
+            import emit_sdg_sharegpt
+            from anomalygen_consumer import load_generation
+            import sys
+            sys.path.insert(0, str(pathlib.Path(load_generation.__code__.co_filename).parent / "tests"))
+            from native_fixture import write_native
+            manifest = write_native(root / "native", ["PCB+bridge_00000.png", "PCB+bridge_00001.png"])
+            records, _ = emit_sdg_sharegpt.emit_native(manifest, media_root=root, prompt="Inspect", relative=False)
+            synthetic = _write_json(root / "synthetic.json", records)
 
             summary = validate_split_contract.validate(
                 {**_role_paths(root), "synthetic": synthetic},

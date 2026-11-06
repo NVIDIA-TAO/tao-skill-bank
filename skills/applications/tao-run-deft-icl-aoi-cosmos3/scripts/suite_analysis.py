@@ -27,7 +27,7 @@ def quantile(values,q):
     values=sorted(values);position=(len(values)-1)*q;lo=int(position);hi=min(lo+1,len(values)-1)
     return values[lo]+(values[hi]-values[lo])*(position-lo)
 
-def paired_bootstrap(predictions,identities,evaluator,config):
+def paired_bootstrap(predictions,identities,evaluator,config,*,pairs=PAIRS):
     if config['method']!='paired_joint_percentile' or config['grouping']!='object_name+normalized_scan_id':
         raise ValueError('unsupported statistical protocol')
     if not predictions: return {'status':'unavailable','reason':'no completed arms'}
@@ -46,14 +46,14 @@ def paired_bootstrap(predictions,identities,evaluator,config):
     alpha=(1-config['confidence'])/2
     actual={a:evaluator.score(list(rows.values())) for a,rows in predictions.items()}
     differences={}
-    for a,b in PAIRS:
+    for a,b in pairs:
         if a not in predictions or b not in predictions: continue
         differences[a+'-'+b]={}
         for metric in METRICS:
             delta=[x-y for x,y in zip(draws[a][metric],draws[b][metric])]
             differences[a+'-'+b][metric]={'estimate':actual[a][metric]-actual[b][metric],
                                         'lower':quantile(delta,alpha),'upper':quantile(delta,1-alpha)}
-    missing=[a+'-'+b for a,b in PAIRS if a not in predictions or b not in predictions]
+    missing=[a+'-'+b for a,b in pairs if a not in predictions or b not in predictions]
     return {'status':'incomplete' if missing else 'complete','available_arms':sorted(predictions),
             'missing_pairs':missing,'config':config,'joint_groups':len(groups),'queries':len(ids),'pairs':differences,
             'limits':'Cluster percentile intervals preserve within-joint dependence; retained Mining/Benchmark overlaps remain a training leakage limitation, not repaired by bootstrap.'}

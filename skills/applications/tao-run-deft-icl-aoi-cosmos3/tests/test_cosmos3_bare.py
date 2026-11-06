@@ -125,19 +125,13 @@ def write_rcca_report(path: pathlib.Path) -> pathlib.Path:
 
 
 def write_sdg_output(sdg_dir: pathlib.Path, stems: list[str]) -> pathlib.Path:
-    """Fake one AnomalyGen SDG run: paired reconstructed/original images + CSV."""
-    rows = ["reconstructed_image,original_image,psnr"]
-    for stem in stems:
-        for subdir in ("reconstructed_image", "original_image"):
-            image = sdg_dir / subdir / f"{stem}.png"
-            image.parent.mkdir(parents=True, exist_ok=True)
-            image.write_bytes(b"\x89PNG\r\n\x1a\n")
-        rows.append(
-            f"reconstructed_image/{stem}.png,original_image/{stem}.png,31.5"
-        )
-    csv_path = sdg_dir / "SDG_result.csv"
-    csv_path.write_text("\n".join(rows) + "\n")
-    return csv_path
+    """CPU fixture of the native manifest and paired output contract."""
+    from anomalygen_consumer import load_generation
+    import importlib.util
+    fixture = pathlib.Path(load_generation.__code__.co_filename).parent / "tests/native_fixture.py"
+    spec = importlib.util.spec_from_file_location("native_fixture", fixture)
+    helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
+    return helper.write_native(sdg_dir.parent, [stem + ".png" for stem in stems])
 
 
 class BareAnnotationTests(unittest.TestCase):
@@ -458,15 +452,19 @@ class IsolationAndMetricTests(unittest.TestCase):
             )
 
             # AnomalyGen output is an eligible Train source alongside Mining.
+            def synthetic_record(name):
+                manifest = write_sdg_output(root / (name + "-run") / "sdg", [name])
+                records, _ = emit_sdg_sharegpt.emit_native(manifest, media_root=root, prompt="Inspect", relative=False)
+                return records[0]
             synthetic = write_json(
                 root / "synthetic.json",
-                [record("sdg/PCB+bridge_00000.png", "sdg/orig.png", "NG")],
+                [synthetic_record("PCB+bridge_00000")],
             )
             mixed_train = write_json(
                 root / "train_mixed.json",
                 [
                     record("mining.png", "golden.png", "OK"),
-                    record("sdg/PCB+bridge_00000.png", "sdg/orig.png", "NG"),
+                    synthetic_record("PCB+bridge_00000"),
                 ],
             )
             mixed_summary = validate_split_contract.validate(
@@ -485,14 +483,14 @@ class IsolationAndMetricTests(unittest.TestCase):
             # 2's AnomalyGen output.
             current_synthetic = write_json(
                 root / "synthetic_iter2.json",
-                [record("sdg/iter2.png", "sdg/orig2.png", "NG")],
+                [synthetic_record("iter2")],
             )
             monotonic_train = write_json(
                 root / "train_iter2.json",
                 [
                     record("mining.png", "golden.png", "OK"),
-                    record("sdg/PCB+bridge_00000.png", "sdg/orig.png", "NG"),
-                    record("sdg/iter2.png", "sdg/orig2.png", "NG"),
+                    synthetic_record("PCB+bridge_00000"),
+                    synthetic_record("iter2"),
                 ],
             )
             with self.assertRaisesRegex(ValueError, "must come from the Mining"):
@@ -530,7 +528,7 @@ class IsolationAndMetricTests(unittest.TestCase):
                 root / "train_iter2_dropped_history.json",
                 [
                     record("mining.png", "golden.png", "OK"),
-                    record("sdg/iter2.png", "sdg/orig2.png", "NG"),
+                    synthetic_record("iter2"),
                 ],
             )
             with self.assertRaisesRegex(
@@ -1408,7 +1406,7 @@ class StateMachineTests(unittest.TestCase):
             self.assertEqual(
                 emit_sdg_sharegpt.main(
                     [
-                        "--sdg-csv",
+                        "--manifest",
                         str(sdg_csv),
                         "--media-root",
                         str(root),
@@ -1428,7 +1426,7 @@ class StateMachineTests(unittest.TestCase):
             commit(
                 "iter1",
                 "anomalygen",
-                "--anomalygen-sdg",
+                "--anomalygen-manifest",
                 str(sdg_csv),
                 "--anomalygen-allocation",
                 str(allocation),
@@ -1581,7 +1579,7 @@ class StateMachineTests(unittest.TestCase):
             self.assertEqual(
                 emit_sdg_sharegpt.main(
                     [
-                        "--sdg-csv",
+                        "--manifest",
                         str(iter2_sdg_csv),
                         "--media-root",
                         str(root),
@@ -1596,7 +1594,7 @@ class StateMachineTests(unittest.TestCase):
             commit(
                 "iter2",
                 "anomalygen",
-                "--anomalygen-sdg",
+                "--anomalygen-manifest",
                 str(iter2_sdg_csv),
                 "--anomalygen-allocation",
                 str(iter2_allocation),

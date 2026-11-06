@@ -28,6 +28,7 @@ APP=Path(__file__).resolve().parent
 MODEL=BANK/'skills/models/tao-finetune-cosmos-reason/scripts'
 
 class Suite:
+    cost_arms = 'ABCDEF'
     def __init__(self,task,approval):
         self.task=task; self.root=Path(task['results_dir']).resolve()
         if self.root.is_relative_to(BANK): raise ValueError('experiment outputs must remain outside the code repository')
@@ -99,7 +100,7 @@ class Suite:
         launch=json.loads((Path(job['results_dir'])/'launch.json').read_text())
         submitted=launch.get('submitted_at_unix')
         self.store.record_usage(job['job_id'],{'invocation_id':job['job_id'],'job_id':job['job_id'],
-                'stage':stage,'arm':stage.split('/')[0] if stage.split('/')[0] in list('ABCDEF') else None,
+                'stage':stage,'arm':stage.split('/')[0] if stage.split('/')[0] in self.cost_arms else None,
                 'phase':'benchmark' if '/benchmark/' in stage else ('proxy' if '/proxy/' in stage else 'preparation'),
                 'category':self.task.get('cost_category','formal'),'started_at_unix':start,'ended_at_unix':end,
                 'queue_seconds':max(0,start-submitted) if start and submitted else None,
@@ -109,8 +110,9 @@ class Suite:
                 'backend_state':native.get('Status'),'exit_code':native.get('ExitCode')})
 
     def run_job(self,stage,command,*,image=None,entrypoint='/workspace/.venv/bin/python',strip_entrypoint=False,
-                mounts=(),env=(),required_output=None,gpu=True,heartbeat=None,resume_answers=False,recover_training=None):
+                mounts=(),env=(),required_output=None,gpu=True,heartbeat=None,resume_answers=False,recover_training=None,stage_wall_seconds=None,host_result_mount=False):
         runtime=Docker(self.root/'jobs',image or self.task['framework_image'])
+        stage_cap=stage_wall_seconds or self.task['budgets']['stage_wall_seconds']
         if strip_entrypoint: command=command[1:]
         if self.store.stage(stage)['status']=='complete':
             result=self.result(stage)
@@ -120,7 +122,7 @@ class Suite:
         for _ in range(2):
             if time.time()>=self.deadline: raise TimeoutError('suite wall budget exhausted')
             first=self.store.db.execute('SELECT MIN(started) FROM attempts WHERE stage=?',(stage,)).fetchone()[0]
-            if first and time.time()>=first+self.task['budgets']['stage_wall_seconds']:
+            if first and time.time()>=first+stage_cap:
                 raise TimeoutError('original stage wall budget exhausted; retry cannot reset it')
             if self.budget_scope and self.store.remaining(self.budget_scope)['wall_seconds']<=0:
                 raise TimeoutError('ICL wall budget exhausted')
@@ -145,9 +147,9 @@ class Suite:
                         launch_mounts.append((prior,'/previous_raw_answers.jsonl',True))
                         launch_env.append(('TAO_RESUME_ANSWERS','/previous_raw_answers.jsonl'))
                 job=runtime.submit(stage.replace('/','-'),launch_command,mounts=launch_mounts,env=launch_env,
-                       entrypoint=entrypoint,gpu=gpu,retry_of=retry_of,on_open=lambda jid:self.store.attach_job(attempt,jid))
+                       entrypoint=entrypoint,gpu=gpu,retry_of=retry_of,host_result_mount=host_result_mount,on_open=lambda jid:self.store.attach_job(attempt,jid))
             first_started=self.store.db.execute('SELECT MIN(started) FROM attempts WHERE stage=?',(stage,)).fetchone()[0]
-            stage_deadline=min(self.deadline,first_started+self.task['budgets']['stage_wall_seconds'])
+            stage_deadline=min(self.deadline,first_started+stage_cap)
             if self.budget_scope:
                 stage_deadline=min(stage_deadline,time.time()+self.store.remaining(self.budget_scope)['wall_seconds'])
             final=runtime.wait(job['job_id'],stage_deadline,heartbeat=(lambda state:heartbeat(job)) if heartbeat else None)
@@ -225,19 +227,23 @@ class Suite:
         self.store.artifact(stage+'/export',path/'export_manifest.json')
         return str(path)
 
+    def training_population(self, selected_ids, view, round_index):
+        if not (view/'train.json').exists(): training_view(self.public,selected_ids,self.prompt,view)
+        return len(selected_ids)
+
     def train(self,arm,selected_ids,epochs,*,round_index=0,previous=None):
         import tomllib,tomli_w
         from render_cfw_sft import render_profile
         stage=f'{arm}/train/{round_index}'
         directory=self.root/'training'/arm/str(round_index);directory.mkdir(parents=True,exist_ok=True)
         view=directory/'input'
-        if not (view/'train.json').exists(): training_view(self.public,selected_ids,self.prompt,view)
+        population=self.training_population(selected_ids,view,round_index)
         self.store.artifact(stage+'/training-data',view/'train.json')
         offset=previous['iteration'] if previous else 0
         resume=previous['dcp_host'] if previous else '???'
         spec=tomllib.loads(render_profile('full',model_path='/model',annotation_path='/input/train.json',media_root='/input',
-                           run_name=f'{arm}-{round_index}',num_epochs=epochs,train_records=len(selected_ids),annotation_mode='tht_single',resume_checkpoint=resume))
-        training=self.task['training']; steps=len(selected_ids)
+                           run_name=f'{arm}-{round_index}',num_epochs=epochs,train_records=population,annotation_mode='tht_single',resume_checkpoint=resume))
+        training=self.task['training']; steps=population
         spec['model'].update(lora_rank=training['rank'],lora_alpha=training['alpha'],lora_dropout=training['dropout'],lora_target_modules=training['targets'])
         spec['model']['parallelism']['data_parallel_shard_degree']=1
         spec['optimizer'].update(lr=training['lr'],weight_decay=training['weight_decay'])
@@ -265,7 +271,7 @@ class Suite:
                                   mcc=scored['metrics']['mcc'],epoch=epoch,checkpoint=exported,
                                   dcp_host=str(Path(checkpoint_job['results_dir'])/Path(ready['checkpoint']).relative_to('/results')),
                                   framework_config=str(Path(checkpoint_job['results_dir'])/Path(ready['framework_config']).relative_to('/results')),
-                                  iteration=ready['iteration'],unique_images=len(selected_ids),exposures=epoch*len(selected_ids),
+                                  iteration=ready['iteration'],unique_images=population,exposures=epoch*population,
                                   optimizer_steps=ready['iteration'],train_job=checkpoint_job['job_id'],checkpoint_ready_at=ready['ready_at_unix'])
                     self.store.seal(key,evidence)
                 rows=[self.store.get(f'F/epoch/{i}') for i in range(1,epoch+1)]
@@ -322,9 +328,9 @@ class Suite:
             self.save_selection('F',dict(decision['best'],stop_reason=decision['reason']))
             return self.result('F/select')
         ready={'checkpoint':'/results/'+str(cp.relative_to(job['results_dir'])),'framework_config':'/results/'+str(config.relative_to(job['results_dir']))}
-        exported=self.export(f'D/export/{round_index}',job,ready)
+        exported=self.export(f'{arm}/export/{round_index}',job,ready)
         return {'checkpoint':exported,'dcp_host':str(cp),'framework_config':str(config),
-                'iteration':offset+steps*epochs,'unique_images':len(selected_ids),'exposures':len(selected_ids)*epochs,
+                'iteration':offset+steps*epochs,'unique_images':population,'exposures':population*epochs,
                 'optimizer_steps':steps*epochs,'scheduler_resume':'native optimizer and scheduler state; round schedule horizon is cumulative step cap',
                 'dataloader_resume':'reset for changed accumulated Mining dataset; checkpoint resumes within a round retain cursor'}
 

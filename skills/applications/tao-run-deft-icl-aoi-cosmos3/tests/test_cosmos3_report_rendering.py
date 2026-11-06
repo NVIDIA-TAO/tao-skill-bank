@@ -341,7 +341,7 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            sdg_csv = results / "iter1/anomalygen/sdg/SDG_result.csv"
+            sdg_csv = results / "iter1/anomalygen/sdg/texture_ft_generation_result.csv"
             sdg_csv.parent.mkdir(parents=True, exist_ok=True)
             sdg_csv.write_text("image,label\na.png,NG\nb.png,NG\n", encoding="utf-8")
             allocation = results / "iter1/anomalygen/sdg/allocation.json"
@@ -433,7 +433,7 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 mining = root / "mining_summary.json"
                 mining.parent.mkdir(parents=True)
                 mining.write_text(json.dumps({"input_rows": raw}), encoding="utf-8")
-                sdg = root / "SDG_result.csv"
+                sdg = root / "texture_ft_generation_result.csv"
                 sdg.write_text(
                     "image,label\n"
                     + "".join(f"sdg-{index}.png,NG\n" for index in range(generated)),
@@ -474,7 +474,7 @@ class CosmosReportRenderingTests(unittest.TestCase):
     def test_sdg_report_preserves_allocation_and_generation_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            sdg = root / "iter1/anomalygen/sdg/SDG_result.csv"
+            sdg = root / "iter1/anomalygen/sdg/texture_ft_generation_result.csv"
             sdg.parent.mkdir(parents=True)
             sdg.write_text(
                 "defect_type,reconstructed_image\n"

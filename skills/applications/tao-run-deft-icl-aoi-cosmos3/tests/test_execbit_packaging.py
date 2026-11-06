@@ -279,9 +279,11 @@ class ExecBitAndPackagingTests(unittest.TestCase):
     def test_cosmos3_suite_discovers_from_flattened_plugin_layout(self) -> None:
         sources = (
             ("applications", "tao-run-deft-aoi-cosmos3"),
+            ("applications", "tao-run-deft-icl-aoi-cosmos3"),
             ("applications", "tao-run-deft-aoi"),
             ("models", "tao-finetune-cosmos-reason"),
             ("data", "tao-mine-aoi-images"),
+            ("data", "tao-generate-anomalies"),
         )
         with tempfile.TemporaryDirectory() as temporary:
             skills_root = pathlib.Path(temporary) / "skills-only"
@@ -307,7 +309,7 @@ class ExecBitAndPackagingTests(unittest.TestCase):
                     "-p",
                     "test_cosmos3_*.py",
                 ],
-                cwd=skills_root / "tao-run-deft-aoi-cosmos3",
+                cwd=skills_root / "tao-run-deft-icl-aoi-cosmos3",
                 env=environment,
                 capture_output=True,
                 text=True,

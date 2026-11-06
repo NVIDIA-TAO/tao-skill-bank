@@ -67,7 +67,7 @@ record:
 
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/emit_sdg_sharegpt.py" \
-  --sdg-csv "$RESULTS_DIR/$LABEL/anomalygen/sdg/SDG_result.csv" \
+  --sdg-csv "$RESULTS_DIR/$LABEL/anomalygen/sdg/texture_ft_generation_result.csv" \
   --media-root "$MEDIA_ROOT" \
   --prompt-from "$MINING_ANNOTATIONS" \
   --emit-relative \

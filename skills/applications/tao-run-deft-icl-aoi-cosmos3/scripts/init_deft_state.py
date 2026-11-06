@@ -16,6 +16,11 @@ import sys
 import tempfile
 from typing import Any
 
+_shared_candidates = (pathlib.Path(__file__).resolve().parents[2] / "tao-generate-anomalies/scripts",
+                      pathlib.Path(__file__).resolve().parents[3] / "data/tao-generate-anomalies/scripts")
+sys.path.insert(0, str(next((p for p in _shared_candidates if p.is_dir()), _shared_candidates[-1])))
+from anomalygen_consumer import checkpoint_binding
+
 from metric_contract import render_target, validate_contract
 from render_report import render as render_html_report
 
@@ -78,7 +83,7 @@ DEFAULT_MINING_IMAGE = os.environ.get(
 DEFAULT_ANOMALYGEN_IMAGE = os.environ.get(
     "AG_IMAGE"
 ) or _resolve_image_from_versions_yaml(
-    "images", "metropolis_sdg", "paidf_anomalygen"
+    "images", "metropolis_sdg", "anomalygen"
 )
 BASE_MODEL_ALIASES = {
     "nano": "nvidia/Cosmos3-Nano",
@@ -377,25 +382,12 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             "anomalygen": ({"enabled": False, "status": "skipped", "reason": "user-requested", "num_SDG": 0} if getattr(args, "skip_sdg", False) else {
                 "enabled": True,
                 "sub_skill": "tao-generate-anomalies",
-                # The DEFT loop only needs Phases 2-3 (AMP routing + SDG
-                # diffusion); Phases 4-7 are SDG-quality optimization and
-                # contribute no training pairs.
                 "mode": "inference_only",
-                "num_search_run": 0,
-                "nn_threshold": 0,
                 "project": args.anomalygen_project,
                 "num_SDG": args.num_sdg,
                 "container": args.anomalygen_container,
-                # Explicit flags win; otherwise derive the workspace
-                # convention. Resolve through symlinks so the recorded path is
-                # the real one — a symlinked subtree under the workspace
-                # dangles inside the container when only $WS is mounted.
-                "checkpoint_dir": str(_anomalygen_path(
-                    args.anomalygen_checkpoint_dir,
-                    workspace
-                    / "augmentation/anomalygen/checkpoints"
-                    / args.anomalygen_project,
-                )),
+                **checkpoint_binding(workspace, args.anomalygen_project,
+                    getattr(args, "anomalygen_checkpoint", None), getattr(args, "anomalygen_recipe", None), getattr(args, "exclude_stems", None)),
                 "dataset_dir": str(_anomalygen_path(
                     args.anomalygen_dataset_dir,
                     workspace
@@ -539,9 +531,9 @@ def _parser() -> argparse.ArgumentParser:
     # Without these, assets outside the workspace convention need either a
     # symlink (which dangles inside the container) or a full copy.
     parser.add_argument(
-        "--anomalygen-checkpoint-dir",
+        "--anomalygen-checkpoint",
         type=pathlib.Path,
-        help="Override the derived AnomalyGen checkpoint directory.",
+        help="BYO native run directory or explicit iter_N.pt; requires --anomalygen-recipe.",
     )
     parser.add_argument(
         "--anomalygen-dataset-dir",
@@ -553,6 +545,8 @@ def _parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help="Override the derived Cosmos base-checkpoints cache directory.",
     )
+    parser.add_argument("--anomalygen-recipe", type=pathlib.Path, help="Exact checkpoint training recipe")
+    parser.add_argument("--exclude-stems", type=pathlib.Path, help="Forbidden source and donor stems")
     return parser
 
 

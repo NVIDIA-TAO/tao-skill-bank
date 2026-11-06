@@ -67,7 +67,7 @@ Required sections:
 8. **Artifacts** — baseline base-model reference, iteration DCP checkpoints,
    their saved Hydra `config.yaml` files, input SFT TOMLs, Proxy/Benchmark
    results, RCCA, mining,
-   AnomalyGen `SDG_result.csv`, `allocation.json`, generated ShareGPT, assembled
+   AnomalyGen `texture_ft_generation_result.csv`, `allocation.json`, generated ShareGPT, assembled
    JSON, and validation-report links/paths.
 9. **Hard Stops / Warnings** — committed error events, if present.
 

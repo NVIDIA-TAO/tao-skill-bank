@@ -13,6 +13,8 @@ from pathlib import Path
 from tht_contract import json_hash, sha256
 
 class SuiteStore:
+    allowed_arms = 'ABCDEF'
+
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -106,7 +108,7 @@ class SuiteStore:
             self.event('attempt_finished',{'attempt':attempt,'status':status,'detail':detail})
 
     def record_answer(self, arm, phase, candidate, answer):
-        if arm not in 'ABCDEF' or len(arm)!=1 or phase not in ('proxy','benchmark','smoke'):
+        if arm not in self.allowed_arms or len(arm)!=1 or phase not in ('proxy','benchmark','smoke'):
             raise ValueError('unknown answer role')
         if phase=='benchmark':
             self.verify_freeze()

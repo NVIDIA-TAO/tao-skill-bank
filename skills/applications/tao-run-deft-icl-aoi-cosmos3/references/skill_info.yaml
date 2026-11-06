@@ -10,6 +10,7 @@ data_format:
   evaluator: external_hash_pinned
 companion_skills:
   - tao-in-context-learning
+  - tao-generate-anomalies
   - tao-generate-image-embeddings
   - tao-mine-nearest-neighbors
   - tao-run-on-docker
@@ -17,10 +18,25 @@ companion_skills:
 actions:
   preflight:
     mode: args
+    args: {}
     command: python scripts/suite.py preflight --task {task} --output {output}
   run:
     mode: args
+    args: {}
     command: python scripts/suite.py run --preflight {preflight} --approval {approval}
   export:
     mode: args
+    args: {}
     command: python scripts/suite.py export --results-dir {results_dir}
+  generator_preflight:
+    mode: args
+    args: {}
+    command: python scripts/generator_addendum.py preflight --task {task} --output {output}
+  generator_run:
+    mode: args
+    args: {}
+    command: python scripts/generator_addendum.py run --preflight {preflight} --approval {approval}
+  generator_export:
+    mode: args
+    args: {}
+    command: python scripts/generator_addendum.py export --results-dir {results_dir}

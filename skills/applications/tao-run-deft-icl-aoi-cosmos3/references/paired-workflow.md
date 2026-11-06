@@ -303,9 +303,7 @@ For each `iterN` when the frozen Benchmark gate is unmet:
    `inference_only` mode, then turn each generated pair into a bare `NG`
    record with `"$PYTHON" scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
    the driving Proxy RCCA recorded zero false accepts, and even then generating
-   is often still worthwhile. The emitter accepts PAIDF 1.0.1 repo-root-relative
-   and documented output-dir-relative paths, with `--sdg-root` as an explicit
-   additional base — see `references/tao-generate-anomalies.md`.
+   is often still worthwhile. The emitter verifies the native manifest, sparse IDs, blocked ledger and original source/mask lineage — see `references/tao-generate-anomalies.md`.
 3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
    floor with `"$PYTHON" scripts/filter_mined_by_cosine.py`, then run the mapped skill's
    history-aware post-processing so a filepath selected by a prior iteration
@@ -350,12 +348,11 @@ missing/ambiguous mined-to-source alignment; missing/tampered mining history,
 cross-iteration mined filepath duplication; target overlap among
 Proxy/Benchmark/Mining; a generated Train target outside Mining and AnomalyGen
 output, or overlapping Proxy/Benchmark; a changed Benchmark hash; any Benchmark
-error used for routing; missing/empty mining output; a failed or empty
-AnomalyGen run while Proxy false accepts remain outstanding; an `anomalygen`
+error used for routing; missing/empty mining output; a failed or incomplete AnomalyGen run (complete all-blocked output is valid with no synthetic training rows); an `anomalygen`
 skip not backed by zero false accepts in the driving RCCA; a synthetic record
 whose label is not `NG` or whose paired image is missing; a
-PAIDF-incompatible AnomalyGen fine-tuned checkpoint; a missing AnomalyGen
-Guardrail checkpoint or an SDG log showing disabled screening; a checkpoint outside
+stamp/recipe-incompatible AnomalyGen fine-tuned checkpoint; a missing AnomalyGen
+Guardrail checkpoint or native receipt showing guardrails disabled; a checkpoint outside
 the iteration result tree; an invalid nested TOML spec; unknown evaluator
 ground truth; or a program error.
 

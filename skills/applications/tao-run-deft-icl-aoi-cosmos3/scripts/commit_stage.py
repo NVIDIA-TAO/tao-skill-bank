@@ -17,6 +17,11 @@ import os
 import pathlib
 import re
 import sys
+
+_shared_candidates = (pathlib.Path(__file__).resolve().parents[2] / "tao-generate-anomalies/scripts",
+                      pathlib.Path(__file__).resolve().parents[3] / "data/tao-generate-anomalies/scripts")
+sys.path.insert(0, str(next((p for p in _shared_candidates if p.is_dir()), _shared_candidates[-1])))
+from anomalygen_consumer import load_generation, validate_sharegpt_emission
 import tempfile
 from typing import Any
 
@@ -412,6 +417,7 @@ def _apply_success(
     results_dir: pathlib.Path,
     iterations: dict[str, Any],
     skip_sdg: bool = False,
+    config: dict[str, Any] | None = None,
 ) -> None:
     stage = args.stage
     phase_root = results_dir / args.iter_label
@@ -496,27 +502,25 @@ def _apply_success(
             phase["anomalygen_skipped"] = True
             phase["anomalygen_skip_reason"] = "user-requested" if user_skip else args.summary.strip()
         else:
-            phase["anomalygen_sdg_csv"] = _within(
-                _required_file(args.anomalygen_sdg, "--anomalygen-sdg"),
-                phase_root,
-                "--anomalygen-sdg",
-            )
-            allocation, allocated = _required_allocation(
-                args.anomalygen_allocation, "--anomalygen-allocation"
-            )
-            phase["anomalygen_allocation_json"] = _within(
-                allocation,
-                phase_root,
-                "--anomalygen-allocation",
-            )
-            phase["anomalygen_amp_allocated"] = allocated
-            phase["anomalygen_sharegpt_json"] = _within(
-                _required_json_file(
-                    args.anomalygen_sharegpt, "--anomalygen-sharegpt"
-                ),
-                phase_root,
-                "--anomalygen-sharegpt",
-            )
+            manifest = _required_file(args.anomalygen_manifest, "--anomalygen-manifest")
+            exclusions = (config or {}).get("anomalygen", {}).get("exclude_stems")
+            accounting, native_rows = load_generation(manifest, exclusions)
+            phase["anomalygen_manifest"] = manifest
+            phase["anomalygen_sdg_csv"] = str(pathlib.Path(accounting["output_dir"]) / "texture_ft_generation_result.csv")
+            phase["anomalygen_accounting"] = accounting
+            phase["anomalygen_amp_allocated"] = accounting["testcases"]
+            phase["anomalygen_training_ready"] = accounting["training_ready"]
+            if args.anomalygen_sdg and pathlib.Path(args.anomalygen_sdg).resolve() != pathlib.Path(phase["anomalygen_sdg_csv"]).resolve():
+                raise ValueError("--anomalygen-sdg differs from verified native manifest")
+            if args.anomalygen_allocation:
+                allocation, allocated = _required_allocation(args.anomalygen_allocation, "--anomalygen-allocation")
+                if allocated != accounting["testcases"]:
+                    raise ValueError("allocation differs from native testcase identities")
+                phase["anomalygen_allocation_json"] = allocation
+            _within(manifest, phase_root, "--anomalygen-manifest")
+            artifact = _within(_required_file(args.anomalygen_sharegpt, "--anomalygen-sharegpt"), phase_root, "--anomalygen-sharegpt")
+            validate_sharegpt_emission(artifact, manifest, exclusions, (config or {}).get("media_root"))
+            phase["anomalygen_sharegpt_json"] = artifact
     elif stage == "data_mining":
         artifacts = {
             "mining_mined_parquet": (
@@ -671,9 +675,9 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 state = json.loads(state_path.read_text())
                 iterations = state["iterations"]
                 phase = iterations[args.iter_label]
-                _apply_success(phase, args, results_dir, iterations, state.get('config', {}).get('anomalygen', {}).get('enabled') is False)
+                _apply_success(phase, args, results_dir, iterations, state.get('config', {}).get('anomalygen', {}).get('enabled') is False, state.get('config', {}))
             else:
-                _apply_success(phase, args, results_dir, iterations, state.get('config', {}).get('anomalygen', {}).get('enabled') is False)
+                _apply_success(phase, args, results_dir, iterations, state.get('config', {}).get('anomalygen', {}).get('enabled') is False, state.get('config', {}))
             state["status"] = "in_progress"
             state.pop("completed_at", None)
         else:
@@ -784,6 +788,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--benchmark-metrics-summary", type=pathlib.Path)
     parser.add_argument("--metric-result", type=pathlib.Path)
     parser.add_argument("--mining-targets", type=pathlib.Path)
+    parser.add_argument("--anomalygen-manifest", type=pathlib.Path)
     parser.add_argument("--anomalygen-sdg", type=pathlib.Path)
     parser.add_argument("--anomalygen-allocation", type=pathlib.Path)
     parser.add_argument("--anomalygen-sharegpt", type=pathlib.Path)
