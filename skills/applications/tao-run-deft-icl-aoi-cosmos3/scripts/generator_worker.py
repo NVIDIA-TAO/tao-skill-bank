@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from generator_contract import (verify_prepared, file_binding, verify_file, bind_amp,
-                                admit_generation, immutable_json, validate_cases, _SHARED)
+                                admit_generation, immutable_json, validate_cases, dataset_inventory, reference_binding, _SHARED)
 from tht_contract import load_jsonl, sha256
 from anomalygen_contract import filter_testcases
 
@@ -146,6 +146,7 @@ def prepare(package, work, counts, output, seed, *, execute_native, repo):
 
 def run(request_file, output, *, prepare_only=False):
     request_file=Path(request_file);request=json.loads(request_file.read_text());output=Path(output)
+    verify_prepared(request['generator']['prepared_package'], expected_inventory=request['prepared_inventory'])
     output.mkdir(parents=True,exist_ok=True)
     if (output/'admission.json').exists() or (output/'preparation').exists(): raise FileExistsError('native attempt cannot overwrite a previous run')
     g=request['generator'];package=Path(g['prepared_package']);repo=Path('/workspace/cdf-anomalygen')
@@ -164,14 +165,18 @@ def run(request_file, output, *, prepare_only=False):
     if prepare_only:
         immutable_json(output/'prepare-completion.json',{'status':'COMPLETE','testcases':len(binding['cases'])})
         return
+    reference_binding(package,output/'preparation/dataset-view')
+    reference_inventory=output/'expected-dataset-inventory.json'
+    immutable_json(reference_inventory,dataset_inventory(package/'dataset'))
     shared=next(p for p in _SHARED if p.is_dir())
     command=[sys.executable,shared/'run_anomalygen.py','inference_only','--name',f'generator-round-{request["round"]}',
              '--output-dir',output/'native','--dataset-dir',output/'preparation/dataset-view',
+             '--expected-dataset-inventory',reference_inventory,
              '--input-data-path',testcase,'--exclude-stems',package/'audit/exclude_stems.txt',
              '--checkpoint',g['checkpoint'],'--recipe',g['recipe'],'--base-checkpoint',g['base_checkpoint'],
              '--base-seed',str(seed),'--amp-seed',str(seed),'--num-search-run','3','--score','nn']
     execute(command,output,repo)
-    admission=admit_generation(output/'native/manifest.json',output/'ancestry.json',package,request['round'])
+    admission=admit_generation(output/'native/manifest.json',output/'ancestry.json',package,request['round'],expected_inventory=request['prepared_inventory'])
     immutable_json(output/'admission.json',admission)
 
 

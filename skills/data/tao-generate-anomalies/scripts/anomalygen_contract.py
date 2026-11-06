@@ -297,3 +297,26 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def dataset_inventory(root):
+    """Exact plain-file reference dataset; never follow unsealed aliases."""
+    root = Path(root)
+    rows = []
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("reference dataset must contain copied files, not symlinks")
+        if path.is_file():
+            rows.append({"path": str(path.relative_to(root)), "sha256": sha256(path), "bytes": path.stat().st_size})
+        elif not path.is_dir():
+            raise ValueError("unsupported reference dataset entry")
+    if not rows:
+        raise ValueError("reference dataset is empty")
+    return rows
+
+
+def verify_dataset_inventory(root, inventory):
+    expected = json.loads(Path(inventory).read_text()) if isinstance(inventory, (str, Path)) else inventory
+    if dataset_inventory(root) != expected:
+        raise ValueError("quality-reference dataset bytes or membership changed")
+    return expected

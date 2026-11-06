@@ -45,6 +45,9 @@ actions:
       exclude_stems: &id009
         type: file
         optional: true
+      expected_dataset_inventory: &reference_inventory
+        type: file
+        optional: true
       checkpoint_root: &id010
         type: folder
         container_path: /workspace/cdf-anomalygen/checkpoints
@@ -82,6 +85,7 @@ actions:
       vae_path: --vae-path {vae_path}
       defect_spec: --defect-spec {defect_spec}
       exclude_stems: --exclude-stems {exclude_stems}
+      expected_dataset_inventory: --expected-dataset-inventory {expected_dataset_inventory}
       checkpoint_root: --checkpoint-root {checkpoint_root}
       num_gpus: --num-gpus {num_gpus}
       num_sdg: --num-sdg {num_sdg}
@@ -140,6 +144,7 @@ actions:
       vae_path: *id007
       defect_spec: *id008
       exclude_stems: *id009
+      expected_dataset_inventory: *reference_inventory
       checkpoint_root: *id010
       checkpoint_file:
         type: file
@@ -165,6 +170,7 @@ actions:
       vae_path: --vae-path {vae_path}
       defect_spec: --defect-spec {defect_spec}
       exclude_stems: --exclude-stems {exclude_stems}
+      expected_dataset_inventory: --expected-dataset-inventory {expected_dataset_inventory}
       checkpoint_root: --checkpoint-root {checkpoint_root}
       num_gpus: --num-gpus {num_gpus}
       num_sdg: --num-sdg {num_sdg}
@@ -215,6 +221,7 @@ actions:
       vae_path: *id007
       defect_spec: *id008
       exclude_stems: *id009
+      expected_dataset_inventory: *reference_inventory
       checkpoint_root: *id010
       checkpoint_file:
         type: file
@@ -240,6 +247,7 @@ actions:
       vae_path: --vae-path {vae_path}
       defect_spec: --defect-spec {defect_spec}
       exclude_stems: --exclude-stems {exclude_stems}
+      expected_dataset_inventory: --expected-dataset-inventory {expected_dataset_inventory}
       checkpoint_root: --checkpoint-root {checkpoint_root}
       num_gpus: --num-gpus {num_gpus}
       num_sdg: --num-sdg {num_sdg}
@@ -290,6 +298,7 @@ actions:
       vae_path: *id007
       defect_spec: *id008
       exclude_stems: *id009
+      expected_dataset_inventory: *reference_inventory
       checkpoint_root: *id010
       checkpoint_file:
         type: file
@@ -312,6 +321,7 @@ actions:
       vae_path: --vae-path {vae_path}
       defect_spec: --defect-spec {defect_spec}
       exclude_stems: --exclude-stems {exclude_stems}
+      expected_dataset_inventory: --expected-dataset-inventory {expected_dataset_inventory}
       checkpoint_root: --checkpoint-root {checkpoint_root}
       num_gpus: --num-gpus {num_gpus}
       num_sdg: --num-sdg {num_sdg}

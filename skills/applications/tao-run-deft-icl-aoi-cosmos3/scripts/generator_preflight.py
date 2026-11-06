@@ -30,41 +30,67 @@ D_GATES = ('external_scorer_parity','native_training','checkpoint_resume','nativ
 
 
 def tree_binding(root, aliases=None, container_targets=None):
-    root = Path(root).resolve(strict=True); aliases=aliases or {}; container_targets=container_targets or {}
-    rows=[]; links=[]; members=[]
-    for p in sorted(root.rglob('*')):
-        if p.is_symlink():
-            link=os.readlink(p);target=Path(link) if Path(link).is_absolute() else p.parent/link
-            translated=target
-            for destination,source in sorted(aliases.items(),key=lambda kv:-len(kv[0])):
-                if target.is_relative_to(destination):
-                    translated=Path(source)/target.relative_to(destination);break
-            resolved=translated.resolve(strict=False)
-            if not resolved.exists():
-                declared=container_targets.get(str(resolved))
-                if not declared: raise ValueError('unbound dangling native symlink: '+str(p))
-                verify_file(declared['artifact']);rows.append(declared['artifact'])
-                links.append({'path':str(p),'link':link,'translated_target':str(resolved),'container_image':declared['image'],'artifact':declared['artifact']})
-                members.append(str(p));continue
-            links.append({'path':str(p),'link':link,'translated_target':str(resolved)})
-            members.append(str(p))
-            if resolved.is_file(): rows.append(file_binding(resolved))
-            elif not resolved.is_dir(): raise ValueError('unsupported native symlink target')
-        elif p.is_file():
-            rows.append(file_binding(p));members.append(str(p))
-    if not rows: raise ValueError('empty input tree: '+str(root))
-    return {'root':str(root),'files':list({r['path']:r for r in rows}.values()),
-            'symlinks':links,'members':members,'aliases':aliases}
+    """Seal every effective directory/file and every link in its resolution chain."""
+    root = Path(root); root = root if root.is_absolute() else Path.cwd()/root
+    aliases=aliases or {}; container_targets=container_targets or {}
+    files={}; links={}; directories={}
+
+    def translate(target):
+        for destination, source in sorted(aliases.items(),key=lambda kv:-len(kv[0])):
+            if target.is_relative_to(destination):
+                relative=target.relative_to(destination)
+                if '..' in relative.parts: raise ValueError('native alias escapes its mounted target')
+                return Path(source)/relative
+        return target
+
+    def resolve(path, active=()):
+        path=Path(path); path=path if path.is_absolute() else Path.cwd()/path
+        current=Path(path.anchor)
+        for index, part in enumerate(path.parts[1:],1):
+            if part=='..':
+                current=current.parent;continue
+            current=current/part
+            if current.is_symlink():
+                name=str(current)
+                if name in active: raise ValueError('native symlink cycle')
+                link=os.readlink(current)
+                target=Path(link) if Path(link).is_absolute() else current.parent/link
+                target=translate(target)
+                links[name]={'path':name,'link':link,'translated_target':str(target)}
+                return resolve(target.joinpath(*path.parts[index+1:]),(*active,name))
+        if not current.exists():
+            declared=container_targets.get(str(current))
+            if not declared: raise ValueError('unbound dangling native symlink: '+str(current))
+            verify_file(declared['artifact']);files[declared['artifact']['path']]=declared['artifact']
+            return current, declared
+        return current, None
+
+    def visit(path, ancestors=()):
+        target, container=resolve(path)
+        if container: return
+        name=str(target)
+        if target.is_file():
+            if name not in files: files[name]=file_binding(target)
+        elif target.is_dir():
+            if name in ancestors: raise ValueError('native directory symlink cycle')
+            children=sorted(target.iterdir())
+            directories[name]=[p.name for p in children]
+            for child in children: visit(child,(*ancestors,name))
+        else: raise ValueError('unsupported native tree entry')
+
+    visit(root)
+    if not files: raise ValueError('empty input tree: '+str(root))
+    return {'root':str(root),'files':[files[k] for k in sorted(files)],
+            'symlinks':[links[k] for k in sorted(links)],'directories':directories,
+            'aliases':aliases,'container_targets':container_targets}
 
 
 def verify_tree(tree):
-    root=Path(tree['root'])
-    current={str(p) for p in root.rglob('*') if p.is_file() or p.is_symlink()}
-    if current!=set(tree['members']): raise ValueError('sealed tree membership changed')
-    for link in tree['symlinks']:
-        if not Path(link['path']).is_symlink() or os.readlink(link['path'])!=link['link']:
-            raise ValueError('sealed native symlink changed')
-    for row in tree['files']: verify_file(row)
+    try:
+        rebuilt=tree_binding(tree['root'],tree['aliases'],tree['container_targets'])
+    except (OSError,RuntimeError) as error:
+        raise ValueError('sealed native tree resolution changed') from error
+    if rebuilt!=tree: raise ValueError('sealed native tree bytes, membership or resolution changed')
 
 
 def validate_cache_provenance(task):
@@ -139,6 +165,23 @@ def validate_cache(task, role, expected):
     return {'count':len(vectors),'dimension':dimensions.pop(),'files':list(entry.values())}
 
 
+def check_results_root(root, *, resume=False):
+    root=Path(root)
+    if not root.exists(): return
+    if root.is_symlink() or not root.is_dir(): raise ValueError('results root must be a plain directory')
+    entries=list(root.iterdir())
+    if resume and (root/'suite.sqlite').is_file():
+        try:
+            with sqlite3.connect('file:'+str(root/'suite.sqlite')+'?mode=ro',uri=True) as db:
+                row=db.execute("SELECT value FROM meta WHERE key='protocol'").fetchone()
+            if row and json.loads(row[0])=='generator-addendum-v1': return
+        except (sqlite3.Error,ValueError): pass
+        raise ValueError('results journal is not an initialized generator run')
+    allowed={'driver.lock'} if resume else set()
+    if any(p.name not in allowed or p.is_symlink() or not p.is_file() or p.stat().st_size for p in entries):
+        raise ValueError('fresh results root contains unowned artifacts')
+
+
 def validate(task):
     task=copy.deepcopy(task)
     required=('public_package','private_package','model_path','framework_image','data_services_image',
@@ -152,6 +195,7 @@ def validate(task):
     root=Path(task['results_dir']).resolve()
     if root.is_relative_to(BANK) or root in (public,private) or public.is_relative_to(private) or private.is_relative_to(public):
         raise ValueError('separate code, results, public and private roots required')
+    check_results_root(Path(task['results_dir']))
     if not root.parent.is_dir(): raise ValueError('results parent must exist')
     bundle=json.loads((public/'bundle.json').read_text())
     expected={'role_counts':EXPECTED_COUNTS,'excluded_unique':310,'metadata_repaired':0,
@@ -233,17 +277,17 @@ def validate(task):
         verify_file(value['artifact']);files.append(value['artifact'])
     aliases={'/base-source':g['base_source'],'/workspace/cdf-anomalygen/checkpoints':g['checkpoint_root']}
     aliases.update({m['target']:m['source'] for m in g.get('runtime_mounts',[])})
-    trees=[tree_binding(model),tree_binding(task['siglip_path']),tree_binding(g['checkpoint_root'],aliases,container_targets),tree_binding(g['base_source'],aliases,container_targets)]
+    trees=[tree_binding(task['model_path']),tree_binding(g['checkpoint']),tree_binding(g['recipe']),tree_binding(task['siglip_path']),tree_binding(g['checkpoint_root'],aliases,container_targets),tree_binding(g['base_source'],aliases,container_targets)]
     if not Path(g['base_checkpoint']).is_relative_to(Path(g['checkpoint_root'])):
         if Path(g['base_checkpoint']).is_dir(): trees.append(tree_binding(g['base_checkpoint'],aliases,container_targets))
-        else: files.append(file_binding(g['base_checkpoint']))
+        else: trees.append(tree_binding(g['base_checkpoint'],aliases,container_targets))
     for mount in g.get('runtime_mounts',[]):
         source=Path(mount['source']).resolve(strict=True)
         if not Path(mount['target']).is_absolute() or str(source) in ('/','/home','/home/ubuntu') or source.is_relative_to(private) or private.is_relative_to(source):
             raise ValueError('invalid native runtime mount')
-        if source.is_dir(): trees.append(tree_binding(source,aliases,container_targets))
-        else: files.append(file_binding(source))
+        trees.append(tree_binding(mount['source'],aliases,container_targets))
     if set(g.get('environment',{}))-{'IMAGINAIRE_HF_CLI_ENVIRONMENT'}: raise ValueError('unrecognized native environment setting')
+    files.append(prepared['inventory'])
     files.extend(validate_cache_provenance(task))
     cache={role:validate_cache(task,role,mining if role=='mining' else roles['proxy']) for role in ('mining','proxy')}
     for info in cache.values(): files.extend(info['files'])
@@ -276,7 +320,7 @@ def verify_resume(task):
         raise ValueError('approved host Python arithmetic/runtime changed')
     for binding in task['bindings']['files']: verify_file(binding)
     for tree in task['bindings']['trees']: verify_tree(tree)
-    verify_prepared(task['generator']['prepared_package'],task['public_package'])
+    verify_prepared(task['generator']['prepared_package'],task['public_package'],expected_inventory=task['prepared_inventory'])
     if subprocess.check_output(['git','-C',str(BANK),'rev-parse','HEAD'],text=True).strip()!=task['code']['commit']:
         raise ValueError('approved code commit changed')
     if subprocess.check_output(['git','-C',str(BANK),'status','--porcelain'],text=True).strip(): raise ValueError('approved code checkout changed')

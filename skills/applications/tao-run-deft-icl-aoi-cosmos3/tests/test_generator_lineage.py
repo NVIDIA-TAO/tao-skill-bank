@@ -50,7 +50,7 @@ class Fixture:
             if clean:
                 mask = mask.rename(mask.with_name('item0.png'))
             raw = self.public / 'mining/images' / source.name; raw.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(source, raw)
-            ident = {'id': f'item{i}', 'source_id': f'item{i}.png', 'image': str(raw.relative_to(self.public)),
+            ident = {'id': f'item{i}', 'image': str(raw.relative_to(self.public)),
                      'image_sha256': sha256(raw), 'labels': [label], 'object_name': f'joint{i}', 'scan_id': 'scan'}
             self.mining.append(ident)
             assets = []
@@ -59,7 +59,7 @@ class Fixture:
                                'original_sha256': sha256(path), 'bytes': path.stat().st_size, 'asset_role': role,
                                'archive_member': 'original/' + path.name, 'transform': 'byte_copy_and_filename_normalization'})
             self.sources.append({'kind': kind, 'source_stem': source.stem, 'category': category.split('/')[-1],
-                                 'matched_identity': {'source_id': ident['source_id'], 'role': 'mining', 'labels': [label],
+                                 'matched_identity': {'source_id': ident['id'], 'role': 'mining', 'labels': [label],
                                      'joint': [f'joint{i}', 'scan'], 'image': ident['image'], 'image_sha256': sha256(raw)},
                                  'assets': assets, 'classifier_training_admission': False,
                                  'pixel_proof': {'equals_frozen_mining': True, 'mode': 'RGB', 'width': 8, 'height': 8,
@@ -99,6 +99,7 @@ class Fixture:
         sys.path.insert(0, str(SCRIPTS.parents[2] / 'data/tao-generate-anomalies/scripts'))
         from anomalygen_contract import verify_generation
         g = self.root / 'generation'; bucket = g / 'sdg'; bucket.mkdir(parents=True)
+        shutil.copytree(self.package/'dataset', g/'dataset-view')
         lines(g / 'testcase.jsonl', self.cases)
         header = ['index', 'output_filename', 'image_filename', 'mask_filename', 'anomaly_type']
         with (bucket / 'texture_ft_generation_result.csv').open('w') as f:

@@ -10,7 +10,7 @@ from generator_contract import (immutable_json, verify_file, validate_admission,
                                 combined_training_view, file_binding, _SHARED)
 from generator_policy import allocate, select_clean
 from generator_store import GeneratorStore
-from generator_preflight import verify_resume
+from generator_preflight import verify_resume, check_results_root
 from suite_driver import Suite, APP
 from suite_data import RetrievalToolset
 from suite_runtime import BANK, Docker
@@ -41,6 +41,7 @@ class GeneratorSuite(Suite):
         verify_resume(task)
         self.task=task;self.root=Path(task['results_dir']).resolve()
         if self.root.is_relative_to(BANK): raise ValueError('private run outputs cannot enter code repository')
+        check_results_root(Path(task['results_dir']),resume=True)
         self.store=GeneratorStore(self.root)
         resuming=self.store.get('started_at') is not None
         self.store.initialize(task,approval)
@@ -66,7 +67,7 @@ class GeneratorSuite(Suite):
             if binding is None: raise ValueError('missing cumulative generation admission')
             value=json.loads(verify_file(binding).read_text())
             if value['round']!=number: raise ValueError('generation history reordered')
-            validate_admission(value,self.task['generator']['prepared_package']);values.append(value)
+            validate_admission(value,self.task['generator']['prepared_package'],expected_inventory=self.task['prepared_inventory']);values.append(value)
         return values
 
     def training_population(self,selected_ids,view,round_index):
@@ -76,6 +77,41 @@ class GeneratorSuite(Suite):
         for name in ('composition.json','provenance.json'):
             self.store.artifact(f'G/train/{round_index}/{name}',view/name)
         return composition['train_records']
+
+    def prepare_inference_view(self,view,queries,policy,phase):
+        import shutil, tempfile
+        from suite_data import query_view
+        from anomalygen_contract import dataset_inventory
+        references=self.retrieval.references(phase,queries,policy,self.task['icl_reference_capacity']) if policy else None
+        with tempfile.TemporaryDirectory(prefix='generator-expected-view-') as temporary:
+            expected=Path(temporary)/'input'
+            query_view(self.public,queries,self.prompt,expected,policy=policy,references=references)
+            inventory=dataset_inventory(expected)
+            names={row['path'] for row in inventory}
+            if view.exists():
+                actual={str(p.relative_to(view)) for p in view.rglob('*') if p.is_file() or p.is_symlink()}
+                if actual-names: raise ValueError('inference view contains unexpected media or requests')
+            view.mkdir(parents=True,exist_ok=True)
+            for row in inventory:
+                target=view/row['path']
+                if target.exists() or target.is_symlink():
+                    if target.is_symlink() or not target.is_file() or sha256(target)!=row['sha256']:
+                        raise ValueError('inference request/media differs from frozen inputs')
+                else:
+                    target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(expected/row['path'],target)
+            provenance=view.parent/(view.name+'-provenance.json')
+            immutable_json(provenance,json.loads((expected.parent/'input-provenance.json').read_text()))
+            stage=str(view.relative_to(self.root/'views'))
+            self.store.seal(stage+'/view-inventory',inventory)
+            self.store.artifact(stage+'/view-provenance',provenance)
+            for row in inventory: self.store.artifact(stage+'/view/'+row['path'],view/row['path'])
+
+    def write_training_spec(self,path,text):
+        if path.exists():
+            if path.is_symlink() or path.read_text()!=text:
+                raise ValueError('training spec differs from frozen inputs')
+        else:
+            with path.open('x') as stream: stream.write(text)
 
     def infer(self,arm,phase,candidate,model,**kwargs):
         if arm!='G' or phase not in ('proxy','benchmark'): raise ValueError('isolated generator arm required')
@@ -139,7 +175,7 @@ class GeneratorSuite(Suite):
                             required_output='admission.json',host_result_mount=True,
                             stage_wall_seconds=self.task['budgets']['generator_wall_seconds'])
         path=Path(result['job']['results_dir'])/'admission.json'
-        admission=json.loads(path.read_text());validate_admission(admission,g['prepared_package'])
+        admission=json.loads(path.read_text());validate_admission(admission,g['prepared_package'],expected_inventory=self.task['prepared_inventory'])
         if admission['round']!=number: raise ValueError('native attempt round differs')
         self.store.seal(f'G/admission/{number}',file_binding(path))
         return admission

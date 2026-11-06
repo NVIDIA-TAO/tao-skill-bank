@@ -19,6 +19,7 @@ from anomalygen_contract import (
     filter_testcases,
     load_exclusions,
     prepare_dataset_view,
+    verify_dataset_inventory,
     read_jsonl,
     sha256,
     validate_testcases,
@@ -129,6 +130,7 @@ def parser():
     p.add_argument("--checkpoint-root", type=Path)
     p.add_argument("--vae-path", type=Path)
     p.add_argument("--exclude-stems", type=Path)
+    p.add_argument("--expected-dataset-inventory", type=Path, help="Optional exact relative-path/SHA256/bytes reference inventory")
     p.add_argument("--num-sdg", type=int)
     p.add_argument("--num-gpus", type=int, default=1)
     p.add_argument("--base-seed", type=int, default=1)
@@ -410,11 +412,18 @@ def run(a):
     write(a.output_dir / "status.json", report)
     try:
         dataset = a.dataset_dir
+        expected_inventory = getattr(a, "expected_dataset_inventory", None)
+        if expected_inventory:
+            expected_inventory = json.loads(expected_inventory.read_text())
+            verify_dataset_inventory(dataset, expected_inventory)
         if dataset and a.exclude_stems:
             report["dataset_view"] = prepare_dataset_view(
                 dataset, a.output_dir / "dataset-view", a.exclude_stems
             )
             dataset = a.output_dir / "dataset-view"
+        if expected_inventory:
+            verify_dataset_inventory(dataset, expected_inventory)
+            report["expected_dataset_inventory"] = expected_inventory
         if a.mode in ("full", "finetune_only"):
             if a.validation_testcase:
                 report["validation_filter"] = filter_testcases(
@@ -460,6 +469,8 @@ def run(a):
                 report["recipe_sha256"] = sha256(a.recipe)
                 # Model generation is complete independently of an all-blocked training-ineligible batch.
                 if not a.skip_quality and report["generation"]["generated"]:
+                    if expected_inventory:
+                        verify_dataset_inventory(dataset, expected_inventory)
                     texture = a.repo / "anomalygen/scripts/texture"
                     kpi = output / "kpi.json"
                     execute(
@@ -477,6 +488,8 @@ def run(a):
                         ],
                         a,
                     )
+                    if expected_inventory:
+                        verify_dataset_inventory(dataset, expected_inventory)
                     search_testcase = a.output_dir / "search-testcase.jsonl"
                     report["refinement_inputs"] = prepare_refinement(
                         testcase, output, search_testcase

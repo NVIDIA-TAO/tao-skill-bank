@@ -153,3 +153,46 @@ def test_structured_optional_flags_render_into_real_cli(mode, enabled):
     assert parsed.mode == mode
     assert argv.count("--pseudo-label") == int(enabled)
     assert argv.count("--skip-quality") == int(enabled)
+
+
+@pytest.mark.parametrize("mutation", ["before-copy", "copied-view", "before-evaluate"])
+def test_frozen_reference_inventory_stops_before_quality(tmp_path, monkeypatch, mutation):
+    import shutil
+    from anomalygen_contract import dataset_inventory
+    m = module()
+    dataset = tmp_path / "dataset"
+    image = dataset / "widget/clean_image/source.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"fixture reference bytes")
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(json.dumps(dataset_inventory(dataset)))
+    recipe = tmp_path / "recipe.yaml"; recipe.write_text("fixture")
+    testcase = tmp_path / "testcase.jsonl"; testcase.write_text("fixture")
+    exclusions = tmp_path / "exclude.txt"; exclusions.write_text("")
+    args = m.parser().parse_args([
+        "inference_only", "--name", "fixture", "--repo", str(tmp_path),
+        "--output-dir", str(tmp_path / "out"), "--dataset-dir", str(dataset),
+        "--recipe", str(recipe), "--checkpoint", str(tmp_path),
+        "--input-data-path", str(testcase), "--exclude-stems", str(exclusions),
+        "--expected-dataset-inventory", str(inventory)])
+    original_copy = m.prepare_dataset_view
+    def copy(*values):
+        report = original_copy(*values)
+        if mutation == "copied-view":
+            (Path(values[1]) / "extra.png").write_bytes(b"extra")
+        return report
+    monkeypatch.setattr(m, "prepare_dataset_view", copy)
+    monkeypatch.setattr(m, "filter_testcases", lambda source, target, *a, **kw: shutil.copyfile(source, target) and {})
+    monkeypatch.setattr(m, "verify_generation", lambda *a: {"generated": 1})
+    calls = []
+    def execute(command, args):
+        calls.append(command)
+        assert len(calls) == 1, "changed references must never reach evaluate/refine"
+        output = args.output_dir / "sdg"; output.mkdir()
+        (output / "timing_summary.json").write_text(json.dumps({"guardrail_enabled": True}))
+        (args.output_dir / "dataset-view/widget/clean_image/source.png").write_bytes(b"changed after generation")
+    monkeypatch.setattr(m, "execute", execute)
+    if mutation == "before-copy": image.write_bytes(b"changed original")
+    with pytest.raises(ValueError, match="reference dataset"):
+        m.run(args)
+    assert len(calls) == int(mutation == "before-evaluate")

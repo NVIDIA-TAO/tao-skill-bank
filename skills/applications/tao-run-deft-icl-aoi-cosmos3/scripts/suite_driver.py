@@ -120,13 +120,29 @@ class Suite:
                 if sha256(artifact['path'])!=artifact['sha256']: raise ValueError('completed stage artifact changed')
             return result
         for _ in range(2):
-            if time.time()>=self.deadline: raise TimeoutError('suite wall budget exhausted')
             first=self.store.db.execute('SELECT MIN(started) FROM attempts WHERE stage=?',(stage,)).fetchone()[0]
-            if first and time.time()>=first+stage_cap:
-                raise TimeoutError('original stage wall budget exhausted; retry cannot reset it')
-            if self.budget_scope and self.store.remaining(self.budget_scope)['wall_seconds']<=0:
-                raise TimeoutError('ICL wall budget exhausted')
             previous=self.store.db.execute('SELECT * FROM attempts WHERE stage=? ORDER BY id DESC LIMIT 1',(stage,)).fetchone()
+            expired = ('suite wall budget exhausted' if time.time()>=self.deadline else
+                       'original stage wall budget exhausted' if first is not None and time.time()>=first+stage_cap else
+                       'ICL wall budget exhausted' if self.budget_scope and self.store.remaining(self.budget_scope)['wall_seconds']<=0 else None)
+            if expired:
+                if previous and previous['status'] in ('pending','running'):
+                    detail={'reason':expired,'original_started':first,'stage_wall_seconds':stage_cap}
+                    if previous['job_id']:
+                        job_id=previous['job_id'];record=json.loads(runtime.record('show',job_id))
+                        job={'job_id':job_id,'results_dir':record['results_dir'],'container_id':record['backend_ref']}
+                        final=runtime.status(job_id)
+                        if final['state'] in ('PENDING','RUNNING'):
+                            runtime.cancel(job_id);final=runtime.status(job_id)
+                        detail.update(job=job,backend=final)
+                        try: self._native_cost(runtime,job,gpu,stage)
+                        except (OSError,ValueError,KeyError) as error:
+                            detail['cost_record_error']=str(error)
+                            self.store.event('native_cost_unavailable',{'stage':stage,'job_id':job_id,'error':str(error)})
+                    else:
+                        detail['launch_interrupted_before_handle']=True
+                    self.store.finish(previous['id'],'budget_exhausted',detail)
+                raise TimeoutError(expired)
             retry_of=previous['job_id'] if previous else None
             if previous and previous['status'] in ('pending','running') and previous['job_id']:
                 attempt=previous['id']; job_id=previous['job_id']
@@ -172,14 +188,20 @@ class Suite:
             if reason!='infrastructure_error': raise RuntimeError(f'{stage} stopped: {reason}; see job {job["job_id"]}')
         raise RuntimeError(f'{stage}: bounded infrastructure recovery exhausted')
 
+    def prepare_inference_view(self,view,queries,policy,phase):
+        if not (view/'requests.json').exists():
+            references=self.retrieval.references(phase,queries,policy,self.task['icl_reference_capacity']) if policy else None
+            query_view(self.public,queries,self.prompt,view,policy=policy,references=references)
+
+    def write_training_spec(self,path,text):
+        if not path.exists(): path.write_text(text)
+
     def infer(self,arm,phase,candidate,model,*,policy=None,queries=None):
         if phase=='benchmark': self.store.verify_freeze()
         queries=queries or (self.proxy if phase=='proxy' else load_jsonl(self.public/'benchmark/queries.jsonl'))
         stage=f'{arm}/{phase}/{candidate}'
         view=self.root/'views'/arm/phase/candidate
-        if not (view/'requests.json').exists():
-            references=self.retrieval.references(phase,queries,policy,self.task['icl_reference_capacity']) if policy else None
-            query_view(self.public,queries,self.prompt,view,policy=policy,references=references)
+        self.prepare_inference_view(view,queries,policy,phase)
         self.store.artifact(stage+'/requests',view/'requests.json')
         try:
             result=self.run_job(stage,['/worker.py','--model','/model','--requests','/input/requests.json','--output','/results',
@@ -253,7 +275,7 @@ class Suite:
         spec['checkpoint']['save_iter']=steps if arm=='F' else offset+steps*epochs
         spec['custom']['seed']=training['seed']
         spec_path=directory/'train.toml'
-        if not spec_path.exists(): spec_path.write_text(tomli_w.dumps(spec))
+        self.write_training_spec(spec_path,tomli_w.dumps(spec))
         self.store.artifact(stage+'/spec',spec_path)
         controls=directory/'control'; controls.mkdir(exist_ok=True)
         def hook(job):

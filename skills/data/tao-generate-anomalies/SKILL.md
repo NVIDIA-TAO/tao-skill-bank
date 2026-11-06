@@ -56,6 +56,7 @@ these flags. Both options affect only `full` and `inference_only` generation.
 - `--input-data-path JSONL`: explicit one-output-per-testcase generation inputs; otherwise use `--num-sdg N` and mask placement.
 - `--validation-testcase JSONL`: supplied validation masks; otherwise preparation uses the validation placement route.
 - `--base-checkpoint DCP --vae-path FILE`: explicit native base/VAE overrides where required; checkpoint geometry and class stamps remain authoritative.
+- `--expected-dataset-inventory JSON`: optional exact reference-dataset inventory, a sorted array of `{path, sha256, bytes}` using relative paths. Verify input and filtered-copy membership/bytes before generation, evaluation and refinement; a mismatch stops. The source must already exclude protected files when this contract is supplied. Omit to retain the normal filtering behavior.
 - `--exclude-stems TXT`: exact filename stems, one per line. Applied before training, clean/reference selection, mask selection and generation; frozen with a hash. No dataset-specific identity rules live here.
 - `--parallelism ddp --compile true`: preserve TAO training runtime controls, with native environment forwarding.
 - `--num-gpus 1 --base-seed 1 --amp-seed 43`: explicit reproducible generation and placement controls.

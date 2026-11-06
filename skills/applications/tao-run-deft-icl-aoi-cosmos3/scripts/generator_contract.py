@@ -42,7 +42,7 @@ from tht_contract import json_hash, load_jsonl, sha256
 _SHARED = (Path(__file__).resolve().parents[2] / 'tao-generate-anomalies/scripts',
            Path(__file__).resolve().parents[3] / 'data/tao-generate-anomalies/scripts')
 sys.path.insert(0, str(next((p for p in _SHARED if p.is_dir()), _SHARED[-1])))
-from anomalygen_contract import load_exclusions, _excluded, verify_generation
+from anomalygen_contract import load_exclusions, _excluded, verify_generation, dataset_inventory, verify_dataset_inventory
 from anomalygen_consumer import load_generation, validate_lineage
 
 
@@ -66,6 +66,14 @@ def verify_file(binding):
     return path
 
 
+
+def reference_binding(package, view):
+    expected = dataset_inventory(Path(package) / 'dataset')
+    verify_dataset_inventory(view, expected)
+    return {'root': str(Path(view).resolve(strict=True)), 'inventory': expected,
+            'files': [file_binding(Path(view) / row['path']) for row in expected]}
+
+
 def pixel_identity(path, training=False):
     with Image.open(path) as image:
         image = image.convert('RGB')
@@ -77,9 +85,13 @@ def pixel_identity(path, training=False):
                 'content_sha256': hashlib.sha256(struct.pack('>II', *image.size) + pixels).hexdigest()}
 
 
-def verify_prepared(package, public=None):
+def verify_prepared(package, public=None, *, expected_inventory=None):
     """Verify external copied assets and their declared eligible source identities."""
     package = Path(package).resolve(strict=True)
+    if expected_inventory is not None:
+        verify_file(expected_inventory)
+        if file_binding(package / 'inventory.json') != expected_inventory:
+            raise ValueError('prepared inventory differs from approved input')
     inventory = json.loads((package / 'inventory.json').read_text())
     names = [r['path'] for r in inventory]
     if len(names) != len(set(names)):
@@ -95,7 +107,7 @@ def verify_prepared(package, public=None):
     excluded = load_exclusions(package / 'audit/exclude_stems.txt')
     sources = load_jsonl(package / 'audit/admitted_sources.jsonl')
     assets = {}; counts = Counter(); native_images = set()
-    mining = {r['source_id']: r for r in load_jsonl(Path(public) / 'mining/samples.jsonl')} if public else None
+    mining = {r['id']: r for r in load_jsonl(Path(public) / 'mining/samples.jsonl')} if public else None
     for source in sources:
         identity = source['matched_identity']; kind = source['kind']
         if kind not in ('clean', 'donor_reference') or identity['role'] != 'mining':
@@ -255,6 +267,7 @@ def bind_amp(package, preparation, counts, native_tmp):
             case['work_item'] = actual
         if assigned: raise ValueError('unaccounted native work items')
     return {'schema': 'generator-ancestry/1', 'preparation': str(preparation), 'native_tmp': str(Path(native_tmp).resolve()), 'package_inventory': prepared['inventory'],
+            'reference_view': reference_binding(package, preparation/'dataset-view'),
             'counts': counts, 'files': [file_binding(pair_path), file_binding(summary_path), file_binding(testcase), *extra_files], 'cases': cases}
 
 
@@ -314,9 +327,11 @@ def verify_quality_selection(native, manifest_root, search_rounds):
     return result
 
 
-def admit_generation(manifest, ancestry, package, round_number, expected_search_rounds=3):
+def admit_generation(manifest, ancestry, package, round_number, expected_search_rounds=3, *, expected_inventory=None):
     manifest, ancestry = Path(manifest), Path(ancestry)
+    verify_prepared(package, expected_inventory=expected_inventory)
     binding = json.loads(ancestry.read_text()); prepared = verify_ancestry(binding, package)
+    quality_reference = reference_binding(package, manifest.parent/'dataset-view')
     excluded = Path(package) / 'audit/exclude_stems.txt'
     report, rows = load_generation(manifest, excluded)
     native = json.loads(manifest.read_text()); cases = load_jsonl(native['testcase'])
@@ -375,14 +390,17 @@ def admit_generation(manifest, ancestry, package, round_number, expected_search_
             'manifest': str(manifest.resolve()), 'ancestry': str(ancestry.resolve()),
             'expected_search_rounds': expected_search_rounds, 'package_inventory': prepared['inventory'],
             'records': records, 'artifacts': list(unique.values()), 'logical_counts': report,
-            'quality_selection':selection,
+            'quality_selection':selection, 'quality_reference': quality_reference,
             'physical_buckets': buckets, 'physical_requested': sum(r['testcases'] for r in buckets),
             'physical_generated': sum(r['generated'] for r in buckets),
             'physical_guardrail_blocked': sum(r['guardrail_blocked'] for r in buckets),
             'label_semantics': 'intended generator target, not independently human-verified visual truth'}
 
 
-def validate_admission(admission, package):
+def validate_admission(admission, package, *, expected_inventory=None):
+    verify_prepared(package, expected_inventory=expected_inventory)
+    if expected_inventory is not None and admission['package_inventory'] != expected_inventory:
+        raise ValueError('admission differs from approved prepared inventory')
     for item in admission['artifacts']: verify_file(item)
     refreshed = admit_generation(admission['manifest'], admission['ancestry'], package, admission['round'], admission['expected_search_rounds'])
     if refreshed != admission: raise ValueError('cumulative synthetic admission changed')
@@ -440,8 +458,8 @@ def combined_training_view(public, selected_ids, prompt, admissions, package, ou
             image = ImageOps.pad(image.convert('RGB'), (256, 256), method=Image.Resampling.NEAREST)
             encoded = io.BytesIO(); image.save(encoded, format='PNG'); data = encoded.getvalue()
         target = output / f'image-{index:05d}.png'
-        if target.exists():
-            if target.read_bytes() != data: raise ValueError('prepared training image changed')
+        if target.exists() or target.is_symlink():
+            if target.is_symlink() or target.read_bytes() != data: raise ValueError('prepared training image changed')
         else:
             target.write_bytes(data)
         annotations.append({'id': row['id'], 'images': ['/input/' + target.name],
@@ -449,8 +467,9 @@ def combined_training_view(public, selected_ids, prompt, admissions, package, ou
                                               {'from': 'gpt', 'value': json.dumps({'labels': [row['label']]}, separators=(',', ':'))}]})
         provenance.append({**row, 'preprocessed': file_binding(target)})
     validate_sharegpt(annotations, 'tht_single')
-    if {p.name for p in output.glob('image-*.png')} != {Path(r['images'][0]).name for r in annotations}:
-        raise ValueError('unaccounted training-view image')
+    expected_names={Path(r['images'][0]).name for r in annotations}|{'train.json','provenance.json','composition.json'}
+    if any(p.name not in expected_names or p.is_symlink() or not p.is_file() for p in output.iterdir()):
+        raise ValueError('unaccounted training-view file')
     summary = {'train_records': len(retained), 'selected_real_count': len(selected_ids),
                'real_count': sum(r['source'] == 'real' for r in retained),
                'synthetic_count': sum(r['source'] == 'synthetic' for r in retained),

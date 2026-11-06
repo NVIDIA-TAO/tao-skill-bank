@@ -43,7 +43,15 @@ answers, including INVALID and length-limited answers, remain immutable. Only
 infrastructure failures get a second attempt, in a fresh native job directory.
 The generator's two-hour deadline starts at its first attempt, and survives
 restarts; the overall run and other stage caps are 96 and 48 hours respectively.
-A deterministic or quality/lineage error stops without a free retry.
+A deterministic or quality/lineage error stops without a free retry. An expired
+restart first reconciles any recorded native handle, cancels a live job, and
+retains its backend/cost evidence before marking the attempt budget-exhausted.
+
+Preflight requires an empty results directory. Run startup allows only its own
+empty lock until an initialized generator journal exists. Resume reconstructs
+the expected requests, media and training spec from approved inputs; differing
+or extra files stop, while a missing matching view fragment can be rebuilt.
+Completed artifacts and the entire expected inference view remain sealed.
 
 ## Task inputs and preflight boundary
 
@@ -224,3 +232,24 @@ Benchmark, original retained Mining/Benchmark joint overlap, and intended
 synthetic labels without independent human class verification. This is an
 engineering addendum, not a leakage-free causal estimate. Existing six-arm,
 supplementary and final-delivery artifacts remain separate.
+
+
+## Source and runtime immutability
+
+The external inventory file is itself bound by preflight and checked at resume,
+worker entry and host admission; a newly self-consistent replacement package is
+not accepted. Prepared source identities join the frozen Mining manifest's `id`
+field. Runtime mounts should expose only the minimal admitted-source package;
+excluded-source category audits stay outside native runtime.
+
+Both complete quality-reference copies are retained: preparation/dataset-view
+and the shared runner's native/dataset-view. Their entire relative-file inventory
+and byte hashes must match the approved dataset, including unused clean/donor
+images and metadata. The worker supplies `--expected-dataset-inventory` to the
+shared runner for checks before quality evaluation/refinement. Ancestry and every
+cumulative admission revalidate both copies before any deduplication or training.
+
+Model/runtime trees bind directory target contents and membership plus every
+intermediate symlink. Resume resolves the full chain again. Cycles and unknown
+dangling links fail; explicitly captured container-only interpreter targets
+remain bound to their exact image and artifact bytes.
