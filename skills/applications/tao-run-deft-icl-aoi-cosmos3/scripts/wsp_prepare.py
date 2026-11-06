@@ -171,6 +171,44 @@ def prepare_views(public, exclusion_file, output, *, seed=42, development_groups
     return summary
 
 
+
+def supplemental_assets(model, declared):
+    """Seal the known tokenizer sidecar without reading any tensor payload."""
+    model = Path(model)
+    expected = {row['name'] for row in declared['files']} | {'tao_conversion_provenance.json'}
+    actual = {path.name for path in model.iterdir()}
+    if expected - actual:
+        raise ValueError('declared base asset missing')
+    extra = actual - expected
+    if not extra:
+        return []
+    if extra != {'merges.txt'}:
+        raise ValueError('unexpected base assets: ' + ', '.join(sorted(extra)))
+    token_row = next((row for row in declared['files'] if row['name'] == 'tokenizer.json'), None)
+    tokenizer = regular_file(model, 'tokenizer.json')
+    if (token_row is None or tokenizer.stat().st_size != token_row['size']
+            or sha256(tokenizer) != token_row['sha256']):
+        raise ValueError('supplement requires the pinned tokenizer.json')
+    merges = strict_json(tokenizer.read_bytes())['model']['merges']
+    expected_lines = []
+    for row in merges:
+        if isinstance(row, str):
+            expected_lines.append(row)
+        elif isinstance(row, list) and len(row) == 2 and all(isinstance(v, str) for v in row):
+            expected_lines.append(' '.join(row))
+        else:
+            raise ValueError('unsupported tokenizer merges entry')
+    sidecar = regular_file(model, 'merges.txt')
+    observed = sidecar.read_text(encoding='utf-8').splitlines()
+    if observed and observed[0] == '#version: 0.2':
+        observed = observed[1:]
+    if observed != expected_lines:
+        raise ValueError('merges.txt differs from the pinned tokenizer merges')
+    return [{'name': 'merges.txt', 'size': sidecar.stat().st_size, 'sha256': sha256(sidecar),
+             'derived_from': {'name': 'tokenizer.json', 'sha256': token_row['sha256']},
+             'verification': 'Exact BPE entries; optional version0.2 header only'}]
+
+
 def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_dir, seed=42):
     """No tensor payload reads, agents, model copies, containers or GPU calls."""
     model, views = Path(model).resolve(strict=True), Path(views).resolve(strict=True)
@@ -190,6 +228,7 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
             raise ValueError('non-weight prepared file hash mismatch')
     if set(observed['files']) != {f['name'] for f in files if f['name'].endswith('.safetensors')}:
         raise ValueError('prepared shard inventory mismatch')
+    additional = supplemental_assets(model, declared)
     profile = strict_json(Path(direct_profile).read_bytes())
     if profile['prompt_sha256'] != PROMPT_SHA or hashlib.sha256(profile['prompt'].encode()).hexdigest() != PROMPT_SHA:
         raise ValueError('frozen THT prompt mismatch')
@@ -218,6 +257,7 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
             'platform': 'docker', 'backend': 'cosmos-framework',
             'backend_reason': 'explicit existing Nano prepared checkpoint and M3 inference contract',
             'model': str(model), 'declared_base': declared,
+            'additional_base_assets': additional,
             'conversion_provenance_sha256': sha256(model / 'tao_conversion_provenance.json'),
             'header_catalog': observed, 'full_base_hash_verification': 'required_after_approval',
             'views': str(views), 'split_sha256': split_hash,
@@ -254,7 +294,7 @@ def proposed_preflight(*, model, views, direct_profile, evaluator, output, run_d
                                   'runtime access probe', 'full base hash/finiteness and independent-copy validation',
                                   'reviewed live cached-response observed raw-stop diagnostic and final capture/termination/cleanup evidence'],
             'prices': {'agent_usd': None, 'gpu_usd': None, 'reason': 'no price supplied'}}
-    if sum(f['size'] for f in files) * 4 + 1024**3 > BUDGETS['storage_bytes']:
+    if sum(f['size'] for f in files + additional) * 4 + 1024**3 > BUDGETS['storage_bytes']:
         raise ValueError('four retained model copies exceed storage proposal')
     codex_binary = shutil.which('codex')
     if codex_binary is None:

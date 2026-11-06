@@ -326,10 +326,11 @@ def initialize_run(task, approval_evidence):
     source = Path(task['model'])
     if sha256(source / 'tao_conversion_provenance.json') != task['conversion_provenance_sha256']:
         raise ValueError('base provenance changed')
-    expected_names = {f['name'] for f in task['declared_base']['files']} | {'tao_conversion_provenance.json'}
+    base_files = task['declared_base']['files'] + task.get('additional_base_assets', [])
+    expected_names = {f['name'] for f in base_files} | {'tao_conversion_provenance.json'}
     if {p.name for p in source.iterdir()} != expected_names:
         raise ValueError('base inventory changed')
-    for file in task['declared_base']['files']:
+    for file in base_files:
         path = regular_file(source, file['name'])
         if path.stat().st_size != file['size'] or sha256(path) != file['sha256']:
             raise ValueError('base content fingerprint mismatch')
