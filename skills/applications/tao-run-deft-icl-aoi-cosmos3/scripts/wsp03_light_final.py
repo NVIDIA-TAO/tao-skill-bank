@@ -9,7 +9,7 @@ only explicit query/image/model/patch inputs reach each native worker.
 from __future__ import annotations
 import argparse,json,shutil,subprocess,threading,time
 from pathlib import Path
-from suite_runtime import Docker
+from suite_runtime import Docker,BANK
 from wsp03_bindings import Recipe,ReferenceSelector,PROFILES,file_hash,pinned
 from wsp03_final_builder import FinalInputBuilder
 from wsp03_io import json_write
@@ -19,6 +19,11 @@ from wsp03_worker import digest
 from tht_contract import external_evaluator,grade
 
 APP=Path(__file__).resolve().parent
+CONTAINER_SCRIPTS='/bank/'+APP.relative_to(BANK).as_posix()
+
+def code_mounts():
+    relative='skills/data/tao-in-context-learning/scripts/retrieval.py'
+    return [(APP,CONTAINER_SCRIPTS,True),(BANK/relative,'/bank/'+relative,True)]
 
 
 def read(asset):
@@ -102,14 +107,14 @@ def prepare_inputs(cfg,recipe,freezes,runtime,data_runtime,output):
               dev_embeddings='/dev-embeddings.jsonl',holdout_identity_file='/holdout-identities.jsonl',
               holdout_identity_sha256=final['holdout_identities']['sha256'],excluded_mining_count=2)
     plan_file=directory/'plan.json';json_write(plan_file,plan)
-    job=native(runtime,output,'prepare',['/app/wsp03_final_inputs.py','prepare','--plan','/plan.json','--output','/results/prepared'],
-        [(APP,'/app',True),(source,'/public',True),(plan_file,'/plan.json',True),(holdout,'/holdout-identities.jsonl',True),(cache,'/dev-embeddings.jsonl',True)],gpu=False)
+    job=native(runtime,output,'prepare',[CONTAINER_SCRIPTS+'/wsp03_final_inputs.py','prepare','--plan','/plan.json','--output','/results/prepared'],
+        [*code_mounts(),(source,'/public',True),(plan_file,'/plan.json',True),(holdout,'/holdout-identities.jsonl',True),(cache,'/dev-embeddings.jsonl',True)],gpu=False)
     prepared=Path(job['results_dir'])/'prepared';bundle=json.loads((prepared/'prepared.json').read_text())
     import yaml
     spec=recipe.retrieval.embedding_spec('/prepared/embedding-input.parquet','/results/embedding/embeddings.parquet','/siglip')
     spec_file=directory/'embedding.yaml';spec_file.write_text(yaml.safe_dump(spec))
-    embedded=native(data_runtime,output,'embedding',['/app/wsp03_final_inputs.py','embed','--spec','/spec.yaml','--output','/results/embedding'],
-        [(APP,'/app',True),(prepared,'/prepared',True),(final['siglip_path'],'/siglip',True),(spec_file,'/spec.yaml',True)],gpu=True,python=cfg.get('data_python','python3'))
+    embedded=native(data_runtime,output,'embedding',[CONTAINER_SCRIPTS+'/wsp03_final_inputs.py','embed','--spec','/spec.yaml','--output','/results/embedding'],
+        [*code_mounts(),(prepared,'/prepared',True),(final['siglip_path'],'/siglip',True),(spec_file,'/spec.yaml',True)],gpu=True,python=cfg.get('data_python','python3'))
     values=Recipe.jsonl(Path(embedded['results_dir'])/'embedding/embeddings.jsonl')
     if [r['id'] for r in values]!=bundle['missing_embedding_ids']:raise ValueError('final embedding ordered membership differs')
     embeddings=dict(recipe.selector.embeddings);embeddings.update({r['id']:r['embedding'] for r in values})
@@ -141,8 +146,8 @@ def evaluate(cfg,recipe,runtime,patch,manifest,output,arm,profile,split):
     binding={'arm':arm,'profile':profile,'split':split,'requests_sha256':digest(rows),'patch_manifest_sha256':digest(manifest),
              'image_sha256':{key:file_hash(value) for key,value in images.items()},'attempted_at':time.time()}
     claim(directory/'attempt.json',binding)
-    job=native(runtime,output,arm+'-'+split,['/app/wsp03_worker.py','--model','/model','--candidate','/candidate','--requests','/requests.json','--output','/results/worker','--mode','generation','--split',split],
-        [(APP,'/app',True),(cfg['model'],'/model',True),(patch,'/candidate',True),(inputs,'/input',True),(request,'/requests.json',True)],gpu=True,timeout=cfg.get('pass_timeout_seconds',7200))
+    job=native(runtime,output,arm+'-'+split,[CONTAINER_SCRIPTS+'/wsp03_worker.py','--model','/model','--candidate','/candidate','--requests','/requests.json','--output','/results/worker','--mode','generation','--split',split],
+        [*code_mounts(),(cfg['model'],'/model',True),(patch,'/candidate',True),(inputs,'/input',True),(request,'/requests.json',True)],gpu=True,timeout=cfg.get('pass_timeout_seconds',7200))
     worker=Path(job['results_dir'])/'worker';raw=validate_worker_output(worker,rows,mode='generation',split=split,candidate_manifest_sha256=digest(manifest))
     result=dict(binding,complete=True,job=job,raw_directory=str(worker),generation_debit=1,
         cost={'completed_input_tokens':sum(r['inference_input_tokens'] for r in raw),'completed_output_tokens':sum(r['inference_output_tokens'] for r in raw),
