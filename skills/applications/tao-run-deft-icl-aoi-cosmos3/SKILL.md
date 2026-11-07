@@ -1,6 +1,6 @@
 ---
 name: tao-run-deft-icl-aoi-cosmos3
-description: Run Cosmos3 AOI DEFT with adaptive in-context learning, including the frozen six-arm THT suite, a separately approved AnomalyGen 1.2 single-image generator addendum, and compatible paired PCB OK/NG workflows. Uses native Cosmos Framework LoRA, external strict evaluation, isolated Codex classification, SigLIP retrieval, durable recovery and evidence export. Use for THT ICL/DEFT comparisons or Cosmos3 AOI plus ICL, not generic model training.
+description: Run Cosmos3 AOI DEFT with adaptive in-context learning, including the frozen six-arm THT suite, a separately approved AnomalyGen 1.2 single-image generator addendum, a fixed-checkpoint ICL addendum, and compatible paired PCB OK/NG workflows. Uses native Cosmos Framework LoRA, external strict evaluation, isolated Codex classification, SigLIP retrieval, durable recovery and evidence export. Use for THT ICL/DEFT comparisons or Cosmos3 AOI plus ICL, not generic model training.
 license: Apache-2.0 AND CC-BY-4.0
 compatibility: Linux, Python 3.11 or later, Docker with NVIDIA GPU support, pinned model and data-service images, and external frozen experiment inputs.
 tags: [computer-vision, aoi, deft, in-context-learning, anomaly-generation]
@@ -28,6 +28,10 @@ and the Docker platform skill before execution.
   `tht_single` mode. Use `scripts/generator_addendum.py` and the
   [native generator contract](references/generator-addendum.md). It preserves
   same-D classifier controls and consumes external prepared source manifests.
+- Fixed-checkpoint ICL addendum: explicit `icl-addendum-v1` arm H, a frozen
+  Proxy-selected checkpoint plus a fresh E-protocol adaptive ICL search. Use
+  `scripts/icl_addendum.py` and the [ICL addendum contract](references/icl-addendum.md).
+  It performs no training or generation and has a separate final-only gate.
 - Paired PCB: retain default `bare_okng`, two ordered images, exact OK/NG
   target and the copied [paired workflow](references/paired-workflow.md).
   Its binary Benchmark-gate behavior does not apply to the THT suite.

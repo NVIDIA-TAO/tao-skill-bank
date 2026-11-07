@@ -1,0 +1,44 @@
+{
+  "protocol": "icl-addendum-v1",
+  "reference_task": {
+    "path": "/frozen/original-task.json",
+    "bytes": 1,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "reference_preflight": {
+    "path": "/frozen/original-preflight.json",
+    "bytes": 1,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "baseline_context": {
+    "path": "/frozen/first-e-proxy-context.json",
+    "bytes": 1,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "source_model": {
+    "checkpoint": "/frozen/selected-model/hf",
+    "selection": {
+      "path": "/frozen/g-selection.json",
+      "bytes": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "model_manifest": {
+      "path": "/frozen/g-model-manifest.json",
+      "bytes": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "results_dir": "/runs/icl-addendum-h",
+  "environment_manifest": {
+    "path": "/private/h-environment.json",
+    "bytes": 1,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "storage_required_bytes": 34359738368,
+  "comparison_runs": {
+    "G": "/frozen/g-run",
+    "E": "/frozen/six-arm-run",
+    "F": "/frozen/six-arm-run"
+  },
+  "setup_token_exports": []
+}

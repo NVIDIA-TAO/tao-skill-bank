@@ -40,3 +40,19 @@ actions:
     mode: args
     args: {}
     command: python scripts/generator_addendum.py export --results-dir {results_dir}
+  icl_preflight:
+    mode: args
+    args: {}
+    command: python scripts/icl_addendum.py preflight --task {task} --output {output}
+  icl_run:
+    mode: args
+    args: {}
+    command: python scripts/icl_addendum.py run --preflight {preflight} --approval {approval}
+  icl_status:
+    mode: args
+    args: {}
+    command: python scripts/icl_addendum.py status --results-dir {results_dir}
+  icl_export:
+    mode: args
+    args: {}
+    command: python scripts/icl_addendum.py export --results-dir {results_dir}
