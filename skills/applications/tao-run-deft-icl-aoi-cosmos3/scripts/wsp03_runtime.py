@@ -27,7 +27,7 @@ PYTHON='/workspace/.venv/bin/python'
 
 def gated_job(runtime, lease, stage, command, mounts, *, deadline, env=(), on_admit=None):
     wrapper='while [ ! -f /results/lease-authorized ]; do sleep 0.05; done; exec '+shlex.join([PYTHON,*command])
-    admitted={}
+    admitted={};pid=None
     def opened(job_id):
         record=json.loads(runtime.record('show',job_id))
         admitted.update(job_id=job_id,results_dir=record['results_dir'])
@@ -47,6 +47,9 @@ def gated_job(runtime, lease, stage, command, mounts, *, deadline, env=(), on_ad
     except BaseException:
         if admitted and runtime.status(admitted['job_id'])['state'] in ('RUNNING','PENDING'):runtime.cancel(admitted['job_id'])
         raise
+    finally:
+        if pid is not None and admitted and runtime.status(admitted['job_id'])['state'] in ('COMPLETE','ERROR','CANCELED'):
+            lease.revoke_pid(pid)
 
 
 def validate_probe_inputs(requests, view, expected_ids_sha256):

@@ -65,6 +65,12 @@ def process_identity(pid):
     except (OSError,ValueError,IndexError):return None
 
 
+def process_presence(pid):
+    try:Path(f'/proc/{pid}').stat();return 'present'
+    except FileNotFoundError:return 'gone'
+    except OSError:return 'unknown'
+
+
 def container_snapshot(groups):
     result=[]
     if not groups:return result
@@ -76,12 +82,13 @@ def container_snapshot(groups):
 
 
 class GPULease:
-    def __init__(self, path, owner, *, gpu='0', query=None, allowed_pids=(), poll_seconds=.1, identity=None, snapshot=None):
+    def __init__(self, path, owner, *, gpu='0', query=None, allowed_pids=(), poll_seconds=.1, identity=None, snapshot=None, presence=None):
         self.path, self.owner = Path(path), owner
         self.query = query or (lambda: gpu_processes(gpu))
         self.gpu, self.allowed = str(gpu), {}
         self.identity=identity or process_identity
         self.snapshot=snapshot or container_snapshot
+        self.presence=presence or process_presence
         self.allowed_groups={}
         self.registration_lock=threading.RLock()
         for pid in allowed_pids: self.allow_pid(pid)
@@ -140,6 +147,14 @@ class GPULease:
                 append_event(Path(str(self.archive)+'.lineage.jsonl'),{'event':'register_container','identity':record,'container_id':container_id,'time':time.time()})
         return record
 
+    def revoke_pid(self, pid):
+        with self.registration_lock:
+            removed=self.allowed.pop(int(pid),None)
+            if removed is None:return
+            group=removed['cgroup']
+            if not any(row['cgroup']==group for row in self.allowed.values()):self.allowed_groups.pop(group,None)
+            if hasattr(self,'archive'):append_event(Path(str(self.archive)+'.lineage.jsonl'),{'event':'revoke_container_root','identity':removed,'time':time.time()})
+
     def sample(self):
         # Capture exact cgroup identities before NVML can report a process that
         # exits while its command is in flight. Evidence is scoped to this poll;
@@ -155,7 +170,7 @@ class GPULease:
                 # accepted only by its currently bound exact container cgroup.
                 proof={'pid':row['pid'],'owned':True,'method':'live_exact_container_cgroup','identity':live,
                        'container_id':groups[live['cgroup']]['container_id']}
-            elif live is None and previous is not None:
+            elif live is None and previous is not None and self.presence(row['pid'])=='gone':
                 proof={'pid':row['pid'],'owned':True,'method':'same_poll_owned_prequery_snapshot','identity':previous,
                        'container_id':groups[previous['cgroup']]['container_id'],'evidence_window_start':before_wall,'evidence_window_seconds':after-before}
             else:

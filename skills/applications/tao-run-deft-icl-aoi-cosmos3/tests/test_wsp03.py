@@ -218,3 +218,19 @@ class ProcessLineageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             with m.GPULease(Path(t)/'gpu.lock','fixture',query=lambda:[],identity=lambda pid:root,poll_seconds=60) as lease:
                 with self.assertRaises(m.LeaseError):lease.allow_pid(10,container_id='f'*64)
+
+    def test_unreadable_existing_pid_cannot_use_previous_owned_snapshot(self):
+        m=importlib.import_module('wsp03_resources');group='0::/docker/'+('a'*64)
+        root={'pid':10,'ppid':1,'birth':'100','cgroup':group};child={'pid':11,'ppid':10,'birth':'101','cgroup':group};rows=[]
+        with tempfile.TemporaryDirectory() as t:
+            with self.assertRaises(m.LeaseError):
+                with m.GPULease(Path(t)/'gpu.lock','fixture',query=lambda:list(rows),identity=lambda pid:root if pid==10 else None,snapshot=lambda groups:[child],presence=lambda pid:'present',poll_seconds=60) as lease:
+                    lease.allow_pid(10,container_id='a'*64);rows.append({'pid':11,'memory_bytes':1});lease.sample();lease.check()
+    def test_revoked_container_cannot_restart_with_old_permission(self):
+        m=importlib.import_module('wsp03_resources');group='0::/docker/'+('a'*64)
+        root={'pid':10,'ppid':1,'birth':'100','cgroup':group};child={'pid':11,'ppid':1,'birth':'101','cgroup':group};rows=[]
+        with tempfile.TemporaryDirectory() as t:
+            with self.assertRaises(m.LeaseError):
+                with m.GPULease(Path(t)/'gpu.lock','fixture',query=lambda:list(rows),identity=lambda pid:root if pid==10 else child,snapshot=lambda groups:[child] if group in groups else [],poll_seconds=60) as lease:
+                    lease.allow_pid(10,container_id='a'*64);lease.revoke_pid(10)
+                    rows.append({'pid':11,'memory_bytes':1});lease.sample();lease.check()
