@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import signal
+import re
 import time
 from wsp03_io import json_write
 from wsp03_resources import append_event, cpu_memory
@@ -73,6 +74,21 @@ def encode(processor, request):
         return inputs,text,image_paths
     finally:
         for image in images:image.close()
+
+
+def canonical_target(tokenizer, text):
+    if text=='':return [],[],None
+    parsed=json.loads(text)
+    if set(parsed)!= {'labels'} or len(parsed['labels'])!=1 or not isinstance(parsed['labels'][0],str):raise ValueError('canonical single-label continuation required')
+    match=re.search(r'"labels"\s*:\s*\[\s*"((?:[^"\\]|\\.)*)"\s*\]',text)
+    if match is None:raise ValueError('canonical class span unavailable')
+    encoded=tokenizer(text,add_special_tokens=False,return_offsets_mapping=True)
+    ids=encoded['input_ids'];offsets=encoded['offset_mapping'];left,right=match.span(1)
+    positions=[i for i,(a,b) in enumerate(offsets) if b>left and a<right]
+    if not positions:raise ValueError('class token span empty')
+    span={'character_span':[left,right],'label':parsed['labels'][0],'token_indices':positions,
+        'offsets':[list(offsets[i]) for i in positions], 'mapping':'tokens overlapping class characters in actual full JSON tokenization; boundary-sharing tokens retained'}
+    return ids,positions,span
 
 
 def apply_candidate(model, directory):
@@ -147,7 +163,7 @@ def run(model_path, requests_path, output_dir, *, mode='generation', split='prob
                     result={'raw_answer':raw,'completion_token_ids':completion.cpu().tolist(),
                         'finish_reason':'length' if len(completion)>=4096 else 'stop','inference_output_tokens':len(completion)}
                 else:
-                    target=processor.tokenizer.encode(request['forced_text'],add_special_tokens=False)
+                    target,class_positions,class_span=canonical_target(processor.tokenizer,request['forced_text'])
                     if len(target)>64:raise ValueError('bounded canonical target required')
                     target_ids=torch.tensor([target],dtype=inputs['input_ids'].dtype,device='cuda')
                     inputs['input_ids']=torch.cat([inputs['input_ids'],target_ids],dim=1)
@@ -162,7 +178,8 @@ def run(model_path, requests_path, output_dir, *, mode='generation', split='prob
                         logits=model(**inputs,use_cache=False,return_dict=True).logits
                     retained_bytes+=capture.bytes
                     result={'teacher_forced':target_logprobs(logits,inputs['input_ids'],list(range(prompt_length,prompt_length+len(target)))) if target else None,
-                        'forced_text':request['forced_text'],'inference_output_tokens':0,'forced_target_tokens':len(target),
+                        'correct_class':target_logprobs(logits,inputs['input_ids'],[prompt_length+i for i in class_positions]) if target else None,
+                        'class_span':class_span,'forced_text':request['forced_text'],'inference_output_tokens':0,'forced_target_tokens':len(target),
                         'diagnostic_only':capture.diagnostic_only,'capture':capture.metadata}
                     if capture.values:
                         filename='capture-'+hashlib.sha256(request['id'].encode()).hexdigest()+'.safetensors'
