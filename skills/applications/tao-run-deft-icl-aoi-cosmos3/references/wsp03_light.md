@@ -111,3 +111,5 @@ session `token_count` self-reports. Around five million tokens, or the configure
 best-effort wall limit, it stops that owned container. Cached tokens are already
 inside input tokens; in-flight or missing usage stays unknown. The native usage
 logs are mutable/self-reported, and these observations are not strict quotas.
+
+Native Codex deployments must include `codex-code-mode-host` and `codex-exec-server` beside the configured `binary`; the launcher mounts all three executables read-only. To recover an interrupted native session, keep its existing work and CODEX_HOME, set `resume_session` to its recorded UUID, and provide a continuation task file. Preserve and remove the old work/LIGHT_START marker before preparing the replacement container so it remains gated until `start`; do not reset session token logs or experiment elapsed time.
