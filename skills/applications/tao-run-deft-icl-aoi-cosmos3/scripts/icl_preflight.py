@@ -3,6 +3,9 @@
 # Read-only H intake. All scientific settings originate in the frozen E task.
 import copy
 import hashlib
+import importlib.metadata
+import importlib.util
+import sqlite3
 import json
 import shutil
 import subprocess
@@ -86,6 +89,68 @@ def code_identity():
         raise ValueError('formal H preflight requires clean committed code')
     return {key:subprocess.check_output(['git','-C',str(BANK),*args],text=True).strip()
             for key,args in {'commit':['rev-parse','HEAD'],'branch':['branch','--show-current']}.items()}
+
+
+def source_lineage(source, root, task):
+    # Fixed, read-only metadata queries only: no Benchmark stage, predictions,
+    # metrics, report or gold is opened by preflight or resume verification.
+    root = Path(root).resolve(strict=True)
+    expected = {'selection':root/'selections/G.json','model_manifest':root/'frozen-model.json'}
+    for key,path in expected.items():
+        if Path(source[key]['path']).resolve() != path:
+            raise ValueError('checkpoint provenance is not the original G artifact')
+        verify_file(source[key])
+    with sqlite3.connect((root/'suite.sqlite').as_uri()+'?mode=ro',uri=True) as db:
+        meta = {k:json.loads(v) for k,v in db.execute(
+            "SELECT key,value FROM meta WHERE key IN ('protocol','config','freeze')")}
+        stage = db.execute("SELECT status FROM stages WHERE name='G/select'").fetchone()
+        artifacts = {name:{'path':path,'sha256':digest} for name,path,digest in db.execute(
+            "SELECT name,path,sha256 FROM artifacts WHERE name IN ('G/select','G/frozen-model')")}
+    frozen = meta.get('freeze',{})
+    if (meta.get('protocol') != 'generator-addendum-v1' or not stage or stage[0] != 'complete' or
+            json_hash(frozen.get('settings')) != frozen.get('sha256')):
+        raise ValueError('original G selection/freeze metadata is incomplete')
+    settings = frozen['settings']['G']
+    if settings['checkpoint'] != source['checkpoint']:
+        raise ValueError('checkpoint differs from original G freeze')
+    for key,name in (('selection','G/select'),('model_manifest','G/frozen-model')):
+        expected_binding = {k:source[key][k] for k in ('path','sha256')}
+        if artifacts.get(name) != expected_binding:
+            raise ValueError('source checkpoint artifact differs from original G journal')
+    if settings.get('model_manifest') != artifacts['G/frozen-model']:
+        raise ValueError('original G frozen model manifest differs')
+    fields = ('base_fingerprint','public_package','private_package','prompt_sha256','framework_image',
+              'data_services_image','siglip_revision','statistics')
+    identity = {key:meta['config'].get(key) for key in fields}
+    if any(identity[key] != task[key] for key in fields):
+        raise ValueError('original G classifier/data lineage differs from frozen E task')
+    return {'run':str(root),'protocol':meta['protocol'],'freeze_sha256':frozen['sha256'],
+            'checkpoint':settings['checkpoint'],'artifacts':artifacts,'source_identity':identity}
+
+
+def host_runtime():
+    # Keep the invoked venv path as well as its base interpreter identity. Wheel
+    # source/native files are sealed; mutable interpreter caches are excluded.
+    dependencies = {}
+    for module,name in (('PIL','Pillow'),('numpy','numpy'),('pyarrow','pyarrow'),('yaml','PyYAML')):
+        spec = importlib.util.find_spec(module)
+        if spec is None or not spec.origin:
+            raise ValueError('required host dependency unavailable: '+module)
+        distribution = importlib.metadata.distribution(name)
+        files = []
+        for relative in distribution.files or []:
+            if '__pycache__' in relative.parts or relative.suffix == '.pyc':
+                continue
+            path = Path(distribution.locate_file(relative))
+            if path.is_file():
+                files.append(file_binding(path))
+        if not files:
+            raise ValueError('host dependency lacks a verifiable file inventory: '+module)
+        dependencies[module] = {'distribution':name,'version':distribution.version,
+                                'origin':file_binding(spec.origin),'files':sorted(files,key=lambda row:row['path'])}
+    return {'version':sys.version,'executable':str(Path(sys.executable).absolute()),
+            'resolved_executable':str(Path(sys.executable).resolve()),
+            'prefix':sys.prefix,'base_prefix':sys.base_prefix,'dependencies':dependencies}
 
 
 def validate(request):
@@ -173,6 +238,7 @@ def validate(request):
         if path.stat().st_size != row['size'] or sha256(path) != row['sha256']:
             raise ValueError('original base bytes changed')
         files.append(file_binding(path))
+    lineage = source_lineage(source,request['comparison_runs']['G'],old)
     checkpoint = verify_checkpoint(source,model)
     astra = old['astra']
     if (subprocess.check_output([astra['codex_binary'],'--version'],text=True).strip() != 'codex-cli 0.166.0'
@@ -213,7 +279,7 @@ def validate(request):
                 environment_manifest=request['environment_manifest'],effective_counts=EXPECTED_COUNTS,benchmark_count=271,
                 comparison_runs=request['comparison_runs'],setup_token_exports=request.get('setup_token_exports',[]),
                 bindings={'files':files,'trees':trees},protected_roots=[str(p) for p in protected],
-                host_python={'version':sys.version,'executable':str(Path(sys.executable).resolve())},
+                host_python=host_runtime(),source_lineage=lineage,
                 resource_estimates={'required_bytes':required_bytes,'available_bytes':free,
                     'retrieval':'fresh H cache; cold setup and all retrieval allocations included in actual H costs'},
                 scope='engineering-addendum',generator_training_benchmark_exposure='unknown',
@@ -225,7 +291,7 @@ def verify_resume(task):
     validate_controls(task)
     validate_output_root(Path(task['results_dir']),task['protected_roots'])
     check_root(Path(task['results_dir']),resume=True)
-    if task['host_python'] != {'version':sys.version,'executable':str(Path(sys.executable).resolve())}:
+    if task['host_python'] != host_runtime():
         raise ValueError('host Python changed since approval')
     if code_identity() != task['code']:
         raise ValueError('code changed since approval')
@@ -233,6 +299,8 @@ def verify_resume(task):
         verify_file(binding)
     for tree in task['bindings']['trees']:
         verify_tree(tree)
+    if source_lineage(task['source_model'],task['comparison_runs']['G'],task) != task['source_lineage']:
+        raise ValueError('original G source lineage changed since approval')
     verify_checkpoint(task['source_model'],task['model_path'])
     if baseline_metrics(task['baseline_context']) != task['baseline_metrics']:
         raise ValueError('permitted B Proxy context changed')

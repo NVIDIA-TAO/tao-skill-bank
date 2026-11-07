@@ -169,13 +169,115 @@ class ICLSuite(Suite):
                 raise TimeoutError('reconciled proposal has no final within original budget')
             raise RuntimeError('reconciled proposal incomplete: '+reason)
 
+    def collect_native_answers(self, stage):
+        # Same immutable answer/usage contract as Suite.infer's finally block,
+        # also used when reconciliation cannot re-enter inference successfully.
+        arm,phase,candidate = stage.split('/')
+        for attempt in self.store.db.execute('SELECT job_id FROM attempts WHERE stage=? ORDER BY id',(stage,)):
+            if not attempt['job_id']:
+                continue
+            record = json.loads(self.runtime.record('show',attempt['job_id']))
+            directory = Path(record['results_dir'])
+            raw = directory/'raw_answers.jsonl'
+            for row in load_jsonl(raw) if raw.exists() else []:
+                self.store.record_answer(arm,phase,candidate,row)
+                usage = {k:row.get(k) for k in ('invocation_id','inference_input_tokens','inference_output_tokens','started_at_unix','ended_at_unix')}
+                usage.update(category='formal',arm=arm,phase=phase,candidate=candidate,stage=stage)
+                self.store.record_usage(row['invocation_id'],usage)
+            failures = directory/'attempts.jsonl'
+            for row in load_jsonl(failures) if failures.exists() else []:
+                if row['status'] == 'error':
+                    self.store.record_usage(row['invocation_id'],dict(row,category='formal',arm=arm,phase=phase,stage=stage))
+
+    def reconcile_native(self):
+        # Reconcile only previously recorded native work. No submit, retry, new
+        # trial, fresh deadline or admission decision occurs in this method.
+        import datetime
+        from suite_runtime import infrastructure_failure
+        pending = list(self.store.db.execute(
+            "SELECT * FROM attempts WHERE stage NOT LIKE 'H/proposal/%' AND status IN ('pending','running') ORDER BY id"))
+        for attempt in pending:
+            stage = attempt['stage']
+            self.store.guard_stage(stage)
+            first = self.store.db.execute('SELECT MIN(started) FROM attempts WHERE stage=?',(stage,)).fetchone()[0]
+            deadline = min(self.deadline,first+self.task['budgets']['stage_wall_seconds'])
+            if not self.store.get('freeze'):
+                budget = self.store.db.execute("SELECT * FROM budgets WHERE name='H'").fetchone()
+                if budget is None:
+                    raise ValueError('pending native search job lacks original H budget')
+                deadline = min(deadline,budget['started']+budget['wall_cap'])
+            if not attempt['job_id']:
+                reason = 'budget_exhausted' if time.time() >= deadline else 'infrastructure_error'
+                self.store.finish(attempt['id'],reason,{'reason':'interrupted before native record'})
+                raise RuntimeError('native reconciliation has no recorded handle: '+reason)
+            image = self.task['data_services_image'] if stage.startswith('retrieval/') else self.task['framework_image']
+            runtime = Docker(self.root/'jobs',image)
+            record = json.loads(runtime.record('show',attempt['job_id']))
+            job = {'job_id':attempt['job_id'],'results_dir':record['results_dir'],'container_id':record['backend_ref']}
+            try:
+                final = runtime.wait(job['job_id'],deadline)
+                self._native_cost(runtime,job,True,stage)
+                if final['state'] == 'COMPLETE':
+                    finished = final.get('native',{}).get('FinishedAt')
+                    if not finished or finished.startswith('0001'):
+                        self.store.finish(attempt['id'],'program_error',{'job':job,'reason':'native completion timestamp unavailable'})
+                        raise RuntimeError('cannot verify completion within original native deadline')
+                    ended = datetime.datetime.fromisoformat(finished.replace('Z','+00:00')).timestamp()
+                    if ended > deadline:
+                        self.store.finish(attempt['id'],'budget_exhausted',{'job':job,'backend':final,'deadline':deadline})
+                        raise TimeoutError('native job completed beyond its original deadline')
+                    if stage.startswith('H/'):
+                        output = Path(job['results_dir'])/'completion.json'
+                    else:
+                        name = stage.split('/')[1]
+                        output = self.root/'retrieval'/name/('embeddings.parquet' if name.startswith('embed-') else 'mined.parquet')
+                    if not output.is_file():
+                        self.store.finish(attempt['id'],'program_error',{'job':job,'reason':'completion artifact missing','path':str(output)})
+                        raise RuntimeError('reconciled native success lacks required output')
+                    result = {'job':job,'artifacts':[self.store.artifact(stage+'/output',output)]}
+                    self.store.finish(attempt['id'],'complete',result)
+                    continue
+                reason = ('budget_exhausted' if final['state']=='CANCELED' else
+                          'infrastructure_error' if infrastructure_failure(final.get('native',{}),runtime.logs(job['job_id'])) else 'program_error')
+                self.store.finish(attempt['id'],reason,{'job':job,'backend':final,'deadline':deadline})
+                if reason == 'budget_exhausted':
+                    raise TimeoutError('native job exhausted its original deadline')
+                raise RuntimeError('native reconciliation incomplete: '+reason)
+            finally:
+                if stage.startswith('H/'):
+                    self.collect_native_answers(stage)
+
+    def recover_trials(self):
+        # A supervisor can stop between native completion and sealing a trial.
+        # Recover only complete stages, using E's exact trial-summary fields.
+        from retrieval import policy_hash
+        for row in self.store.db.execute("SELECT name FROM stages WHERE name LIKE 'H/proxy/%' AND status='complete' ORDER BY name"):
+            trial = row['name'].split('/')[-1]
+            if self.store.get('H/trial/'+trial):
+                continue
+            if not (self.root/'views/H/proxy'/trial/'requests.json').is_file():
+                raise ValueError('completed trial classifier view is missing; no reconstruction launch permitted')
+            policy = json.loads((self.root/'policies/H'/(trial+'.json')).read_text())
+            score = self.infer('H','proxy',trial,self.task['fixed_checkpoint'],policy=policy)
+            requests = json.loads((self.root/'views/H/proxy'/trial/'requests.json').read_text())
+            chars = sum(sum(len(p['text']) for message in r['messages'] for p in message['content'] if p['type']=='text') for r in requests)/len(requests)
+            value = dict(phase='proxy',status='complete',n=score['metrics']['n'],expected_n=len(self.proxy),mcc=score['metrics']['mcc'],
+                         trial_id=trial,images_per_query=policy['parameters']['reference_count']+1,calls_per_query=1,
+                         prompt_characters=chars,policy=policy,policy_sha256=policy_hash(policy),metrics=score['metrics'],
+                         query_ids_sha256=json_hash(sorted(q['id'] for q in self.proxy)))
+            self.store.seal('H/trial/'+trial,value)
+
     def run(self):
+        if self.store.db.execute("SELECT 1 FROM attempts WHERE status='program_error' LIMIT 1").fetchone():
+            raise RuntimeError('terminal deterministic program failure forbids continuation')
+        self.reconcile_native()
         if self.store.get('completed'):
             self.store.verify_freeze()
             from icl_analysis import export
             return export(self.store, self.task)
         if not self.store.get('freeze'):
             self.reconcile_proposals()
+            self.recover_trials()
             selected = self.search('H', self.task['fixed_checkpoint'])
             from icl_preflight import verify_checkpoint
             verify_checkpoint(self.task['source_model'], self.task['model_path'])

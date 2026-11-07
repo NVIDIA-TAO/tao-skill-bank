@@ -26,7 +26,11 @@ retrieval and classifier are reused.
 The read-only preflight validates package membership, checksums, model lineage,
 role isolation, images, resources and current environment without launching any
 model or agent. It seals code, the exact input task, native dependencies,
-models, source manifests and environment. Credentials are checked for presence
+models, source manifests and environment. The source selection and model manifest
+must also match the original G journal's frozen checkpoint and artifact metadata;
+this read-only check never opens Benchmark metrics or predictions. Host runtime
+binding retains the invoked virtualenv executable, prefix/base prefix, dependency
+versions, module origins and installed source/native file hashes. Credentials are checked for presence
 only and are never read or hashed. Record the controlling orchestration runtime
 separately from the frozen policy runtime in the environment manifest.
 
@@ -61,6 +65,13 @@ deadline, even if the next-trial admission reserve expired during a restart.
 It records actual usage and terminal state without launching another proposal;
 unknown usage or no final at budget exhaustion stops honestly. This is execution
 accounting around the unchanged E search, not a new scientific decision rule.
+Previously issued native inference/retrieval work is likewise reconciled before
+admission, with original deadlines, costs and raw answers retained. A completed
+job discovered after a supervisor outage is admissible only if native FinishedAt
+is within its original deadline. Completed Proxy trial summaries are recovered
+with the exact E fields; over-deadline work cannot become a completed candidate.
+Freeze rejects every pending/running attempt. Deterministic program failures
+remain terminal on later resumes.
 
 The unchanged E search proposes one adaptive trial at a time, maximum12 complete
 trials;21600s wall;1000000 cumulative policy-agent tokens;1400s admission reserve;

@@ -77,6 +77,8 @@ class ICLStore(SuiteStore):
         return super().record_answer(arm, phase, candidate, answer)
 
     def freeze(self, settings):
+        if self.db.execute("SELECT 1 FROM attempts WHERE status IN ('pending','running') LIMIT 1").fetchone():
+            raise ValueError('cannot freeze while any attempt is pending or running')
         config = self.get('config')
         selection = self.stage('H/select')
         if set(settings) != {'H'} or selection['status'] != 'complete':

@@ -311,7 +311,7 @@ def test_readonly_preflight_and_resume_bind_every_input_without_benchmark_access
     json_write(model/'export_manifest.json',{'base_model_fingerprint':{'files':{'config.json':sha256(base/'config.json')}}})
     conversion=base/'tao_conversion_provenance.json'
     json_write(conversion,{'prepared':{'fingerprint':'base','files':[{'name':'config.json','size':2,'sha256':sha256(base/'config.json')}]}})
-    manifest=model.parent/'frozen.json';selection=model.parent/'selection.json'
+    manifest=model.parent/'frozen-model.json';selection=model.parent/'selections/G.json'
     json_write(manifest,[{'path':str(p),'size':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns,'sha256':sha256(p)} for p in model.iterdir()])
     json_write(selection,{'checkpoint':str(model),'phase':'proxy','status':'complete','n':74})
     def row(i,view=1):return {'id':f'SCN_scan{i}_MBO_part_A{view}.jpg','image':'image','image_sha256':sha256(public/'image')}
@@ -338,6 +338,12 @@ def test_readonly_preflight_and_resume_bind_every_input_without_benchmark_access
     old['provenance']={'bundle_sha256':sha256(public/'bundle.json'),'public_checksums_sha256':sha256(public/'SHA256SUMS'),
                       'direct_profile_sha256':sha256(profile),'m3_evidence_sha256':sha256(evidence),
                       'model_conversion_sha256':sha256(conversion),'siglip_files':{'config.json':sha256(encoder/'config.json')}}
+    source_store=SuiteStore(model.parent)
+    source_store.seal('protocol','generator-addendum-v1');source_store.seal('config',old)
+    source_settings={'G':{'checkpoint':str(model),'model_manifest':{'path':str(manifest),'sha256':sha256(manifest)}}}
+    source_store.seal('freeze',{'settings':source_settings,'sha256':json_hash(source_settings)})
+    a=source_store.begin('G/select');source_store.finish(a,'complete',{})
+    source_store.artifact('G/select',selection);source_store.artifact('G/frozen-model',manifest);source_store.db.close()
     original=tmp_path/'original.json';json_write(original,old)
     pre=tmp_path/'original-preflight.json';json_write(pre,{'ready':True,'effective':old,'preflight_sha256':json_hash(old)})
     context=tmp_path/'context.json';json_write(context,{'arm':'E','trials':[],'max_trials':12,'reference_capacity':4,'baseline_metrics':old['baseline_metrics']})
@@ -391,3 +397,157 @@ def test_pending_proposal_is_reconciled_before_expired_admission_without_new_lau
     assert s.store.remaining('H')=={'wall_seconds':0,'tokens':999832}
     assert s.store.db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]==1
     assert s.store.stage(stage)['status']==('complete' if complete else 'incomplete')
+
+
+def test_freeze_refuses_every_pending_native_attempt(tmp_path):
+    store,task=make_store(tmp_path)
+    attempt=store.begin('H/proxy/trial-002');store.attach_job(attempt,'original-native')
+    with pytest.raises(ValueError,match='pending|running|active'):
+        freeze(store,task)
+    assert not store.get('freeze')
+
+
+@pytest.mark.parametrize('stage,complete,late',[('H/proxy/trial-002',True,False),('H/proxy/trial-002',False,False),
+                                         ('retrieval/embed-proxy',True,False),('retrieval/embed-mining',False,False),
+                                         ('H/proxy/trial-002',True,True)])
+def test_native_reconciliation_preserves_handles_deadlines_answers_costs(tmp_path,stage,complete,late):
+    m=api('icl_driver');s=object.__new__(m.ICLSuite);s.store,s.task=make_store(tmp_path);s.root=s.store.root
+    s.deadline=100;s.budget_scope=None
+    s.task.update(framework_image='fixture',data_services_image='fixture')
+    s.store.start_budget('H',21600,1000000);s.store.db.execute('UPDATE budgets SET started=1')
+    attempt=s.store.begin(stage);s.store.attach_job(attempt,'original-native');s.store.db.execute('UPDATE attempts SET started=1')
+    native=tmp_path/'native';native.mkdir()
+    answer={'id':'q','raw_answer':'INVALID','completed':True,'invocation_id':'query-original',
+            'inference_input_tokens':11,'inference_output_tokens':2,'started_at_unix':2,'ended_at_unix':90}
+    if stage.startswith('H/'):
+        (native/'raw_answers.jsonl').write_text(json.dumps(answer)+'\n')
+        json_write(native/'completion.json',{'count':1})
+    else:
+        output=s.root/'retrieval'/stage.split('/')[1]/'embeddings.parquet';output.parent.mkdir(parents=True);output.write_bytes(b'fixture')
+    class Runtime:
+        def record(self,*args):return json.dumps({'results_dir':str(native),'backend_ref':'original-container'})
+        def wait(self,job,deadline):
+            assert job=='original-native' and deadline==100
+            return {'state':'COMPLETE' if complete else 'CANCELED','native':{'FinishedAt':'1970-01-01T00:01:45Z' if late else '1970-01-01T00:01:35Z'}}
+        def logs(self,*args):return ''
+        def submit(self,*args,**kwargs):raise AssertionError('must not launch during reconciliation')
+    s.runtime=Runtime()
+    def cost(runtime,job,gpu,stage):
+        s.store.record_usage(job['job_id'],{'stage':stage,'gpu_seconds':93,'invocation_id':job['job_id']})
+    s._native_cost=cost
+    with patch.object(m,'Docker',return_value=s.runtime):
+        if complete and not late:s.reconcile_native()
+        else:
+            with pytest.raises(TimeoutError):s.reconcile_native()
+    assert s.store.db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]==1
+    assert s.store.db.execute("SELECT COUNT(*) FROM usage WHERE invocation='original-native'").fetchone()[0]==1
+    if stage.startswith('H/'):
+        assert s.store.answers('H','proxy','trial-002')==[answer]
+        assert s.store.db.execute("SELECT COUNT(*) FROM usage WHERE invocation='query-original'").fetchone()[0]==1
+    assert s.store.stage(stage)['status']==('complete' if complete and not late else 'incomplete')
+
+
+def test_completed_native_trial_is_recovered_before_search_admission(tmp_path):
+    m=api('icl_driver');s=object.__new__(m.ICLSuite);s.store,s.task=make_store(tmp_path);s.root=s.store.root
+    s.proxy=[{'id':'q'}];s.deadline=10**20;s.budget_scope=None
+    s.store.start_budget('H',21600,1000000)
+    import time
+    s.store.db.execute('UPDATE budgets SET started=?',(time.time()-21000,))
+    a=s.store.begin('H/proxy/trial-002');s.store.finish(a,'complete',{'job':{'job_id':'finished'}})
+    json_write(s.root/'policies/H/trial-002.json',policy())
+    json_write(s.root/'views/H/proxy/trial-002/requests.json',[{'messages':[{'content':[{'type':'text','text':'exact prompt'}]}]}])
+    def infer(arm,phase,candidate,model,**kwargs):
+        assert s.store.stage('H/proxy/trial-002')['status']=='complete'
+        return {'metrics':{'n':1,'mcc':0.6}}
+    s.infer=infer
+    s.recover_trials()
+    assert s.store.get('H/trial/trial-002')['mcc']==0.6
+    s.store.seal('H/trial/trial-001',dict(s.store.get('H/trial/trial-002'),trial_id='trial-001',mcc=0.2))
+    with patch('suite_driver.generic_mounts',return_value=[]),patch('suite_driver.Docker'):
+        selected=s.search('H',s.task['fixed_checkpoint'])
+    assert selected['trial_id']=='trial-002' and selected['search_stop_reason']=='search_budget'
+
+
+def test_source_checkpoint_must_match_original_g_journal_metadata(tmp_path):
+    m=api('icl_preflight');root=tmp_path/'g';store=SuiteStore(root)
+    task={'base_fingerprint':'base','public_package':'fixture-public','private_package':'fixture-private',
+          'prompt_sha256':'prompt','framework_image':'framework','data_services_image':'embedding',
+          'siglip_revision':'encoder','statistics':config(tmp_path)['statistics']}
+    selection=root/'selections/G.json';manifest=root/'frozen-model.json'
+    json_write(selection,{'checkpoint':'selected'});json_write(manifest,[])
+    source={'checkpoint':'selected','selection':binding(selection),'model_manifest':binding(manifest)}
+    store.seal('protocol','generator-addendum-v1');store.seal('config',task)
+    settings={'G':{'checkpoint':'selected','model_manifest':{'path':str(manifest),'sha256':sha256(manifest)}}}
+    store.seal('freeze',{'settings':settings,'sha256':json_hash(settings)})
+    a=store.begin('G/select');store.finish(a,'complete',{'checkpoint':'selected'})
+    store.artifact('G/select',selection);store.artifact('G/frozen-model',manifest);store.db.close()
+    before=sha256(root/'suite.sqlite')
+    proof=m.source_lineage(source,root,task)
+    assert proof['checkpoint']=='selected' and sha256(root/'suite.sqlite')==before
+    with pytest.raises(ValueError):m.source_lineage({**source,'checkpoint':'another'},root,task)
+    alternate=tmp_path/'alternate-selection.json';json_write(alternate,{'checkpoint':'selected'})
+    with pytest.raises(ValueError):m.source_lineage({**source,'selection':binding(alternate)},root,task)
+    with pytest.raises(ValueError):m.source_lineage(source,root,{**task,'base_fingerprint':'another-base'})
+
+
+def test_host_runtime_distinguishes_venv_and_dependency_bytes(tmp_path,monkeypatch):
+    m=api('icl_preflight');import types
+    module=tmp_path/'module.py';module.write_text('fixture module')
+    class Distribution:
+        version='1.0';files=[Path('module.py')]
+        def locate_file(self,path):return tmp_path/path
+    monkeypatch.setattr(m.importlib.metadata,'distribution',lambda name:Distribution())
+    monkeypatch.setattr(m.importlib.util,'find_spec',lambda name:types.SimpleNamespace(origin=str(module)))
+    monkeypatch.setattr(m.sys,'executable',str(tmp_path/'venv/bin/python'))
+    monkeypatch.setattr(m.sys,'prefix',str(tmp_path/'venv'))
+    first=m.host_runtime()
+    assert first['executable']==str(tmp_path/'venv/bin/python') and first['prefix']==str(tmp_path/'venv')
+    monkeypatch.setattr(m.sys,'prefix',str(tmp_path/'other-venv'))
+    assert first!=m.host_runtime()
+    monkeypatch.setattr(m.sys,'prefix',str(tmp_path/'venv'))
+    module.write_text('changed module')
+    assert first!=m.host_runtime()
+
+
+def test_run_reconciles_active_trial_below_reserve_before_freezing(tmp_path):
+    import time,datetime
+    m=api('icl_driver');s=object.__new__(m.ICLSuite);s.task=config(tmp_path)
+    manifest=tmp_path/'manifest.json';json_write(manifest,[])
+    s.task.update(source_model={'model_manifest':binding(manifest)},model_path='fixture-base',
+                  framework_image='fixture',data_services_image='fixture')
+    s.store=api('icl_store').ICLStore(tmp_path/'run');s.root=s.store.root
+    s.store.initialize(s.task,{'preflight_sha256':json_hash(s.task),'approved_by':'test','approved_at':'test'})
+    s.proxy=[{'id':'q'}];s.deadline=time.time()+5000;s.budget_scope=None
+    s.store.start_budget('H',21600,1000000);s.store.db.execute('UPDATE budgets SET started=?',(time.time()-21000,))
+    first={'phase':'proxy','status':'complete','n':1,'expected_n':1,'mcc':0.2,'trial_id':'trial-001',
+           'images_per_query':2,'calls_per_query':1,'prompt_characters':5,'policy':policy(),'policy_sha256':json_hash(policy())}
+    s.store.seal('H/trial/trial-001',first)
+    stage='H/proxy/trial-002';a=s.store.begin(stage);s.store.attach_job(a,'already-running')
+    native=tmp_path/'native';json_write(native/'completion.json',{'count':1})
+    json_write(s.root/'policies/H/trial-002.json',policy())
+    json_write(s.root/'views/H/proxy/trial-002/requests.json',[{'messages':[{'content':[{'type':'text','text':'exact prompt'}]}]}])
+    class Runtime:
+        def record(self,*args):return json.dumps({'results_dir':str(native),'backend_ref':'already-running'})
+        def wait(self,job,deadline):
+            assert job=='already-running' and 590<deadline-time.time()<610
+            return {'state':'COMPLETE','native':{'FinishedAt':datetime.datetime.now(datetime.timezone.utc).isoformat()}}
+        def submit(self,*args,**kwargs):raise AssertionError('new model calls are forbidden')
+    s.runtime=Runtime()
+    s._native_cost=lambda runtime,job,gpu,stage:s.store.record_usage(job['job_id'],{'gpu_seconds':1,'stage':stage})
+    s.infer=lambda *args,**kwargs:{'metrics':{'n':1,'mcc':0.6}}
+    s.benchmark=lambda:{'pending':s.store.db.execute("SELECT COUNT(*) FROM attempts WHERE status IN ('pending','running')").fetchone()[0],
+                        'selected':s.result('H/select')['trial_id']}
+    with patch.object(m,'Docker',return_value=s.runtime),patch('suite_driver.Docker',return_value=s.runtime),\
+         patch('suite_driver.generic_mounts',return_value=[]),patch('icl_preflight.verify_checkpoint'):
+        result=s.run()
+    assert result=={'pending':0,'selected':'trial-002'}
+    assert s.store.get('freeze') and s.store.db.execute('SELECT COUNT(*) FROM usage').fetchone()[0]==1
+    assert s.store.db.execute("SELECT COUNT(*) FROM attempts WHERE stage LIKE 'H/proposal/%'").fetchone()[0]==0
+
+
+def test_terminal_program_failure_cannot_be_skipped_on_later_resume(tmp_path):
+    m=api('icl_driver');s=object.__new__(m.ICLSuite);s.store,s.task=make_store(tmp_path)
+    attempt=s.store.begin('H/proxy/trial-002');s.store.finish(attempt,'program_error',{'reason':'deterministic fixture'})
+    with patch.object(s,'reconcile_native',side_effect=AssertionError('terminal failure must stop before work')):
+        with pytest.raises(RuntimeError,match='program|deterministic'):
+            s.run()
