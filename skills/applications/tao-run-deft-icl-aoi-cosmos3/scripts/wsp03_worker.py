@@ -170,10 +170,16 @@ def run(model_path, requests_path, output_dir, *, mode='generation', split='prob
                     inputs['attention_mask']=torch.cat([inputs['attention_mask'],torch.ones_like(target_ids)],dim=1)
                     # Resolve semantic positions only after the actual processor image expansion.
                     spec=json.loads(json.dumps(request.get('capture',{})))
+                    def position(value):
+                        if value=='answer_boundary':return prompt_length-1
+                        if value=='pre_label':
+                            if not class_positions:raise ValueError('pre_label requires a canonical class continuation')
+                            return prompt_length+class_positions[0]-1
+                        return value
                     for item in spec.get('points',[])+spec.get('patches',[]):
-                        item['positions']=[prompt_length-1 if p=='answer_boundary' else p for p in item['positions']]
+                        item['positions']=[position(p) for p in item['positions']]
                     for item in spec.get('attention',[]):
-                        item['rows']=[prompt_length-1 if p=='answer_boundary' else p for p in item['rows']]
+                        item['rows']=[position(p) for p in item['rows']]
                     with ActivationCapture(model,spec,max_bytes=256*1024**2-retained_bytes,allow_patches=True) as capture:
                         logits=model(**inputs,use_cache=False,return_dict=True).logits
                     retained_bytes+=capture.bytes
