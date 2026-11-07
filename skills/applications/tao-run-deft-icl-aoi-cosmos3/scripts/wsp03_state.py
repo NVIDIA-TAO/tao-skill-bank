@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 import sqlite3
 import time
+import threading
 
 
 def canonical(value):
@@ -28,7 +29,8 @@ class Ledger:
         self.clock = clock
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, timeout=20, isolation_level=None)
+        self._lock=threading.RLock()
+        self.db = sqlite3.connect(path, timeout=20, isolation_level=None,check_same_thread=False)
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('PRAGMA synchronous=FULL')
         self.db.executescript('''CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY,v TEXT NOT NULL);
@@ -64,14 +66,15 @@ class Ledger:
 
     @contextmanager
     def tx(self, close_on_error=False):
-        self.db.execute('BEGIN IMMEDIATE')
-        try:
-            yield
-            self.db.commit()
-        except BaseException:
-            self.db.rollback()
-            if close_on_error:self.db.close()
-            raise
+        with self._lock:
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                yield
+                self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                if close_on_error:self.db.close()
+                raise
 
     def close(self):
         self.db.close()
@@ -105,9 +108,79 @@ class Ledger:
         with self.tx():
             if self.get('full_reserve_seconds') is not None:
                 raise ValueError('throughput reserve already frozen')
+            self.set('full_generation_reserve_seconds', per_full_pass_seconds)
+            self.set('explore_generation_reserve_seconds', explore_seconds)
             self.set('full_reserve_seconds', per_full_pass_seconds)
             self.set('explore_reserve_seconds', explore_seconds)
             self.event('throughput_reserve', {'full': per_full_pass_seconds, 'explore': explore_seconds})
+
+    def bind_joint_schedule(self, *, deadline, downstream_seconds, evidence):
+        if not evidence or any(not isinstance(v,(int,float)) or not math.isfinite(v) for v in (deadline,downstream_seconds)) or downstream_seconds<0:
+            raise ValueError('finite joint schedule and provenance required')
+        with self.tx():
+            old=self.get('joint_schedule')
+            if old and deadline>old['deadline']:raise ValueError('continuous joint deadline cannot be extended')
+            self.set('joint_schedule',{'deadline':deadline,'downstream_seconds':downstream_seconds,'evidence':evidence})
+            self.event('joint_schedule',self.get('joint_schedule'))
+
+    def set_schedule_model(self,*,queries,passes,fixed_seconds,cpu_queries=0,initial_gpu_rate=None,initial_setup_seconds=0,cpu_seconds_per_query=0):
+        values=(queries,passes,fixed_seconds,cpu_queries,initial_setup_seconds,cpu_seconds_per_query)
+        if any(not math.isfinite(v) or v<0 for v in values) or queries<=0:raise ValueError('invalid downstream workload')
+        if initial_gpu_rate is None:initial_gpu_rate=max(0,(self.get('joint_schedule')['downstream_seconds']-fixed_seconds)/queries)
+        if not math.isfinite(initial_gpu_rate) or initial_gpu_rate<0:raise ValueError('invalid generation rate')
+        with self.tx():
+            model={'queries':queries,'passes':passes,'fixed_seconds':fixed_seconds,'cpu_queries':cpu_queries,'initial_gpu_rate':initial_gpu_rate,'initial_setup_seconds':initial_setup_seconds,'cpu_seconds_per_query':cpu_seconds_per_query}
+            if self.get('schedule_model') not in (None,model):raise ValueError('frozen schedule workload changed')
+            self.set('schedule_model',model);self.update_local_reserves();self.update_downstream()
+    def timing_components(self):
+        c=self.get('contract');model=self.get('schedule_model') or {}
+        fallback=max((self.get('full_generation_reserve_seconds') or 0)/c['full_size'],(self.get('explore_generation_reserve_seconds') or 0)/c['explore_size']) if not model else 0
+        return {'generation_rate':max(self.get('observed_rate_seconds') or 0,model.get('initial_gpu_rate',0),fallback),'setup_seconds':max(self.get('observed_setup_seconds') or 0,model.get('initial_setup_seconds',0)),'cpu_rate':max(self.get('observed_preparation_rate_seconds') or 0,model.get('cpu_seconds_per_query',0))}
+    def update_local_reserves(self):
+        c=self.get('contract');components=self.timing_components()
+        for phase,size in (('full',c['full_size']),('explore',c['explore_size'])):
+            generation=max(self.get(phase+'_generation_reserve_seconds') or 0,components['generation_rate']*size+components['setup_seconds'])
+            self.set(phase+'_generation_reserve_seconds',generation)
+            total=generation+(components['cpu_rate']*size if c['track']=='R4' else 0)
+            self.set(phase+'_reserve_seconds',max(self.get(phase+'_reserve_seconds') or 0,total))
+    def estimate_seconds(self,queries,passes,*,fixed_seconds=0,cpu_queries=0):
+        components=self.timing_components()
+        return queries*components['generation_rate']+passes*components['setup_seconds']+cpu_queries*components['cpu_rate']+fixed_seconds
+    def inherit_timing(self,other):
+        with self.tx():
+            for key in ('full_generation_reserve_seconds','explore_generation_reserve_seconds','observed_rate_seconds','observed_setup_seconds','observed_preparation_rate_seconds'):self.set(key,max(self.get(key) or 0,other.get(key) or 0))
+            self.update_local_reserves();self.update_downstream()
+            self.event('inherited_timing',{'source_track':other.get('contract')['track'],'full_seconds':self.get('full_reserve_seconds'),'components':self.timing_components()})
+    def update_downstream(self):
+        model=self.get('schedule_model');joint=self.get('joint_schedule')
+        if model and joint:
+            estimate=self.estimate_seconds(model['queries'],model['passes'],fixed_seconds=model['fixed_seconds'],cpu_queries=model['cpu_queries'])
+            joint['downstream_seconds']=max(joint['downstream_seconds'],estimate);self.set('joint_schedule',joint)
+
+    def remaining_joint_seconds(self):
+        joint=self.get('joint_schedule')
+        return min(self.status()['remaining_wall_seconds'],joint['deadline']-self.clock()) if joint else self.status()['remaining_wall_seconds']
+
+    def editing_seconds(self):
+        status=self.status();joint=self.get('joint_schedule');remaining=min(status['remaining_development_seconds'],self.remaining_joint_seconds())
+        return max(0,remaining-3*(self.get('full_reserve_seconds') or 0)-(self.get('explore_reserve_seconds') or 0)-(joint['downstream_seconds'] if joint else 0))
+
+    def forward_seconds(self,kind):
+        if kind in ('read','explore','baseline'):return self.editing_seconds()
+        if kind=='trusted':return max(0,self.remaining_joint_seconds())
+        joint=self.get('joint_schedule')
+        return max(0,min(self.status()['remaining_development_seconds'],self.remaining_joint_seconds())-(joint['downstream_seconds'] if joint else 0))
+
+    def observe_generation_timing(self, *, query_seconds, setup_seconds, evidence, preparation_seconds=0):
+        if not query_seconds or any(not math.isfinite(x) or x<0 for x in query_seconds) or not evidence:raise ValueError('actual timing evidence required')
+        values=sorted(query_seconds);rate=max(sum(values)/len(values),values[min(len(values)-1,int(.95*len(values)))])
+        if any(not math.isfinite(x) or x<0 for x in (setup_seconds,preparation_seconds)):raise ValueError('finite measured setup/preparation required')
+        with self.tx():
+            self.set('observed_rate_seconds',max(self.get('observed_rate_seconds') or 0,rate))
+            self.set('observed_setup_seconds',max(self.get('observed_setup_seconds') or 0,setup_seconds))
+            self.set('observed_preparation_rate_seconds',max(self.get('observed_preparation_rate_seconds') or 0,preparation_seconds/len(values)))
+            self.update_local_reserves();self.update_downstream()
+            self.event('measured_timing',{'generation_rate_seconds':rate,'setup_seconds':setup_seconds,'preparation_seconds':preparation_seconds,'components':self.timing_components(),'full_seconds':self.get('full_reserve_seconds'),'explore_seconds':self.get('explore_reserve_seconds'),'evidence':evidence})
 
     def status(self):
         c = self.get('contract')
@@ -118,11 +191,11 @@ class Ledger:
         elapsed += c['probe_debit']['wall_seconds']
         total = usage[0] + usage[1]
         return {'phase': self.get('phase'), 'input_tokens': usage[0], 'output_tokens': usage[1], 'cached_tokens': usage[2],
-                'observed_tokens': total, 'budget_overrun': total > c['target_tokens'], 'soft_stopped': total >= c['soft_tokens'],
+                'observed_tokens': total, 'editor_closed':self.get('editor_closed'), 'budget_overrun': total > c['target_tokens'], 'soft_stopped': total >= c['soft_tokens'],
                 'used': used, 'read_query_forward_exposures_admitted':self.db.execute("SELECT coalesce(sum(json_extract(payload,'$.query_forward_exposures')),0) FROM requests WHERE kind='read'").fetchone()[0], 'remaining_wall_seconds': c['total_wall'] - elapsed,
                 'remaining_development_seconds': c['development_wall'] - elapsed,
                 'unknown_inflight_usage': [r[0] for r in self.db.execute("SELECT id FROM requests WHERE kind='editor' AND state='running'")],
-                'provider_usage_complete': not bool(self.db.execute("SELECT 1 FROM requests WHERE kind='editor' AND state!='complete'").fetchone())}
+                'provider_usage_complete': (bool(self.get('native_usage') and self.get('native_usage').get('final') and not self.get('native_usage').get('provider_interrupted_usage_unknown')) if self.get('native_usage_expected') else not bool(self.db.execute("SELECT 1 FROM requests WHERE kind='editor' AND state!='complete'").fetchone()))}
 
     def admit(self, kind, request_id, payload=None):
         with self.tx():
@@ -134,22 +207,23 @@ class Ledger:
                 raise AdmissionError('request identity already admitted')
             if self.db.execute("SELECT 1 FROM requests WHERE state='running'").fetchone():
                 raise AdmissionError('one request in flight; reconcile first')
-            if status['remaining_wall_seconds'] <= 0:
+            if min(status['remaining_wall_seconds'],self.remaining_joint_seconds()) <= 0:
                 raise AdmissionError('wall exhausted')
             if kind in ('editor', 'python', 'candidate', 'explore', 'read', 'baseline'):
-                if status['phase'] != 'explore' or status['soft_stopped']:
+                if status['phase'] != 'explore' or status['soft_stopped'] or self.get('editor_closed'):
                     raise AdmissionError('editing admission closed; trusted finalization remains available')
                 if status['remaining_development_seconds'] <= 0:
                     raise AdmissionError('development deadline')
             if kind == 'full':
                 reserve=self.get('full_reserve_seconds')
-                if reserve is not None and status['remaining_development_seconds'] < reserve:raise AdmissionError('full pass does not fit remaining measured development reserve')
+                if reserve is not None and self.forward_seconds('full') < reserve:raise AdmissionError('full pass does not fit remaining measured development reserve')
                 if status['phase'] != 'finalists' or status['remaining_development_seconds'] <= 0:
                     raise AdmissionError('full development only for frozen shortlist within development wall')
             if kind == 'trusted' and status['phase'] not in ('frozen', 'no_valid_patch'):
                 raise AdmissionError('trusted evaluation requires terminal scientific editing')
             if kind in c['caps'] and status['used'].get(kind, 0) >= c['caps'][kind]:
                 raise AdmissionError('request budget exhausted')
+            if kind in ('explore', 'baseline', 'read', 'python', 'editor') and self.editing_seconds()<=0:raise AdmissionError('preserve joint/finalist reserve')
             if kind in ('explore', 'baseline', 'read', 'python', 'editor'):
                 reserve = self.get('full_reserve_seconds')
                 if reserve is not None and status['remaining_development_seconds'] <= 3 * reserve + self.get('explore_reserve_seconds'):
@@ -218,7 +292,7 @@ class Ledger:
         records = []
         for cid, payload, manifest in self.db.execute('SELECT r.id,r.payload,c.payload FROM results r JOIN candidates c ON r.id=c.id WHERE r.phase=?', (phase,)):
             m, c = json.loads(payload), json.loads(manifest)
-            records.append(((-m['mcc'], -m['macro_f1'], m['invalid'], c.get('mean_reference_count',c['changed_elements']), cid), cid))
+            records.append(((-m['mcc'], -m['macro_f1'], m['invalid'], m.get('mean_reference_count',c.get('mean_reference_count',c['changed_elements'])), cid), cid))
         return [cid for _, cid in sorted(records)]
 
     def nominate(self):
@@ -238,7 +312,7 @@ class Ledger:
             ranked = self.ranked('full')
             for cid in self.get('shortlist'):
                 attempted=self.db.execute("SELECT 1 FROM requests WHERE kind='full' AND state='failed' AND json_extract(payload,'$.candidate')=?",(cid,)).fetchone()
-                if cid not in ranked and not attempted and self.status()['remaining_development_seconds']>0:
+                if cid not in ranked and not attempted and cid not in (self.get('skipped_full') or {}) and self.status()['remaining_development_seconds']>0:
                     raise AdmissionError('unresolved finalist must be evaluated before freeze')
             selected = ranked[0] if ranked else None
             self.set('selected', selected)

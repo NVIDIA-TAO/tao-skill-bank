@@ -1,0 +1,442 @@
+{
+  "schema": "wsp03-operation-reference/1",
+  "placeholder_rule": "Replace angle-bracket strings using data.list, context.read metadata and actual returned request/capture IDs. Examples use no private data. The32×128 head example must match pinned model config.",
+  "numeric_values": "Atomic numeric fields accept literal JSON arrays or {variable:name} referring to persistent numeric Python state; all tensors remain CPU.",
+  "operations": {
+    "status": {
+      "executor": "trusted_metadata",
+      "required": [],
+      "optional": [],
+      "example": {},
+      "details": {}
+    },
+    "data.list": {
+      "executor": "trusted_dev_metadata",
+      "required": [
+        "split"
+      ],
+      "optional": [
+        "offset",
+        "limit"
+      ],
+      "example": {
+        "split": "explore",
+        "offset": 0,
+        "limit": 32
+      },
+      "details": {}
+    },
+    "context.read": {
+      "executor": "trusted_context_allowlist",
+      "required": [],
+      "optional": [
+        "name",
+        "offset",
+        "limit"
+      ],
+      "example": {
+        "name": "model.config.json",
+        "offset": 0,
+        "limit": 4096
+      },
+      "details": {}
+    },
+    "reference.candidates": {
+      "executor": "trusted_dev_metadata",
+      "required": [
+        "query_id"
+      ],
+      "optional": [],
+      "example": {
+        "query_id": "<dev-query-id>"
+      },
+      "details": {}
+    },
+    "help": {
+      "executor": "trusted_metadata",
+      "required": [],
+      "optional": [
+        "operation"
+      ],
+      "example": {
+        "operation": "activation.patch"
+      },
+      "details": {}
+    },
+    "python": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "code"
+      ],
+      "optional": [],
+      "example": {
+        "code": "weight = load_tensor(\"<tensor-name>\")\nprint(weight.shape)"
+      },
+      "details": {
+        "capabilities": [
+          "load_tensor(name,candidate=base)",
+          "load_capture(request_id,record_id,key)",
+          "register_edit_family({...})",
+          "select_edit_configuration({family,configuration,name})",
+          "save_edit(name,tensor)",
+          "commit_candidate(id,hypothesis,method)",
+          "reset_candidate(parent=base)"
+        ],
+        "persistent": "CPU numeric variables persist between calls. No imports/files/network/GPU/autograd/optimizers. print previews only; full artifacts remain in trusted storage."
+      }
+    },
+    "tensor.read": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "name"
+      ],
+      "optional": [
+        "candidate",
+        "rows",
+        "columns"
+      ],
+      "example": {
+        "name": "<tensor-name>",
+        "rows": [
+          0,
+          1
+        ],
+        "columns": [
+          0,
+          1
+        ]
+      },
+      "details": {}
+    },
+    "activation.read": {
+      "executor": "dev_teacher_forced_worker",
+      "required": [
+        "records"
+      ],
+      "optional": [
+        "candidate",
+        "split",
+        "profile"
+      ],
+      "example": {
+        "candidate": "base",
+        "split": "explore",
+        "records": [
+          {
+            "query_id": "<dev-query-id>",
+            "references": [
+              "<eligible-dev-reference-id>"
+            ],
+            "capture": {
+              "points": [
+                {
+                  "module": "<decoder-layer-module>",
+                  "kind": "output",
+                  "positions": [
+                    "pre_label"
+                  ]
+                }
+              ],
+              "attention": [
+                {
+                  "module": "<attention-module>",
+                  "rows": [
+                    "pre_label"
+                  ],
+                  "heads": [
+                    0
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "details": {
+        "records": "1..32 {query_id,references:[dev IDs],capture:{points:[{module,kind:input|output,positions:[pre_label|answer_boundary|integer]}],attention:[{module,rows:[pre_label],heads:[integer]}]}}; candidate defaults base; canonical correct label is supplied by trusted renderer",
+        "numeric_access": "python load_capture(request_id,record_id,key) loads retained safetensors; returned metadata contains available keys",
+        "phase1": "Use empty capture for paired baseZS/reference canonical-class logprob attribution; reference.candidates gives frozen top8+2+2 eligible references"
+      }
+    },
+    "activation.patch": {
+      "executor": "dev_teacher_forced_worker",
+      "required": [
+        "records"
+      ],
+      "optional": [
+        "candidate",
+        "split",
+        "profile"
+      ],
+      "example": {
+        "candidate": "base",
+        "split": "explore",
+        "records": [
+          {
+            "query_id": "<same-dev-query-id>",
+            "references": [],
+            "capture": {
+              "patches": [
+                {
+                  "module": "<attention-output-projection>",
+                  "kind": "input",
+                  "positions": [
+                    "pre_label"
+                  ],
+                  "mode": "replace",
+                  "source": {
+                    "request_id": "<completed-read-request-id>",
+                    "record_id": "<record-id-returned-by-read>",
+                    "key": "<attention-output-projection>:input",
+                    "scale": 1
+                  },
+                  "head": {
+                    "count": 32,
+                    "dimension": 128,
+                    "index": 0
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "details": {
+        "records": "Same dev read record shape; capture.patches:[{module,kind:input|output,positions:[pre_label],mode:replace|add,source:{request_id,record_id,key,scale:1},head:{count,dimension,index}}]. head is optional and valid only at attention output-projection input; source must be a completed charged read on the same query/class. Inline values are also accepted for bounded synthetic/zero interventions. All replacement forwards debit read count. Generation forbids captures/patches.",
+        "phase2": "Use fixed64 diagnostic queries, their fixed nearestk1 source, layer sweep and top2 layer head sweep from frozen phase plan. Retained source reads are charged separately."
+      }
+    },
+    "reference.attribute": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "records"
+      ],
+      "optional": [],
+      "example": {
+        "records": [
+          {
+            "query_id": "<dev-query-id>",
+            "reference_id": "<eligible-dev-reference-id>",
+            "baseline_request": "<zero-shot-read-id>",
+            "reference_request": "<one-reference-read-id>"
+          }
+        ]
+      },
+      "details": {
+        "records": "{query_id,reference_id,baseline_request,reference_request}; both complete base reads must match canonical class, zero references versus exactly this eligible reference. Values are read from trusted receipts, never accepted from caller."
+      }
+    },
+    "edit.family": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "id",
+        "operation",
+        "mechanism",
+        "tensors",
+        "lineage",
+        "configurations"
+      ],
+      "optional": [],
+      "example": {
+        "id": "mechanism1",
+        "operation": "edit.direction",
+        "mechanism": "<measured mechanism>",
+        "tensors": [
+          "<tensor-name>"
+        ],
+        "lineage": [
+          "<actual read/capture IDs>"
+        ],
+        "configurations": [
+          {
+            "alpha": 0.25
+          },
+          {
+            "alpha": 0.5
+          },
+          {
+            "alpha": 1
+          }
+        ]
+      },
+      "details": {
+        "configurations": "At most5 tuples within frozen operation policy; family includes operation, mechanism, tensor names and read/capture lineage. Renaming cannot reset tuples. Commit consumes active configuration."
+      },
+      "lineage_contract": "Each lineage entry names an actual completed dev activation.read/patch request_id. The trusted service binds numeric log-prob and captured tensor content hashes. Renaming id/mechanism or equivalent read IDs cannot reset the five preregistered tuples."
+    },
+    "edit.direction": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "name",
+        "family",
+        "configuration",
+        "direction"
+      ],
+      "optional": [],
+      "example": {
+        "name": "<tensor-name>",
+        "family": "mechanism1",
+        "configuration": 0,
+        "direction": {
+          "variable": "direction"
+        }
+      },
+      "details": {}
+    },
+    "edit.rank1": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "name",
+        "family",
+        "configuration",
+        "left",
+        "right"
+      ],
+      "optional": [],
+      "example": {
+        "name": "<tensor-name>",
+        "family": "rank1family",
+        "configuration": 0,
+        "left": {
+          "variable": "left"
+        },
+        "right": {
+          "variable": "right"
+        }
+      },
+      "details": {}
+    },
+    "edit.memit": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "name",
+        "family",
+        "configuration",
+        "keys",
+        "delta_values",
+        "covariance",
+        "covariance_source"
+      ],
+      "optional": [],
+      "example": {
+        "name": "<tensor-name>",
+        "family": "algebraicfamily",
+        "configuration": 0,
+        "keys": {
+          "variable": "keys"
+        },
+        "delta_values": {
+          "variable": "delta_values"
+        },
+        "covariance": {
+          "variable": "preservation_covariance"
+        },
+        "covariance_source": "<actual dev read lineage>"
+      },
+      "details": {
+        "keys": "in_features×rank source keys",
+        "delta_values": "out_features×rank desired value change, not absolute targets",
+        "covariance": "development preservation covariance matrix or diagonal; ridge1e-4×mean diagonal. This operation requires algebraic/mixed method tagging."
+      }
+    },
+    "edit.head_scale": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "name",
+        "family",
+        "configuration",
+        "axis",
+        "indices"
+      ],
+      "optional": [],
+      "example": {
+        "name": "<attention-output-projection-weight>",
+        "family": "headfamily",
+        "configuration": 0,
+        "axis": 1,
+        "indices": [
+          0,
+          1
+        ]
+      },
+      "details": {}
+    },
+    "edit.commit": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "id",
+        "hypothesis",
+        "method"
+      ],
+      "optional": [],
+      "example": {
+        "id": "candidate1",
+        "hypothesis": "<prespecified mechanism>",
+        "method": "strict_wsp"
+      },
+      "details": {}
+    },
+    "edit.replay": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "candidate"
+      ],
+      "optional": [],
+      "example": {
+        "candidate": "candidate1"
+      },
+      "details": {}
+    },
+    "edit.revert": {
+      "executor": "isolated_cpu_kernel",
+      "required": [],
+      "optional": [
+        "parent"
+      ],
+      "example": {},
+      "details": {}
+    },
+    "eval.dev": {
+      "executor": "trusted_generation_and_grader",
+      "required": [
+        "candidate",
+        "ids"
+      ],
+      "optional": [
+        "references",
+        "split",
+        "profile"
+      ],
+      "example": {
+        "candidate": "<R3-candidate-or-R4-profile>",
+        "split": "explore",
+        "profile": "P00",
+        "ids": [
+          "<all512 IDs in frozen order>"
+        ]
+      },
+      "details": {
+        "candidate": "R3 validated patch ID with profileP00 only; R4 candidate must equal one frozen P00..P11 profile and cannot alter weights. ids must cover exact ordered512 explore membership. Single attempt per profile/candidate; no caller reference override."
+      }
+    },
+    "export.checkpoint": {
+      "executor": "isolated_cpu_kernel",
+      "required": [
+        "candidate"
+      ],
+      "optional": [],
+      "example": {
+        "candidate": "candidate1"
+      },
+      "details": {}
+    }
+  },
+  "workflow": [
+    "Read frozen phase-plan via context.read. Phase0 five baselines run by trusted scheduler.",
+    "Phase1: batch up to32 condition records; each query receives ZS and the frozen reference.candidates conditions. Bind pairs with reference.attribute.",
+    "Phase2: fixed64 query IDs from phase-plan; capture sourcek1 and ZS. Run charged source-based restoration for every frozen layer, then all heads in the top2 measured layers. status reports completion and top_layers.",
+    "Only after required phase1/2 evidence may registered edit families save/commit candidates. R3 eval.dev uses P00.",
+    "R4 weights are immutable; candidate equals P00..P11 profile; P00 reuses exact frozenR3 results where identity matches.",
+    "Reply with terminal freeze; trusted shortlist/full-dev/freeze follows. No final data access is exposed as an editor tool."
+  ]
+}

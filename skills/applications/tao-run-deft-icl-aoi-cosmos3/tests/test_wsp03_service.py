@@ -23,7 +23,7 @@ class ServiceTests(unittest.TestCase):
             return row
         def worker(kind,rows,candidate,split,rid):
             self.calls.append((kind,split))
-            return {'complete':True,'ids':[r['id'] for r in rows],'requests_sha256':digest(rows)}
+            return {'complete':True,'ids':[r['id'] for r in rows],'requests_sha256':digest(rows),'raw':[dict(r,rendered_prompt='private full prompt',prompt_token_ids=[1,2]) for r in rows]}
         self.service=Service(ledger=self.ledger,contract=self.contract,kernel=None,request_factory=render,worker=worker,grader=lambda result,split:{'complete':True,'n':1,'mcc':.2,'macro_f1':.3,'invalid':0},edit_root=self.root,approval={'scientific_launch_approved':True,'contract_sha256':digest(self.contract)})
     def tearDown(self):self.ledger.close();self.temp.cleanup()
     def test_gate_split_reference_and_trusted_operations(self):
@@ -35,7 +35,8 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaises(AdmissionError):self.service.dispatch('freeze',{})
         self.assertEqual(self.calls,[])
     def test_read_exposure_debits_and_restart_cannot_reset(self):
-        self.service.dispatch('read',{'ids':['d'],'references':{'d':['r']},'capture':{'patches':[]}})
+        reply=self.service.dispatch('read',{'ids':['d'],'references':{'d':['r']},'capture':{'patches':[]}})
+        self.assertNotIn('rendered_prompt',reply['records'][0]);self.assertNotIn('prompt_token_ids',reply['records'][0])
         self.assertEqual(self.ledger.status()['used']['read'],1)
         self.ledger.close()
         self.ledger=Ledger(self.root/'ledger.db',track='R3',caps={'probe':2,'baseline':5,'explore':88,'full':3,'trusted':2,'read':512,'python':500,'candidate':98},full_size=2,explore_size=1)
@@ -50,3 +51,8 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.ledger.freeze(),'c')
         self.service.forward('trusted',{'ids':['h'],'split':'holdout','candidate':'c'},trusted=True)
         with self.assertRaises(AdmissionError):self.service.forward('trusted',{'ids':['h'],'split':'holdout','candidate':'c'},trusted=True)
+
+    def test_generation_reordering_is_rejected_before_admission(self):
+        self.contract['splits']['explore']=['d','r'];self.service.members['explore']={'d','r'}
+        with self.assertRaisesRegex(ValueError,'ordered'):self.service.forward('baseline',{'candidate':'base','profile':'P00','split':'explore','ids':['r','d']},trusted=True)
+        self.assertEqual(self.calls,[]);self.assertEqual(self.ledger.status()['used'].get('baseline',0),0)

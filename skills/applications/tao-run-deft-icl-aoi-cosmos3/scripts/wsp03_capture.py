@@ -68,6 +68,8 @@ class ActivationCapture:
         return value
 
     def keep(self, key, value, metadata):
+        import torch
+        if not bool(torch.isfinite(value).all()):raise ValueError("actual activation is nonfinite; stop before numeric editing")
         amount = value.numel() * 4
         if self.bytes + amount > self.max_bytes:
             raise ValueError('capture storage bound exceeded; no silent truncation')

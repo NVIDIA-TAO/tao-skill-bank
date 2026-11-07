@@ -25,8 +25,8 @@ APP=Path(__file__).resolve().parents[1]
 PYTHON='/workspace/.venv/bin/python'
 
 
-def gated_job(runtime, lease, stage, command, mounts, *, deadline, env=(), on_admit=None):
-    wrapper='while [ ! -f /results/lease-authorized ]; do sleep 0.05; done; exec '+shlex.join([PYTHON,*command])
+def gated_job(runtime, lease, stage, command, mounts, *, deadline, env=(), on_admit=None, python=PYTHON):
+    wrapper='while [ ! -f /results/lease-authorized ]; do sleep 0.05; done; exec '+shlex.join([python,*command])
     admitted={};pid=None
     def opened(job_id):
         record=json.loads(runtime.record('show',job_id))
@@ -34,7 +34,7 @@ def gated_job(runtime, lease, stage, command, mounts, *, deadline, env=(), on_ad
         if on_admit:on_admit(dict(admitted))
     try:
         job=runtime.submit(stage,['-c',wrapper],gpu=True,mounts=mounts,env=env,entrypoint='/bin/sh',on_open=opened,
-            extra_args=['--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=2g','--memory','128g','--pids-limit','512'])
+            extra_args=['--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=2g','--memory','64g','--pids-limit','512'])
         native=runtime.status(job['job_id'])
         pid=native.get('native',{}).get('Pid',0)
         if not pid:raise RuntimeError('native GPU worker PID unavailable before gate')
@@ -76,17 +76,22 @@ def validate_probe_inputs(requests, view, expected_ids_sha256):
     return needed
 
 
-def validate_worker_output(directory, requests, *, mode='generation', split='probe'):
+def validate_worker_output(directory, requests, *, mode='generation', split='probe', candidate_manifest_sha256=None, artifact_owner=None):
     directory=Path(directory)
-    rows=[json.loads(line) for line in (directory/'raw_answers.jsonl').read_text().splitlines()]
-    completion=json.loads((directory/'completion.json').read_text())
-    profile=json.loads((directory/'runtime_profile.json').read_text())
+    if artifact_owner is None:
+        rows=[json.loads(line) for line in (directory/'raw_answers.jsonl').read_text().splitlines()]
+        completion=json.loads((directory/'completion.json').read_text());profile=json.loads((directory/'runtime_profile.json').read_text())
+    else:
+        from wsp03_artifacts import child_bytes,child_json
+        rows=[json.loads(line) for line in child_bytes(directory.parent,directory.name+'/raw_answers.jsonl',owner=artifact_owner,max_bytes=512*1024**2).decode().splitlines()]
+        completion=child_json(directory.parent,directory.name+'/completion.json',owner=artifact_owner)
+        profile=child_json(directory.parent,directory.name+'/runtime_profile.json',owner=artifact_owner)
     if [r['id'] for r in rows]!=[r['id'] for r in requests]:raise ValueError('worker output lacks exact ordered full membership')
     for row,request in zip(rows,requests):
         if row.get('completed') is not True or row.get('request_sha256')!=digest(request) or row.get('mode')!=mode:raise ValueError('worker answer identity/completion mismatch')
     if completion.get('status')!='complete' or completion.get('n')!=len(requests) or completion.get('requests_sha256')!=digest(requests) or completion.get('mode')!=mode or completion.get('split')!=split:raise ValueError('worker completion receipt mismatch')
     expected={'mode':mode,'split':split,'batch_size':1,'requests_sha256':digest(requests),'generation_hooks':False,
-        'candidate_manifest_sha256':None,'seed':42,'dtype':'bfloat16','attention':'sdpa','do_sample':False,'max_new_tokens':4096,'query_seconds':180}
+        'candidate_manifest_sha256':candidate_manifest_sha256,'seed':42,'dtype':'bfloat16','attention':'sdpa','do_sample':False,'max_new_tokens':4096,'query_seconds':180}
     if any(profile.get(k)!=v for k,v in expected.items()):raise ValueError('worker runtime profile mismatch')
     return rows
 
@@ -179,27 +184,126 @@ def probe(*, model, zs_requests, icl_requests, input_view, output, image, lease_
     return receipt
 
 
+def grant_private_readonly(path, *, group, receipt):
+    """Grant one dedicated group access to an explicitly staged private tree.
+
+    Refuses symlinks/hardlinked files. Hashes before/after bind unchanged bytes;
+    callers must choose their staged copy, never a source dataset/model tree.
+    """
+    import os
+    from wsp03_bindings import file_hash
+    path=Path(path).resolve(strict=True);items=[path,*sorted(path.rglob('*'))]
+    if path==Path('/') or any(p.is_symlink() or p.is_file() and p.stat().st_nlink!=1 for p in items):raise ValueError('private independent regular tree required')
+    before={str(p.relative_to(path)):{'uid':p.stat().st_uid,'gid':p.stat().st_gid,'mode':p.stat().st_mode&0o7777,'sha256':file_hash(p) if p.is_file() else None} for p in items}
+    for p in items:
+        subprocess.run(['sudo','-n','chgrp',str(group),str(p)],check=True)
+        subprocess.run(['sudo','-n','chmod','0750' if p.is_dir() else '0440',str(p)],check=True)
+    after={str(p.relative_to(path)):{'uid':p.stat().st_uid,'gid':p.stat().st_gid,'mode':p.stat().st_mode&0o7777,'sha256':file_hash(p) if p.is_file() else None} for p in items}
+    if any(before[n]['sha256']!=after[n]['sha256'] or before[n]['uid']!=after[n]['uid'] for n in before):raise ValueError('read grant changed bytes/owner')
+    record={'path':str(path),'group':group,'before':before,'after':after,'unchanged_bytes':True}
+    json_write(receipt,record);return record
+
+
+class DedicatedDocker(Docker):
+    """Native jobs run under a real host tool UID, distinct from the supervisor.
+
+    Only freshly allocated result directories and explicit writable tool mounts
+    receive ownership. The supervisor CODEX_HOME/ledger must never be mounted.
+    """
+    def __init__(self, root, image, *, uid, gid, gpus='device=0', resources=None,resource_account='default'):
+        import os
+        if type(uid) is not int or uid in (0,os.getuid()) or type(gid) is not int or gid<1:
+            raise ValueError('dedicated nonroot host tool UID must differ from supervisor')
+        import threading
+        self.uid=uid;self.gid=gid;self.resources=resources;self.resource_account=resource_account
+        self.job_locks={};self.job_locks_guard=threading.Lock()
+        super().__init__(root,image,gpus=gpus)
+    def prepare_writable(self,path):
+        import os
+        path=Path(path)
+        if path.is_symlink() or not path.is_dir():raise ValueError('tool writable mount must be real directory')
+        subprocess.run(['sudo','-n','chown',str(self.uid)+':'+str(os.getgid()),str(path)],check=True)
+        subprocess.run(['sudo','-n','chmod','2770',str(path)],check=True)
+    def submit(self,stage,command,**kwargs):
+        if self.resources:self.resources.check()
+        for host,target,readonly in kwargs.get('mounts',()):
+            if not readonly:self.prepare_writable(host)
+        prior=kwargs.pop('on_open',None)
+        def opened(job_id):
+            record=json.loads(self.record('show',job_id));directory=Path(record['results_dir']);directory.mkdir(parents=True,exist_ok=True)
+            self.prepare_writable(directory)
+            if self.resources:self.resources.register_job(job_id,lambda:self.cancel(job_id))
+            if prior:prior(job_id)
+        extra=list(kwargs.pop('extra_args',()))
+        if self.resources:extra+=['--cgroup-parent',self.resources.slice]
+        if any(x=='--user' or str(x).startswith('--user=') for x in extra):raise ValueError('tool UID override forbidden')
+        return super().submit(stage,command,on_open=opened,extra_args=[*extra,'--user',str(self.uid)+':'+str(self.gid)],**kwargs)
+
+
+    def job_lock(self,job):
+        import threading
+        with self.job_locks_guard:return self.job_locks.setdefault(job,threading.RLock())
+    def status(self,job):
+        with self.job_lock(job):
+            value=super().status(job)
+            if self.resources and value['state'] in ('COMPLETE','ERROR','CANCELED'):self.resources.unregister_job(job)
+            return value
+    def cancel(self,job):
+        with self.job_lock(job):
+            record=json.loads(self.record('show',job))
+            if record['terminal_state'] not in ('COMPLETE','ERROR','CANCELED'):
+                if self.resources:self.resources.note_cancel_request()
+                super().cancel(job)
+            # A failed stop remains registered for cleanup; never lose ownership.
+            if self.resources:self.resources.unregister_job(job)
+    def wait(self,job,deadline,heartbeat=None):
+        def guarded(state):
+            if self.resources and self.resources.error:raise RuntimeError(self.resources.error)
+            if heartbeat:heartbeat(state)
+        return super().wait(job,deadline,heartbeat=guarded)
+
+
 class IsolatedKernel:
-    def __init__(self, *, runtime, base, output, exchange, access_policy=None):
+    def __init__(self, *, runtime, base, output, exchange, access_policy=None, editing_policy=None, captures=None):
         self.runtime=runtime;self.output=Path(output).resolve();self.exchange=Path(exchange).resolve()
         self.output.mkdir(parents=True,exist_ok=True);self.exchange.mkdir(parents=True,exist_ok=True)
         runtime.root.mkdir(parents=True,exist_ok=True)
         canary=runtime.root/('host-denial-canary-'+uuid.uuid4().hex)
         canary.write_text('synthetic host namespace canary; not a credential')
-        extra_mounts=[(access_policy,'/access-policy.json',True)] if access_policy else []
-        extra_command=['--access-policy','/access-policy.json'] if access_policy else []
+        policy_dir=runtime.root/('kernel-policy-'+uuid.uuid4().hex);policy_dir.mkdir(mode=0o700)
+        def stage_policy(path,name):
+            source=Path(path)
+            if source.is_symlink():raise ValueError('policy symlink forbidden')
+            target=policy_dir/name;target.write_bytes(source.read_bytes());target.chmod(0o444);return target
+        if access_policy:access_policy=stage_policy(access_policy,'access-policy.json')
+        if editing_policy:editing_policy=stage_policy(editing_policy,'editing-policy.json')
+        self.captures=Path(captures) if captures else runtime.root/'captures'
+        self.captures.mkdir(parents=True,exist_ok=True,mode=0o750)
+        if isinstance(runtime,DedicatedDocker):subprocess.run(['sudo','-n','chgrp',str(runtime.gid),str(self.captures)],check=True)
+        extra_mounts=[(self.captures,'/captures',True)]
+        if access_policy:extra_mounts.append((access_policy,'/access-policy.json',True))
+        extra_command=['--captures','/captures']
+        if access_policy:extra_command+=['--access-policy','/access-policy.json']
+        if editing_policy:
+            extra_mounts.append((editing_policy,'/editing-policy.json',True));extra_command+=['--editing-policy','/editing-policy.json']
         self.job=runtime.submit('wsp03-cpu-kernel',['/app/scripts/wsp03_kernel_server.py','--base','/model','--output','/edits','--exchange','/exchange',*extra_command],
             gpu=False,mounts=[(APP,'/app',True),(base,'/model',True),(self.output,'/edits',False),(self.exchange,'/exchange',False),*extra_mounts],
-            env=[('NVIDIA_VISIBLE_DEVICES','void'),('WSP_HOST_CANARY',str(canary))],extra_args=['--runtime','runc','--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=1g','--memory','64g','--cpus','8','--pids-limit','128'])
+            env=[('NVIDIA_VISIBLE_DEVICES','void'),('WSP_HOST_CANARY',str(canary))],extra_args=['--runtime','runc','--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=1g','--memory','48g','--cpus','8','--pids-limit','128'])
     def call(self, request, timeout=660):
         identity=uuid.uuid4().hex;input_file=self.exchange/(identity+'.request.json');response=self.exchange/(identity+'.response.json')
-        json_write(input_file,request);deadline=time.monotonic()+timeout
+        # Stage privately until the dedicated child group can read it; publish last.
+        staged=self.exchange/(identity+'.pending.json')
+        json_write(staged,request,mode=0o640)
+        if isinstance(self.runtime,DedicatedDocker):
+            subprocess.run(['sudo','-n','chgrp',str(self.runtime.gid),str(staged)],check=True)
+        os.replace(staged,input_file);deadline=time.monotonic()+timeout
         while not response.exists():
             if time.monotonic()>deadline:raise TimeoutError('kernel request uncertain; preserve admitted identity and reconcile')
             status=self.runtime.status(self.job['job_id'])
             if status['state'] not in ('RUNNING','PENDING'):raise RuntimeError('kernel stopped; namespace lost, ledger remains durable')
             time.sleep(.2)
-        return json.loads(response.read_text())
+        from wsp03_artifacts import child_json
+        return child_json(self.exchange,response.name,owner=getattr(self.runtime,'uid',os.getuid()))
     def close(self):
         if self.runtime.status(self.job['job_id'])['state'] in ('RUNNING','PENDING'):self.runtime.cancel(self.job['job_id'])
 

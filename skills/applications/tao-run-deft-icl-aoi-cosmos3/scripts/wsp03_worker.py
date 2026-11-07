@@ -13,7 +13,12 @@ from pathlib import Path
 import signal
 import re
 import time
-from wsp03_io import json_write
+from wsp03_io import json_write as private_json_write
+
+
+def json_write(path,value):
+    return private_json_write(path,value,mode=0o640)
+
 from wsp03_resources import append_event, cpu_memory
 
 
@@ -151,7 +156,7 @@ def run(model_path, requests_path, output_dir, *, mode='generation', split='prob
         if mode=='read' and prompt_length>8192:raise ValueError('read prompt exceeds8192 tokens')
         inputs=inputs.to('cuda');torch.cuda.synchronize();torch.cuda.reset_peak_memory_stats()
         before_allocated=torch.cuda.memory_allocated();before_reserved=torch.cuda.memory_reserved()
-        started=time.time();tick=time.monotonic();base={'id':request['id'],'request_sha256':digest(request),'started_at_unix':started}
+        started=time.time();tick=time.monotonic();base={'id':request['id'],'query_id':request.get('query_id',request['id']),'request_sha256':digest(request),'started_at_unix':started}
         append_event(output/'attempts.jsonl',dict(base,status='running'))
         old_alarm=signal.signal(signal.SIGALRM,lambda *_:(_ for _ in ()).throw(TimeoutError('query deadline')))
         signal.alarm(query_seconds)
@@ -176,6 +181,20 @@ def run(model_path, requests_path, output_dir, *, mode='generation', split='prob
                             if not class_positions:raise ValueError('pre_label requires a canonical class continuation')
                             return prompt_length+class_positions[0]-1
                         return value
+                    for item in spec.get('patches',[]):
+                        source=item.pop('source_capture',None)
+                        if source:
+                            from safetensors import safe_open
+                            path=Path('/captures')/source['request_id']/source['file']
+                            if path.is_symlink() or not path.resolve(strict=True).is_relative_to('/captures'):raise ValueError('patch source escaped capture view')
+                            with safe_open(path,framework='pt',device='cpu') as capture_file:value=capture_file.get_tensor(source['key'])
+                            if value.ndim!=3 or value.shape[0]!=1:raise ValueError('patch source must be batch-one captured feature vectors')
+                            value=value[0]
+                            if item.get('head'):
+                                h=item['head'];value=value[:,h['index']*h['dimension']:(h['index']+1)*h['dimension']]
+                            value=value*source.get('scale',1)
+                            if not bool(torch.isfinite(value).all()):raise ValueError('nonfinite source patch')
+                            item['values']=value.tolist()
                     for item in spec.get('points',[])+spec.get('patches',[]):
                         item['positions']=[position(p) for p in item['positions']]
                     for item in spec.get('attention',[]):

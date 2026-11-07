@@ -68,13 +68,14 @@ def whole_tensor_scaling(base, edited):
 
 
 class TensorStore:
-    def __init__(self, base, output, *, max_tensors=32, max_elements=2000000000, storage_limit=250*1024**3, max_candidate_attempts=98):
+    def __init__(self, base, output, *, max_tensors=32, max_elements=2000000000, storage_limit=250*1024**3, max_candidate_attempts=98, capture_root=None):
         from safetensors import safe_open
         self.base, self.output = Path(base).resolve(strict=True), Path(output).resolve(strict=False)
         if self.output.is_relative_to(self.base):
             raise ValueError('edits must be outside immutable base')
         self.output.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.max_tensors, self.max_elements, self.storage_limit = max_tensors, max_elements, storage_limit
+        self.capture_root=Path(capture_root).resolve(strict=True) if capture_root else self.output/"reads"
         self.staged = {}
         self.max_candidate_attempts=max_candidate_attempts
         self.attempts_file=self.output/'candidate-attempts.jsonl'
@@ -114,6 +115,20 @@ class TensorStore:
                      'shape': list(value.shape), 'dtype': str(value.dtype), 'sha256': digest_tensor(value), 'time': time.time()})
         return value
 
+    def load_capture(self, request_id, record_id, key):
+        from safetensors import safe_open
+        if not re.fullmatch(r'[a-f0-9]{32}',request_id):raise ValueError('invalid trusted read identity')
+        directory=(self.capture_root/request_id).resolve(strict=True)
+        if not directory.is_relative_to(self.capture_root):raise ValueError('capture path escape')
+        manifest=json.loads((directory/'manifest.json').read_text());item=manifest['records'][record_id]
+        path=(directory/item['file']).resolve(strict=True)
+        if path.parent!=directory:raise ValueError('capture artifact path escape')
+        from wsp03_bindings import file_hash
+        if file_hash(path)!=item['sha256']:raise ValueError('capture artifact changed')
+        with safe_open(path,framework='pt',device='cpu') as file:value=file.get_tensor(key).clone()
+        append_event(self.output/'reads.jsonl',{'kind':'activation_value_read','request_id':request_id,'record_id':record_id,'key':key,'shape':list(value.shape),'dtype':str(value.dtype),'time':time.time()})
+        return value
+
     def save_edit(self, name, tensor):
         import torch
         if name not in self.index or protected_name(name):
@@ -148,6 +163,7 @@ class TensorStore:
         return json.loads(path.read_text())
 
     def reset(self, parent='base'):
+        self.edit_configuration=None;self.allowed_family_tensors=[]
         self.staged = {}
         if parent != 'base':
             for item in self.manifest(parent)['tensors']:
@@ -160,6 +176,9 @@ class TensorStore:
         if attempts>=self.max_candidate_attempts:raise ValueError('candidate attempt budget exhausted')
         append_event(self.attempts_file,{'attempt':attempts+1,'candidate':candidate,'time':time.time(),'hypothesis':hypothesis,'method':method})
         if method=='algebraic_closed_form':method='gradient_free_algebraic'
+        if getattr(self,'enforce_family',False):
+            if not getattr(self,'edit_configuration',None) or not set(self.staged)<=set(self.allowed_family_tensors):raise ValueError('registered family/configuration required for every commit')
+            if getattr(self,'requires_algebraic',False) and method=='strict_wsp':raise ValueError('observed algebraic fitting cannot be labelled strict_wsp')
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}', candidate) or candidate == 'base':
             raise ValueError('unsafe candidate ID')
         if not hypothesis or method not in ('strict_wsp', 'gradient_free_algebraic', 'mixed') or not self.staged:
@@ -171,7 +190,7 @@ class TensorStore:
         used = sum(p.stat().st_size for p in self.output.rglob('*') if p.is_file())
         if used + needed > self.storage_limit:
             raise ValueError('retained storage budget')
-        dst.mkdir(mode=0o700)
+        dst.mkdir(mode=0o750)
         records = []
         for i, (name, value) in enumerate(sorted(self.staged.items())):
             base = self.load_tensor(name)
@@ -188,11 +207,12 @@ class TensorStore:
                 'delta_linf': delta.abs().max().item(), 'relative_delta_l2': l2/bn if bn else None})
         manifest = {'schema': 'wsp03-edit/1', 'id': candidate, 'hypothesis': hypothesis, 'method': method,
                     'valid': True, 'tensors': records, 'changed_elements': sum(x['changed_elements'] for x in records),
-                    'changed_tensors': len(records), 'replay': 'replace named tensors from immutable base; all unnamed tensors unchanged',
+                    'changed_tensors': len(records), 'edit_configuration':getattr(self,'edit_configuration',None), 'replay': 'replace named tensors from immutable base; all unnamed tensors unchanged',
                     'source_cells_sha256': hashlib.sha256((self.output / 'cells-started.jsonl').read_bytes()).hexdigest() if (self.output / 'cells-started.jsonl').exists() else None}
         json_write(dst / 'manifest.json', manifest)
-        for p in dst.iterdir(): p.chmod(0o400)
+        for p in dst.iterdir(): p.chmod(0o440)
         self.staged = {}
+        self.edit_configuration=None;self.allowed_family_tensors=[]
         return manifest
 
     def verify(self, candidate):
@@ -230,12 +250,15 @@ class LimitedBuffer(io.StringIO):
 
 
 class Kernel:
-    def __init__(self, store, *, max_runs=500, cell_seconds=600):
+    def __init__(self, store, *, max_runs=500, cell_seconds=600, operations=None):
         import torch
         import numpy as np
         self.store, self.max_runs, self.cell_seconds = store, max_runs, cell_seconds
+        from wsp03_ops import Operations
+        self.operations=operations or Operations(store)
         self.executions = 0
         self.namespace = {}
+        self.operations.namespace=self.namespace
         names = {'tensor', 'as_tensor', 'zeros', 'zeros_like', 'ones', 'ones_like', 'eye', 'arange', 'stack', 'cat', 'mean',
                  'sum', 'sqrt', 'abs', 'clamp', 'where', 'outer', 'matmul', 'einsum', 'isfinite', 'float32', 'float64', 'bfloat16',
                  'int64', 'sort', 'argsort', 'topk', 'diag', 'sign', 'maximum', 'minimum'}
@@ -244,8 +267,8 @@ class Kernel:
         numpy_allowed = {n: True for n in ['array', 'asarray', 'zeros', 'ones', 'eye', 'arange', 'stack', 'concatenate', 'mean', 'sum', 'sqrt', 'abs', 'outer', 'matmul', 'einsum', 'isfinite', 'float32', 'float64', 'diag']}
         numpy_allowed['linalg'] = {'svd', 'qr', 'eigh', 'norm', 'solve', 'lstsq', 'pinv'}
         self.capabilities = {'torch': Facade(torch, torch_allowed), 'np': Facade(np, numpy_allowed),
-            'load_tensor': store.load_tensor, 'save_edit': store.save_edit, 'commit_candidate': store.commit_candidate,
-            'reset_candidate': store.reset}
+            'load_tensor': store.load_tensor, 'load_capture':store.load_capture, 'save_edit': store.save_edit, 'commit_candidate': store.commit_candidate,
+            'reset_candidate': store.reset, 'register_edit_family':self.operations.family, 'select_edit_configuration':self.operations.config}
 
     def execute(self, code):
         import torch
@@ -254,7 +277,7 @@ class Kernel:
         tree = ast.parse(code)
         denied = {'open', 'eval', 'exec', 'compile', 'getattr', 'setattr', 'globals', 'locals', 'vars', 'input',
                   'backward', 'autograd', 'optim', 'requires_grad_', 'grad', 'cuda', 'device', 'storage', 'untyped_storage',
-                  'ctypes', 'data', 'load', 'save', 'from_file', 'as_subclass', 'set_', 'resize_', 'manual_seed', 'random'}
+                  'ctypes', 'data', 'load', 'save', 'tofile', 'dump', 'write', 'write_bytes', 'write_text', 'from_file', 'as_subclass', 'set_', 'resize_', 'manual_seed', 'random'}
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda,
                                  ast.While, ast.With, ast.AsyncWith, ast.Global, ast.Nonlocal)):
@@ -265,6 +288,7 @@ class Kernel:
                 raise ValueError('forbidden name')
             if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)) and node.id in self.capabilities:
                 raise ValueError('cannot replace capability')
+        if any(isinstance(n,ast.Attribute) and n.attr in ('lstsq','pinv','solve','inverse','pinverse','cholesky_inverse','triangular_solve','lu_solve','cholesky_solve','solve_triangular','lu_factor','lu','inv') for n in ast.walk(tree)):self.store.requires_algebraic=True
         self.executions += 1
         stdout, stderr = LimitedBuffer(), LimitedBuffer()
         namespace = dict(self.capabilities, **self.namespace)

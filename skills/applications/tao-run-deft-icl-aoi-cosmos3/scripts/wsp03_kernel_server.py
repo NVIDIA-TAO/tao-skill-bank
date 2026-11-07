@@ -7,7 +7,12 @@ import os
 from pathlib import Path
 import socket
 import time
-from wsp03_io import json_write
+from wsp03_io import json_write as private_json_write
+
+
+def json_write(path,value):
+    # This mailbox is an explicit UID boundary. Journals remain private0600.
+    return private_json_write(path,value,mode=0o640)
 from wsp03_kernel import Kernel,TensorStore
 from wsp03_ops import Operations
 
@@ -15,7 +20,7 @@ from wsp03_ops import Operations
 def isolation_probe():
     import torch
     checks={'gpu_unavailable':not torch.cuda.is_available(),'docker_socket_absent':not Path('/var/run/docker.sock').exists(),
-        'host_canary_denied':bool(os.environ.get('WSP_HOST_CANARY')) and not Path(os.environ['WSP_HOST_CANARY']).exists(),'credentials_absent':not any(k in os.environ for k in ('OPENAI_API_KEY','NVIDIA_API_KEY','AWS_SECRET_ACCESS_KEY'))}
+        'host_canary_denied':bool(os.environ.get('WSP_HOST_CANARY')) and not os.path.exists(os.environ['WSP_HOST_CANARY']),'credentials_absent':not any(k in os.environ for k in ('OPENAI_API_KEY','NVIDIA_API_KEY','AWS_SECRET_ACCESS_KEY'))}
     try:
         socket.create_connection(('1.1.1.1',443),timeout=.3).close();checks['network_denied']=False
     except OSError:checks['network_denied']=True
@@ -28,8 +33,8 @@ def isolation_probe():
 def main():
     p=argparse.ArgumentParser()
     for n in ('base','output','exchange'):p.add_argument('--'+n,required=True)
-    p.add_argument('--access-policy')
-    a=p.parse_args();store=TensorStore(a.base,a.output);kernel=Kernel(store);operations=Operations(store);exchange=Path(a.exchange)
+    p.add_argument('--access-policy');p.add_argument('--editing-policy');p.add_argument('--captures')
+    a=p.parse_args();store=TensorStore(a.base,a.output,capture_root=a.captures);operations=Operations(store,json.loads(Path(a.editing_policy).read_text()) if a.editing_policy else None);kernel=Kernel(store,operations=operations);exchange=Path(a.exchange)
     proof=isolation_probe()
     if a.access_policy:
         from wsp03_access_probe import probe
@@ -48,7 +53,17 @@ def main():
                 request=json.loads(path.read_text())
                 if request['op']=='python':value=kernel.execute(request['code'])
                 elif request['op']=='verify':value=store.verify(request['candidate'])
-                elif request['op']=='atomic':value=operations.call(request['operation'],request['parameters'])
+                elif request['op']=='atomic':
+                    operations.namespace=kernel.namespace
+                    value=operations.call(request['operation'],request['parameters'])
+                elif request['op']=='evidence':
+                    mapping=request['lineage']
+                    if not isinstance(mapping,dict) or any(not isinstance(k,str) or not isinstance(v,list) or not v or any(not isinstance(h,str) or len(h)!=64 for h in v) for k,v in mapping.items()):raise ValueError('trusted evidence identity map required')
+                    operations.trusted_lineage=mapping;value={'bound_reads':len(mapping)}
+                elif request['op']=='limits':
+                    amount=request['storage_bytes'];seconds=request['cell_seconds']
+                    if type(amount)is not int or not 0<amount<=250*1024**3 or type(seconds)is not int or not 1<=seconds<=600:raise ValueError('invalid trusted kernel limits')
+                    store.storage_limit=amount;kernel.cell_seconds=seconds;value={'storage_bytes':amount,'cell_seconds':seconds}
                 elif request['op']=='status':value={'executions':kernel.executions,'isolation':proof}
                 else:raise ValueError('unknown kernel operation')
                 result={'ok':True,'result':value}
