@@ -8,7 +8,7 @@ monitor uses native session token_count logs and nvidia-smi every10seconds;
 these are best-effort observations, not tamper-proof admission or accounting.
 """
 from __future__ import annotations
-import argparse,json,os,shlex,subprocess,time
+import argparse,hashlib,json,os,shlex,subprocess,time
 from pathlib import Path
 from suite_runtime import Docker,BANK
 
@@ -83,34 +83,76 @@ def usage(home):
     return {'measurement':'native session token_count self-report; mutable; best-effort','total_tokens':sum(value['total_tokens'] for value in sessions.values()) if sessions else None,'sessions':sessions,'malformed_lines':malformed,'inflight_usage':'unknown until native usage event'}
 
 
-def monitor(run_file):
+def budget_policy(cfg,job_id,override_file=None):
+    target=cfg.get('token_target',5000000);source={'kind':'run_config'}
+    override_file=override_file or cfg.get('budget_override_file')
+    if override_file:
+        path=Path(override_file);raw=path.read_bytes();value=json.loads(raw)
+        allowed={'job_id','token_target','reason','effective_at','observed_tokens_at_change'}
+        if not isinstance(value,dict) or set(value)-allowed or not {'job_id','token_target','reason'}<=set(value):
+            raise ValueError('budget override permits only token_target and change metadata')
+        if value['job_id']!=job_id or not isinstance(value['reason'],str) or not value['reason'].strip():
+            raise ValueError('budget override must name this exact job and a reason')
+        if 'observed_tokens_at_change' in value and (type(value['observed_tokens_at_change']) is not int or value['observed_tokens_at_change']<0):
+            raise ValueError('observed change usage must be a nonnegative cumulative token count')
+        target=value['token_target'];source={'kind':'live_override','path':str(path.resolve()),'sha256':hashlib.sha256(raw).hexdigest(),**value}
+    if target is not None and (type(target) is not int or target<=0):raise ValueError('token_target must be positive integer or explicit null')
+    return {'token_target':target,'unlimited_tokens':target is None,'wall_hours':cfg.get('wall_hours',24),'source':source}
+
+
+def token_limit_reached(total,policy):
+    return total is not None and policy['token_target'] is not None and total>=policy['token_target']
+
+
+def policy_event(path,policy,total,now):
+    events=[json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+    if not events or events[-1]['policy']!=policy:
+        boundary=policy['source'].get('observed_tokens_at_change',total)
+        value={'observed_at':now,'cumulative_tokens_at_change':boundary,'observed_cumulative_tokens':total,'policy':policy,
+               'accounting':'native self-report; boundary observed at polling or explicitly recorded by owner'}
+        with path.open('a') as stream:stream.write(json.dumps(value)+'\n')
+        events.append(value)
+    return events
+
+
+def monitor(run_file,budget_override=None):
     path=Path(run_file);record=json.loads(path.read_text());cfg=record['config'];job=record['job'];runtime=Docker(path.parent/'jobs',cfg['image'],gpus='device='+str(cfg.get('gpu','0')))
-    started=Path(cfg['work'])/'LIGHT_START';last=None;reason=None
+    started=Path(cfg['work'])/'LIGHT_START';last=None;reason=None;policy=None;events=[]
+    policies=path.parent/'budget-policy.jsonl'
+    if not policies.exists():
+        initial=budget_policy({key:value for key,value in cfg.items() if key!='budget_override_file'},job['job_id'])
+        policy_event(policies,initial,0,float(cfg.get('wall_started_at',started.read_text())) if started.exists() else record['prepared_at'])
     try:
         while True:
             state=runtime.status(job['job_id']);last=usage(cfg['codex_home']);now=time.time()
+            try:policy=budget_policy(cfg,job['job_id'],budget_override)
+            except (OSError,ValueError,TypeError) as error:
+                reason='invalid_budget_override';runtime.cancel(job['job_id']);raise ValueError('invalid live budget policy; owned job stopped') from error
+            events=policy_event(policies,policy,last['total_tokens'],now)
             try:
                 gpu=subprocess.run(['nvidia-smi','--query-gpu=timestamp,index,utilization.gpu,memory.used,memory.total','--format=csv,noheader,nounits'],text=True,capture_output=True,timeout=5)
                 gpu_value,gpu_status=(gpu.stdout.strip() if gpu.returncode==0 else None),gpu.returncode
             except (OSError,subprocess.TimeoutExpired) as error:gpu_value,gpu_status=None,type(error).__name__
-            sample={'time':now,'gpu_csv':gpu_value,'gpu_status':gpu_status,'usage':last,'native_state':state['state']}
+            sample={'time':now,'gpu_csv':gpu_value,'gpu_status':gpu_status,'usage':last,'native_state':state['state'],'budget_policy':policy}
             with (path.parent/'samples.jsonl').open('a') as file:file.write(json.dumps(sample)+'\n')
             print(json.dumps({'time':now,'state':state['state'],'self_reported_tokens':last['total_tokens']}),flush=True)
             if state['state'] not in ('RUNNING','PENDING'):reason='native_terminal';break
             elapsed=now-float(cfg.get('wall_started_at',started.read_text())) if started.exists() else 0
-            if last['total_tokens'] is not None and last['total_tokens']>=cfg.get('token_target',5000000):reason='approximate_token_target'
+            if token_limit_reached(last['total_tokens'],policy):reason='approximate_token_target'
             if elapsed>=cfg.get('wall_hours',24)*3600:reason='best_effort_wall_limit'
             if reason:runtime.cancel(job['job_id']);break
             time.sleep(10)
     except KeyboardInterrupt:
         reason='monitor_interrupted';runtime.cancel(job['job_id']);raise
     finally:
-        report={'reason':reason,'usage':last,'ended_at':time.time(),'wall_seconds':time.time()-float(cfg.get('wall_started_at',started.read_text())) if started.exists() else None,'cost_quality':'best-effort; native self-report; unknown in-flight usage retained','job':job}
+        report={'reason':reason,'usage':last,'ended_at':time.time(),'wall_seconds':time.time()-float(cfg.get('wall_started_at',started.read_text())) if started.exists() else None,'cost_quality':'best-effort; native self-report; unknown in-flight usage retained','job':job,'budget_policy':policy,'budget_policy_events':events}
         write(path.parent/'cost.json',report)
     return report
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=['prepare','start','monitor']);parser.add_argument('file');args=parser.parse_args()
-    print(json.dumps({'prepare':prepare,'start':start,'monitor':monitor}[args.action](args.file),indent=2))
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=['prepare','start','monitor']);parser.add_argument('file');parser.add_argument('--budget-override',help='monitor only: owner-written atomic JSON changing token_target for this job');args=parser.parse_args()
+    if args.budget_override and args.action!='monitor':parser.error('--budget-override is monitor-only')
+    result=monitor(args.file,args.budget_override) if args.action=='monitor' else {'prepare':prepare,'start':start}[args.action](args.file)
+    print(json.dumps(result,indent=2))
 if __name__=='__main__':main()
