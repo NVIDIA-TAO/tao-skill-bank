@@ -117,10 +117,28 @@ class Operations:
                 if weight.ndim!=2 or left.shape!=(weight.shape[0],) or right.shape!=(weight.shape[1],):raise ValueError('rank-one vectors mismatch')
                 edited=weight+alpha*torch.outer(left,right)
             elif operation=='edit.memit':
-                keys=torch.as_tensor(p['keys'],dtype=torch.float32);values=torch.as_tensor(p['values'],dtype=torch.float32)
-                rank=config.get('rank')
-                if weight.ndim!=2 or keys.ndim!=2 or values.ndim!=2 or keys.shape!=(weight.shape[1],rank) or values.shape!=(weight.shape[0],rank):raise ValueError('closed-form key/value/rank mismatch')
-                edited=weight+alpha*((values-weight@keys)@torch.linalg.pinv(keys))
+                keys=torch.as_tensor(p['keys'],dtype=torch.float64);delta_values=torch.as_tensor(p['delta_values'],dtype=torch.float64)
+                covariance=torch.as_tensor(p['covariance'],dtype=torch.float64);rank=config.get('rank')
+                if weight.ndim!=2 or keys.ndim!=2 or delta_values.shape!=(weight.shape[0],keys.shape[1]) or keys.shape[0]!=weight.shape[1] or type(rank)is not int or not 1<=rank<=min(keys.shape):raise ValueError('closed-form key/delta-value/rank mismatch')
+                if not p.get('covariance_source'):raise ValueError('dev preservation covariance provenance required')
+                if rank<keys.shape[1]:
+                    _,_,right=torch.linalg.svd(keys,full_matrices=False);project=right[:rank].T
+                    keys=keys@project;delta_values=delta_values@project
+                if covariance.ndim==1:
+                    if covariance.shape!=(weight.shape[1],) or bool((covariance<0).any()):raise ValueError('nonnegative covariance diagonal required')
+                    ridge=1e-4*max(covariance.mean().item(),1e-12)
+                    inverse_diagonal=1/(covariance+ridge)
+                    kt_d=keys.T*inverse_diagonal
+                    solution=torch.linalg.solve(torch.eye(rank,dtype=torch.float64)+kt_d@keys,kt_d)
+                elif covariance.shape==(weight.shape[1],weight.shape[1]):
+                    if not torch.allclose(covariance,covariance.T) or bool((torch.linalg.eigvalsh(covariance)<-1e-10).any()):raise ValueError('positive semidefinite preservation covariance required')
+                    ridge=1e-4*max(covariance.diagonal().mean().item(),1e-12)
+                    system=covariance+keys@keys.T+ridge*torch.eye(weight.shape[1],dtype=torch.float64)
+                    solution=torch.linalg.solve(system,keys).T
+                else:raise ValueError('covariance dimensions mismatch')
+                if not all(bool(torch.isfinite(v).all()) for v in (keys,delta_values,covariance,solution)):raise ValueError('nonfinite closed-form input/solution')
+                edited=weight.double()+alpha*delta_values@solution
+
             else:
                 axis=p['axis'];indices=p['indices'];scale=config['scale']
                 if axis not in (0,1) or weight.ndim!=2 or not indices or len(set(indices))!=len(indices) or any(type(i)is not int or i<0 or i>=weight.shape[axis] for i in indices):raise ValueError('head slice outside matrix')

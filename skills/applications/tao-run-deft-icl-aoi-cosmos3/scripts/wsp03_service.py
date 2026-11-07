@@ -32,6 +32,10 @@ class Service:
 
     def dispatch(self, action, params):
         self.require_launch()
+        from wsp03_contract import OPERATIONS
+        if action in OPERATIONS:
+            schema=OPERATIONS[action]
+            if not isinstance(params,dict) or set(params)-set(schema['required']+schema['optional']) or set(schema['required'])-set(params):raise ValueError('atomic operation arguments differ from frozen schema')
         if action=='status':return self.ledger.status()
         if action in ('python','tensor.read','reference.attribute','edit.family','edit.direction','edit.rank1','edit.memit','edit.head_scale','edit.commit','edit.replay','edit.revert','export.checkpoint'):
             if self.contract.get('weights_frozen') and action not in ('tensor.read','reference.attribute','edit.replay','export.checkpoint'):raise AdmissionError('track weights are immutable')
@@ -57,32 +61,37 @@ class Service:
         return response
 
     def requests(self, mode, params, *, trusted=False):
-        split=params.get('split','explore');ids=params.get('ids',[])
-        if split not in self.members or not ids or len(set(ids))!=len(ids) or not set(ids)<=self.members[split]:raise ValueError('invalid split membership')
+        split=params.get('split','explore');records=params.get('records')
+        if records is not None:
+            if mode!='read' or not records or len(records)>32:raise ValueError('only reads accept up to32 condition records')
+            ids=[r['query_id'] for r in records]
+        else:
+            ids=params.get('ids',[])
+            records=[{'query_id':qid,'references':params.get('references',{}).get(qid,[]),'capture':params.get('capture',{})} for qid in ids]
+            if len(set(ids))!=len(ids):raise ValueError('duplicate IDs require explicit read condition records')
+        if split not in self.members or not ids or not set(ids)<=self.members[split]:raise ValueError('invalid split membership')
         if mode=='read':
-            if split not in ('development','explore') or len(ids)>32:raise AdmissionError('bounded dev-only read')
+            if split not in ('development','explore') or len(records)>32:raise AdmissionError('bounded dev-only read')
         elif set(ids)!=self.members[split]:raise ValueError('generation must cover exact frozen membership')
         if split in ('holdout','benchmark') and not trusted:raise AdmissionError('trusted split inaccessible to editor')
-        references=params.get('references',{})
         frozen_refs=self.contract.get('generation_references')
-        if mode!='read' and frozen_refs is not None:
-            expected={qid:frozen_refs.get(qid,[]) for qid in ids}
-            if references and references!=expected:raise ValueError('generation references differ from frozen policy')
-            references=expected
-        if set(references)-set(ids):raise ValueError('unrelated reference query')
         pool=self.members['development'] if split!='benchmark' else set(self.contract['benchmark_reference_ids'])
         rows=[]
-        for qid in ids:
-            refs=references.get(qid,[])
+        for index,record in enumerate(records):
+            qid=record['query_id'];refs=record.get('references',[])
+            if mode!='read' and frozen_refs is not None:
+                expected=frozen_refs.get(qid,[])
+                if refs and refs!=expected:raise ValueError('generation references differ from frozen policy')
+                refs=expected
             if len(refs)!=len(set(refs)) or not set(refs)<=pool or len(refs)>self.contract['max_references']:raise ValueError('reference pool/count violation')
-            qjoint=self.contract['joints'][qid]
-            if any(self.contract['joints'][ref]==qjoint for ref in refs):raise ValueError('same-joint reference excluded')
-            for field in ('source_ids','image_hashes','components'):
+            for field in ('joints','source_ids','image_hashes','components'):
                 identities=self.contract.get(field)
                 if identities and any(identities[qid]==identities[ref] for ref in refs):raise ValueError(field+' reference exclusion')
             row=self.request_factory(qid,refs,mode)
             if row['id']!=qid or row.get('references',[])!=refs:raise ValueError('trusted renderer identity mismatch')
-            if mode=='read':row=dict(row,capture=params.get('capture',{}))
+            if mode=='read':
+                row=dict(row,capture=record.get('capture',{}))
+                if params.get('records') is not None:row=dict(row,id=qid+'@'+str(index),query_id=qid)
             rows.append(row)
         validate_requests(rows,'read' if mode=='read' else 'generation',split)
         return rows
@@ -98,7 +107,7 @@ class Service:
         if kind=='baseline' and (split!='explore' or candidate!='base'):raise AdmissionError('baseline on frozen explore only')
         if candidate!='base' and not self.ledger.db.execute('SELECT 1 FROM candidates WHERE id=?',(candidate,)).fetchone():raise ValueError('unregistered candidate')
         rows=self.requests('read' if kind=='read' else 'generation',params,trusted=trusted)
-        rid=uuid.uuid4().hex;identity={'candidate':candidate,'split':split,'requests_sha256':digest(rows)}
+        rid=uuid.uuid4().hex;identity={'candidate':candidate,'split':split,'requests_sha256':digest(rows),'query_forward_exposures':len(rows)}
         if kind=='trusted':
             old=self.ledger.db.execute("SELECT 1 FROM requests WHERE kind='trusted' AND json_extract(payload,'$.split')=?",(split,)).fetchone()
             if old:raise AdmissionError('trusted split already attempted')

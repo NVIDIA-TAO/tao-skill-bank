@@ -223,6 +223,12 @@ def bounded_range(*args):
     return r
 
 
+class LimitedBuffer(io.StringIO):
+    def write(self,value):
+        if self.tell()+len(value)>65536:raise ValueError('numeric output exceeds64KiB')
+        return super().write(value)
+
+
 class Kernel:
     def __init__(self, store, *, max_runs=500, cell_seconds=600):
         import torch
@@ -260,7 +266,7 @@ class Kernel:
             if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)) and node.id in self.capabilities:
                 raise ValueError('cannot replace capability')
         self.executions += 1
-        stdout, stderr = io.StringIO(), io.StringIO()
+        stdout, stderr = LimitedBuffer(), LimitedBuffer()
         namespace = dict(self.capabilities, **self.namespace)
         namespace['__builtins__'] = {'print': print, 'len': len, 'range': bounded_range, 'enumerate': enumerate, 'zip': zip,
                                     'min': min, 'max': max, 'sum': sum, 'float': float, 'int': int, 'abs': abs, 'list': list, 'tuple': tuple}

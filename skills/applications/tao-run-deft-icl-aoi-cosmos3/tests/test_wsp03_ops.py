@@ -20,7 +20,7 @@ class OperationTests(unittest.TestCase):
     def tearDown(self):self.t.cleanup()
     def test_closed_form_rank_one_receipt_replay_and_hf_export(self):
         self.ops.call('edit.family',{'id':'memory','mechanism':'key-value','tensors':['model.layers.0.mlp.weight'],'lineage':['synthetic'],'configurations':[{'alpha':1,'rank':1}]})
-        result=self.ops.call('edit.memit',{'name':'model.layers.0.mlp.weight','family':'memory','configuration':0,'keys':[[1],[0],[0],[0]],'values':[[1],[.5],[0],[0]]})
+        result=self.ops.call('edit.memit',{'name':'model.layers.0.mlp.weight','family':'memory','configuration':0,'keys':[[1],[0],[0],[0]],'delta_values':[[0],[.5],[0],[0]],'covariance':[0,0,0,0],'covariance_source':'synthetic-dev-moments'})
         self.assertTrue(result['ok']);self.assertEqual(result['operation'],'edit.memit')
         manifest=self.ops.call('edit.commit',{'id':'candidate','hypothesis':'synthetic memory','method':'algebraic_closed_form'})['result']
         self.assertEqual(manifest['changed_elements'],1)
@@ -38,3 +38,14 @@ class OperationTests(unittest.TestCase):
     def test_reference_attribution_reports_actual_paired_delta(self):
         out=self.ops.call('reference.attribute',{'records':[{'query':'q','reference':'r','zero_shot_logprob':-3.,'reference_logprob':-1.,'read_ids':['read0','read1']} ]})['result']
         self.assertEqual(out['references']['r']['mean_delta'],2.)
+
+    def test_memit_preservation_covariance_changes_closed_form_update(self):
+        self.ops.call('edit.family',{'id':'regularized','mechanism':'key-value','tensors':['model.layers.0.mlp.weight'],'lineage':['dev-cov'],'configurations':[{'alpha':1,'rank':1}]})
+        self.ops.call('edit.memit',{'name':'model.layers.0.mlp.weight','family':'regularized','configuration':0,'keys':[[1],[0],[0],[0]],'delta_values':[[0],[1],[0],[0]],'covariance':[3,3,3,3],'covariance_source':'synthetic-dev-diagonal'})
+        self.assertEqual(float(self.store.staged['model.layers.0.mlp.weight'][1,0]),.25)
+    def test_failed_candidate_attempt_cannot_reset_on_restart(self):
+        from wsp03_kernel import TensorStore
+        self.store.max_candidate_attempts=1
+        with self.assertRaises(ValueError):self.store.commit_candidate('unsafe/id','invalid fixture')
+        restarted=TensorStore(self.store.base,self.store.output,max_candidate_attempts=1)
+        with self.assertRaisesRegex(ValueError,'attempt budget'):restarted.commit_candidate('safe','invalid fixture')

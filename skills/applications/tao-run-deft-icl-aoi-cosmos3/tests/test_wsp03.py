@@ -19,7 +19,9 @@ class StateTests(unittest.TestCase):
         self.mod = importlib.import_module('wsp03_state')
 
     def ledger(self, track='T1', **kw):
-        return self.mod.Ledger(self.path / 'state.sqlite', track=track, clock=lambda: 1000, caps={'probe':2,'baseline':5,'explore':88,'full':3,'trusted':2,'read':512,'python':500,'candidate':98}, **kw)
+        ledger=self.mod.Ledger(self.path / 'state.sqlite', track=track, clock=lambda: 1000, caps={'probe':2,'baseline':5,'explore':88,'full':3,'trusted':2,'read':512,'python':500,'candidate':98}, **kw)
+        if ledger.get('started_at') is None:ledger.start_clock(1000)
+        return ledger
 
     def test_soft_stop_survives_reopen_and_keeps_trusted_path(self):
         x = self.ledger()
@@ -105,6 +107,18 @@ class StateTests(unittest.TestCase):
         x.admit('full','failed-finalist',{'candidate':'a'});x.finish('failed-finalist',{'complete':False})
         self.assertIsNone(x.freeze())
         x.close()
+
+    def test_full_pass_must_fit_measured_remaining_wall(self):
+        ledger=self.ledger();ledger.set_finalist_reserve(10)
+        ledger.candidate('a',{'valid':True,'changed_elements':1})
+        ledger.result('a','explore',{'complete':True,'n':512,'mcc':.2,'macro_f1':.2,'invalid':0})
+        ledger.nominate();ledger.clock=lambda:1000+79200-1
+        with self.assertRaises(self.mod.AdmissionError):ledger.admit('full','too-late',{'candidate':'a'})
+        ledger.close()
+    def test_unstarted_clock_fails_closed(self):
+        ledger=self.mod.Ledger(self.path/'unstarted.sqlite',track='R4',caps={'probe':0,'baseline':0,'explore':12,'full':3,'trusted':4,'read':512,'python':0,'candidate':12})
+        with self.assertRaises(self.mod.AdmissionError):ledger.admit('read','unstarted')
+        ledger.close()
 
 
 class ResourceTests(unittest.TestCase):

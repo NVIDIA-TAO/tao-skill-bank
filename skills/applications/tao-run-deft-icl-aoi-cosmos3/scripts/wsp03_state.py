@@ -50,7 +50,7 @@ class Ledger:
             raise ValueError('probe exhausted allocation')
         contract = {'track': track, 'caps': cap, 'probe_debit': debit, 'full_size': full_size, 'explore_size': explore_size,
                     'total_wall': total_wall, 'development_wall': development_wall, 'soft_tokens': soft_tokens, 'target_tokens': target_tokens}
-        with self.tx():
+        with self.tx(close_on_error=True):
             old = self.get('contract')
             if old is not None and old != contract:
                 raise ValueError('immutable run contract/debit changed')
@@ -63,13 +63,14 @@ class Ledger:
                 self.event('initialize', contract)
 
     @contextmanager
-    def tx(self):
+    def tx(self, close_on_error=False):
         self.db.execute('BEGIN IMMEDIATE')
         try:
             yield
             self.db.commit()
         except BaseException:
             self.db.rollback()
+            if close_on_error:self.db.close()
             raise
 
     def close(self):
@@ -118,7 +119,7 @@ class Ledger:
         total = usage[0] + usage[1]
         return {'phase': self.get('phase'), 'input_tokens': usage[0], 'output_tokens': usage[1], 'cached_tokens': usage[2],
                 'observed_tokens': total, 'budget_overrun': total > c['target_tokens'], 'soft_stopped': total >= c['soft_tokens'],
-                'used': used, 'remaining_wall_seconds': c['total_wall'] - elapsed,
+                'used': used, 'read_query_forward_exposures_admitted':self.db.execute("SELECT coalesce(sum(json_extract(payload,'$.query_forward_exposures')),0) FROM requests WHERE kind='read'").fetchone()[0], 'remaining_wall_seconds': c['total_wall'] - elapsed,
                 'remaining_development_seconds': c['development_wall'] - elapsed,
                 'unknown_inflight_usage': [r[0] for r in self.db.execute("SELECT id FROM requests WHERE kind='editor' AND state='running'")],
                 'provider_usage_complete': not bool(self.db.execute("SELECT 1 FROM requests WHERE kind='editor' AND state!='complete'").fetchone())}
@@ -126,6 +127,7 @@ class Ledger:
     def admit(self, kind, request_id, payload=None):
         with self.tx():
             c, status = self.get('contract'), self.status()
+            if self.get('started_at') is None:raise AdmissionError('run clock must start before scientific admission')
             if kind not in set(c['caps']) | {'editor'}:
                 raise ValueError('unknown request kind')
             if not request_id or self.db.execute('SELECT 1 FROM requests WHERE id=?', (request_id,)).fetchone():
@@ -140,6 +142,8 @@ class Ledger:
                 if status['remaining_development_seconds'] <= 0:
                     raise AdmissionError('development deadline')
             if kind == 'full':
+                reserve=self.get('full_reserve_seconds')
+                if reserve is not None and status['remaining_development_seconds'] < reserve:raise AdmissionError('full pass does not fit remaining measured development reserve')
                 if status['phase'] != 'finalists' or status['remaining_development_seconds'] <= 0:
                     raise AdmissionError('full development only for frozen shortlist within development wall')
             if kind == 'trusted' and status['phase'] not in ('frozen', 'no_valid_patch'):

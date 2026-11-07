@@ -177,13 +177,16 @@ def probe(*, model, zs_requests, icl_requests, input_view, output, image, lease_
 
 
 class IsolatedKernel:
-    def __init__(self, *, runtime, base, output, exchange):
+    def __init__(self, *, runtime, base, output, exchange, access_policy=None):
         self.runtime=runtime;self.output=Path(output).resolve();self.exchange=Path(exchange).resolve()
         self.output.mkdir(parents=True,exist_ok=True);self.exchange.mkdir(parents=True,exist_ok=True)
+        runtime.root.mkdir(parents=True,exist_ok=True)
         canary=runtime.root/('host-denial-canary-'+uuid.uuid4().hex)
         canary.write_text('synthetic host namespace canary; not a credential')
-        self.job=runtime.submit('wsp03-cpu-kernel',['/app/scripts/wsp03_kernel_server.py','--base','/model','--output','/edits','--exchange','/exchange'],
-            gpu=False,mounts=[(APP,'/app',True),(base,'/model',True),(self.output,'/edits',False),(self.exchange,'/exchange',False)],
+        extra_mounts=[(access_policy,'/access-policy.json',True)] if access_policy else []
+        extra_command=['--access-policy','/access-policy.json'] if access_policy else []
+        self.job=runtime.submit('wsp03-cpu-kernel',['/app/scripts/wsp03_kernel_server.py','--base','/model','--output','/edits','--exchange','/exchange',*extra_command],
+            gpu=False,mounts=[(APP,'/app',True),(base,'/model',True),(self.output,'/edits',False),(self.exchange,'/exchange',False),*extra_mounts],
             env=[('NVIDIA_VISIBLE_DEVICES','void'),('WSP_HOST_CANARY',str(canary))],extra_args=['--runtime','runc','--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=1g','--memory','64g','--cpus','8','--pids-limit','128'])
     def call(self, request, timeout=660):
         identity=uuid.uuid4().hex;input_file=self.exchange/(identity+'.request.json');response=self.exchange/(identity+'.response.json')

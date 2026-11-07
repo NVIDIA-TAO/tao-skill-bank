@@ -75,7 +75,8 @@ class ActivationCapture:
             raise ValueError('module executed repeatedly in a single capture')
         self.bytes += amount
         self.values[key] = value.detach().float().cpu().contiguous()
-        self.metadata[key] = dict(metadata, source_dtype=str(value.dtype), shape=list(value.shape), bytes=amount)
+        self.metadata[key] = dict(metadata, source_dtype=str(value.dtype), shape=list(value.shape), bytes=amount,
+            preview=[v if math.isfinite(v) else str(v) for v in self.values[key].flatten()[:16].tolist()],preview_truncated=value.numel()>16)
 
     def point_hook(self, item):
         def hook(module, args, output):
@@ -139,6 +140,13 @@ class ActivationCapture:
             q, k = state['q'].transpose(1, 2), state['k'].transpose(1, 2)
             q, k = apply_rotary_pos_emb(q, k, *state['position_embeddings'])
             rows = attention_rows(q, k, state['mask'], rows=item['rows'], heads=item['heads'], scaling=mod.scaling)
+            kv_heads=sorted({h//(q.shape[1]//k.shape[1]) for h in item['heads']})
+            self.keep(name+':q_rotated',q[:,item['heads']][:,:,item['rows']],{'heads':item['heads'],'rows':item['rows'],'same_pass':True})
+            self.keep(name+':k_rotated',k[:,kv_heads],{'kv_heads':kv_heads,'same_pass':True})
+            for kind,value in zip(('cos','sin'),state['position_embeddings']):
+                self.keep(name+':rope_'+kind,value,{'same_pass':True})
+            if state['mask'] is not None:
+                self.keep(name+':mask',state['mask'][:,:,item['rows']],{'rows':item['rows'],'same_pass':True})
             self.keep(name + ':attention', rows, {'rows': item['rows'], 'heads': item['heads'],
                       'method': 'FP32 QK+same-pass RoPE/mask diagnostic reconstruction; generation stays SDPA'})
             state.clear()

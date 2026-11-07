@@ -28,8 +28,14 @@ def isolation_probe():
 def main():
     p=argparse.ArgumentParser()
     for n in ('base','output','exchange'):p.add_argument('--'+n,required=True)
+    p.add_argument('--access-policy')
     a=p.parse_args();store=TensorStore(a.base,a.output);kernel=Kernel(store);operations=Operations(store);exchange=Path(a.exchange)
-    proof=isolation_probe();json_write(exchange/'isolation.json',proof)
+    proof=isolation_probe()
+    if a.access_policy:
+        from wsp03_access_probe import probe
+        access=probe(json.loads(Path(a.access_policy).read_text()));json_write(exchange/'path-denial.json',access)
+        proof['checks']['path_denial']=access['passed'];proof['passed']=all(proof['checks'].values())
+    json_write(exchange/'isolation.json',proof)
     if not proof['passed']:raise RuntimeError('CPU process isolation proof failed')
     while True:
         for path in sorted(exchange.glob('*.request.json')):

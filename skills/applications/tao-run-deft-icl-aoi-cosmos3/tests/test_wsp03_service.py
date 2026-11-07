@@ -14,6 +14,7 @@ class ServiceTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         self.ledger=Ledger(self.root/'ledger.db',track='R3',caps={'probe':2,'baseline':5,'explore':88,'full':3,'trusted':2,'read':512,'python':500,'candidate':98},full_size=2,explore_size=1)
+        self.ledger.start_clock()
         self.contract={'splits':{'development':['d','r'],'explore':['d'],'holdout':['h'],'benchmark':['b']},'joints':{'d':'a','r':'b','h':'c','b':'a'},'benchmark_reference_ids':['d','r','h'],'max_references':4}
         self.calls=[]
         def render(q,refs,mode):

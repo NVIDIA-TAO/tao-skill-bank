@@ -17,6 +17,8 @@ def scan(base,output):
     base=Path(base).resolve(strict=True);output=Path(output).resolve(strict=False)
     if output.is_relative_to(base):raise ValueError('report cannot mutate immutable base')
     index=base/'model.safetensors.index.json';mapping=json.loads(index.read_text())['weight_map'] if index.exists() else None
+    if mapping is not None and not mapping:raise ValueError('empty tensor index')
+    if mapping is not None and set(mapping.values())!={p.name for p in base.glob('*.safetensors')}:raise ValueError('actual shard set differs from index')
     files=sorted(set(mapping.values())) if mapping else [p.name for p in base.glob('*.safetensors')]
     if not files:raise ValueError('no safetensors files')
     started=time.monotonic();rows=[];seen=set()
@@ -29,6 +31,7 @@ def scan(base,output):
                 seen.add(name);value=file.get_tensor(name);flat=value.reshape(-1);invalid=0
                 for i in range(0,flat.numel(),1048576):invalid+=int((~torch.isfinite(flat[i:i+1048576])).sum())
                 rows.append({'name':name,'shape':list(value.shape),'dtype':str(value.dtype),'elements':value.numel(),'nonfinite_elements':invalid})
+    if not seen:raise ValueError('empty safetensors payload')
     if mapping is not None and seen!=set(mapping):raise ValueError('index has missing tensor payloads')
     result={'schema':'wsp03-finiteness/1','passed':all(r['nonfinite_elements']==0 for r in rows),'tensors':rows,
         'tensor_count':len(rows),'total_elements':sum(r['elements'] for r in rows),'nonfinite_elements':sum(r['nonfinite_elements'] for r in rows),
