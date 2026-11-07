@@ -38,7 +38,7 @@ def gated_job(runtime, lease, stage, command, mounts, *, deadline, env=(), on_ad
         native=runtime.status(job['job_id'])
         pid=native.get('native',{}).get('Pid',0)
         if not pid:raise RuntimeError('native GPU worker PID unavailable before gate')
-        lease.allow_pid(pid);lease.check()
+        lease.allow_pid(pid,container_id=job['container_id']);lease.check()
         json_write(Path(job['results_dir'])/'lease-authorized',{'host_pid':pid,'time':time.time(),'lease_owner':lease.owner})
         status=runtime.wait(job['job_id'],deadline=deadline,heartbeat=lambda _:lease.check())
         lease.check()

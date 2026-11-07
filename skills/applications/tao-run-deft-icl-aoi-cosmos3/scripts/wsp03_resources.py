@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import re
 import subprocess
 import threading
 import time
@@ -53,11 +54,36 @@ def descendant(pid, roots):
     return pid in roots
 
 
+def process_identity(pid):
+    """Read identity without command lines, environment, or process contents."""
+    try:
+        fields=Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()
+        group=Path(f'/proc/{pid}/cgroup').read_text().strip()
+        second=Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()
+        if fields[19]!=second[19]:return None
+        return {'pid':int(pid),'ppid':int(second[1]),'birth':fields[19],'cgroup':group}
+    except (OSError,ValueError,IndexError):return None
+
+
+def container_snapshot(groups):
+    result=[]
+    if not groups:return result
+    for path in Path('/proc').iterdir():
+        if not path.name.isdigit():continue
+        identity=process_identity(int(path.name))
+        if identity and identity['cgroup'] in groups:result.append(identity)
+    return result
+
+
 class GPULease:
-    def __init__(self, path, owner, *, gpu='0', query=None, allowed_pids=(), poll_seconds=.1):
+    def __init__(self, path, owner, *, gpu='0', query=None, allowed_pids=(), poll_seconds=.1, identity=None, snapshot=None):
         self.path, self.owner = Path(path), owner
         self.query = query or (lambda: gpu_processes(gpu))
         self.gpu, self.allowed = str(gpu), {}
+        self.identity=identity or process_identity
+        self.snapshot=snapshot or container_snapshot
+        self.allowed_groups={}
+        self.registration_lock=threading.RLock()
         for pid in allowed_pids: self.allow_pid(pid)
         self.poll_seconds = poll_seconds
         self.stop = threading.Event()
@@ -96,32 +122,61 @@ class GPULease:
             self.fd = None
             raise
 
-    def allow_pid(self, pid):
-        pid = int(pid)
-        self.allowed[pid] = Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()[19]
+    def allow_pid(self, pid, *, container_id=None):
+        record=self.identity(int(pid))
+        if record is None:raise LeaseError('native container PID identity unavailable before gate')
+        group=record['cgroup']
+        matches=sorted(set(re.findall(r'(?<![a-f0-9])[a-f0-9]{64}(?![a-f0-9])',group)))
+        if container_id is not None:
+            if not re.fullmatch(r'[a-f0-9]{64}',container_id) or container_id not in matches:
+                raise LeaseError('native container ID does not match exact process cgroup')
+        elif len(matches)==1:container_id=matches[0]
+        if not container_id or group in ('','0::/'):
+            raise LeaseError('exact non-root container cgroup required; no host/daemon ancestry grants')
+        with self.registration_lock:
+            self.allowed[int(pid)]=record
+            self.allowed_groups[group]={'container_id':container_id,'root':record,'registered_at':time.time()}
+            if hasattr(self,'archive'):
+                append_event(Path(str(self.archive)+'.lineage.jsonl'),{'event':'register_container','identity':record,'container_id':container_id,'time':time.time()})
+        return record
+
+    def sample(self):
+        # Capture exact cgroup identities before NVML can report a process that
+        # exits while its command is in flight. Evidence is scoped to this poll;
+        # no PID-only historical cache can authorize a later incarnation.
+        before=time.monotonic();before_wall=time.time()
+        with self.registration_lock:groups=dict(self.allowed_groups)
+        snapshot={p['pid']:p for p in self.snapshot(set(groups)) if p['cgroup'] in groups}
+        rows=self.query();after=time.monotonic();proofs=[];unresolved=[]
+        for row in rows:
+            live=self.identity(row['pid']);previous=snapshot.get(row['pid'])
+            if live is not None and live['cgroup'] in groups:
+                # A live PID changing incarnation since the snapshot is still
+                # accepted only by its currently bound exact container cgroup.
+                proof={'pid':row['pid'],'owned':True,'method':'live_exact_container_cgroup','identity':live,
+                       'container_id':groups[live['cgroup']]['container_id']}
+            elif live is None and previous is not None:
+                proof={'pid':row['pid'],'owned':True,'method':'same_poll_owned_prequery_snapshot','identity':previous,
+                       'container_id':groups[previous['cgroup']]['container_id'],'evidence_window_start':before_wall,'evidence_window_seconds':after-before}
+            else:
+                proof={'pid':row['pid'],'owned':False,'method':'unresolved_vanished_pid' if live is None else 'different_live_cgroup','identity':live}
+                unresolved.append(proof)
+            proofs.append(proof)
+        observation={'time':time.time(),'monotonic':after,'query_started_monotonic':before,'processes':rows,
+            'owned_prequery_snapshot':list(snapshot.values()),'ownership_proofs':proofs}
+        append_event(self.trace,observation)
+        self.sample_count+=1;self.max_gap=max(self.max_gap,after-self.previous_sample);self.previous_sample=after
+        if any(p['memory_bytes'] is None for p in rows):self.memory_unknown_samples+=1
+        else:self.memory_peak=max(self.memory_peak or 0,sum(p['memory_bytes'] for p in rows))
+        if unresolved:self.violation={'reason':'unproven_gpu_ownership','unresolved':unresolved,'observation':observation}
 
     def _monitor(self):
         while not self.stop.wait(self.poll_seconds):
             try:
-                rows = self.query()
-                observation = {'time': time.time(), 'monotonic': time.monotonic(), 'processes': rows}
-                append_event(self.trace, observation)
-                self.sample_count += 1
-                self.max_gap = max(self.max_gap, observation['monotonic'] - self.previous_sample)
-                self.previous_sample = observation['monotonic']
-                if any(p['memory_bytes'] is None for p in rows): self.memory_unknown_samples += 1
-                else: self.memory_peak = max(self.memory_peak or 0, sum(p['memory_bytes'] for p in rows))
-                live = set()
-                for pid, born in list(self.allowed.items()):
-                    try:
-                        if Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()[19] == born: live.add(pid)
-                    except OSError: pass
-                foreign = [p for p in rows if not descendant(p['pid'], live)]
-                if foreign:
-                    self.violation = {'reason': 'foreign_gpu_process', 'observation': observation}
-                    return
+                self.sample()
+                if self.violation:return
             except BaseException as error:
-                self.violation = {'reason': 'gpu_monitor_unavailable', 'error': type(error).__name__, 'time': time.time()}
+                self.violation={'reason':'gpu_monitor_unavailable','error':type(error).__name__,'time':time.time()}
                 return
 
     def check(self):

@@ -177,3 +177,44 @@ class SourceGuardTests(unittest.TestCase):
                 m.prepare(root, root / 'missing', root.parent / 'unused-wsp03-fixture', expected_source_sha256='0' * 64)
 
 if __name__ == '__main__':unittest.main()
+
+class ProcessLineageTests(unittest.TestCase):
+    def test_orphan_in_registered_container_cgroup_remains_owned(self):
+        m=importlib.import_module('wsp03_resources');group='0::/system.slice/docker-'+('a'*64)+'.scope'
+        identities={10:{'pid':10,'ppid':1,'birth':'100','cgroup':group},11:{'pid':11,'ppid':1,'birth':'101','cgroup':group}}
+        rows=[]
+        with tempfile.TemporaryDirectory() as t:
+            with m.GPULease(Path(t)/'gpu.lock','fixture',query=lambda:list(rows),identity=lambda pid:identities.get(pid),snapshot=lambda groups:[dict(identities[11])],poll_seconds=60) as lease:
+                lease.allow_pid(10,container_id='a'*64);del identities[10];rows.append({'pid':11,'memory_bytes':1})
+                lease.sample();lease.check()
+    def test_unknown_vanished_gpu_pid_fails_closed(self):
+        m=importlib.import_module('wsp03_resources');rows=[]
+        with tempfile.TemporaryDirectory() as t:
+            with self.assertRaises(m.LeaseError):
+                with m.GPULease(Path(t)/'gpu.lock','fixture',query=lambda:list(rows),identity=lambda pid:None,snapshot=lambda groups:[],poll_seconds=60) as lease:
+                    rows.append({'pid':88,'memory_bytes':1});lease.sample();lease.check()
+    def test_pid_reuse_cannot_inherit_owned_history(self):
+        m=importlib.import_module('wsp03_resources');group='0::/docker/'+('b'*64);foreign='0::/docker/'+('c'*64)
+        identities={10:{'pid':10,'ppid':1,'birth':'100','cgroup':group},11:{'pid':11,'ppid':1,'birth':'101','cgroup':group}};rows=[]
+        with tempfile.TemporaryDirectory() as t:
+            with self.assertRaises(m.LeaseError):
+                with m.GPULease(Path(t)/'gpu.lock','fixture',query=lambda:list(rows),identity=lambda pid:identities.get(pid),snapshot=lambda groups:[],poll_seconds=60) as lease:
+                    lease.allow_pid(10,container_id='b'*64)
+                    identities[11]={'pid':11,'ppid':1,'birth':'999','cgroup':foreign};rows.append({'pid':11,'memory_bytes':1})
+                    lease.sample();lease.check()
+
+    def test_vanished_pid_requires_same_poll_owned_snapshot_not_old_history(self):
+        m=importlib.import_module('wsp03_resources');group='0::/docker/'+('d'*64)
+        root={'pid':10,'ppid':1,'birth':'100','cgroup':group};child={'pid':11,'ppid':10,'birth':'101','cgroup':group}
+        rows=[];snapshot=[child]
+        with tempfile.TemporaryDirectory() as t:
+            with self.assertRaises(m.LeaseError):
+                with m.GPULease(Path(t)/'gpu.lock','fixture',query=lambda:list(rows),identity=lambda pid:root if pid==10 else None,snapshot=lambda groups:list(snapshot),poll_seconds=60) as lease:
+                    lease.allow_pid(10,container_id='d'*64);rows.append({'pid':11,'memory_bytes':1})
+                    lease.sample();lease.check()
+                    snapshot.clear();lease.sample();lease.check()
+    def test_native_container_id_and_cgroup_must_match(self):
+        m=importlib.import_module('wsp03_resources');root={'pid':10,'ppid':1,'birth':'100','cgroup':'0::/docker/'+('e'*64)}
+        with tempfile.TemporaryDirectory() as t:
+            with m.GPULease(Path(t)/'gpu.lock','fixture',query=lambda:[],identity=lambda pid:root,poll_seconds=60) as lease:
+                with self.assertRaises(m.LeaseError):lease.allow_pid(10,container_id='f'*64)
