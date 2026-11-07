@@ -97,7 +97,7 @@ def monitor(run_file):
             with (path.parent/'samples.jsonl').open('a') as file:file.write(json.dumps(sample)+'\n')
             print(json.dumps({'time':now,'state':state['state'],'self_reported_tokens':last['total_tokens']}),flush=True)
             if state['state'] not in ('RUNNING','PENDING'):reason='native_terminal';break
-            elapsed=now-float(started.read_text()) if started.exists() else 0
+            elapsed=now-float(cfg.get('wall_started_at',started.read_text())) if started.exists() else 0
             if last['total_tokens'] is not None and last['total_tokens']>=cfg.get('token_target',5000000):reason='approximate_token_target'
             if elapsed>=cfg.get('wall_hours',24)*3600:reason='best_effort_wall_limit'
             if reason:runtime.cancel(job['job_id']);break
@@ -105,7 +105,7 @@ def monitor(run_file):
     except KeyboardInterrupt:
         reason='monitor_interrupted';runtime.cancel(job['job_id']);raise
     finally:
-        report={'reason':reason,'usage':last,'ended_at':time.time(),'wall_seconds':time.time()-float(started.read_text()) if started.exists() else None,'cost_quality':'best-effort; native self-report; unknown in-flight usage retained','job':job}
+        report={'reason':reason,'usage':last,'ended_at':time.time(),'wall_seconds':time.time()-float(cfg.get('wall_started_at',started.read_text())) if started.exists() else None,'cost_quality':'best-effort; native self-report; unknown in-flight usage retained','job':job}
         write(path.parent/'cost.json',report)
     return report
 
