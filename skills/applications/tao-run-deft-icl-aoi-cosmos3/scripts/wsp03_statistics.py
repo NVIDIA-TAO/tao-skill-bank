@@ -13,7 +13,7 @@ def percentile(values,q):
     ordered=sorted(values);position=(len(ordered)-1)*q;lo=int(position);hi=min(len(ordered)-1,lo+1)
     return ordered[lo]+(ordered[hi]-ordered[lo])*(position-lo)
 
-def paired(arms,identities,evaluator,*,expected_groups,replicates=2000,seed=42,confidence=.95,aliases=None):
+def paired(arms,identities,evaluator,*,expected_groups,replicates=2000,seed=42,confidence=.95,aliases=None,pairs=PAIRS):
     if (replicates,seed,confidence)!=(2000,42,.95):raise ValueError('frozen paired-bootstrap protocol changed')
     predictions={name:{r['id']:r for r in value['predictions']} for name,value in arms.items()}
     if not predictions:raise ValueError('complete arms required')
@@ -36,7 +36,7 @@ def paired(arms,identities,evaluator,*,expected_groups,replicates=2000,seed=42,c
             score=evaluator.score([rows[q] for q in sample])
             for metric in METRICS:draws[name][metric].append(score[metric])
     differences={};alpha=(1-confidence)/2
-    for a,b in PAIRS:
+    for a,b in pairs:
         if a not in arms or b not in arms:continue
         differences[a+'__minus__'+b]={'left_arm':a,'right_arm':b,**{metric:{'estimate':scores[a][metric]-scores[b][metric],'lower':percentile([x-y for x,y in zip(draws[a][metric],draws[b][metric])],alpha),'upper':percentile([x-y for x,y in zip(draws[a][metric],draws[b][metric])],1-alpha)} for metric in METRICS}}
     return {'method':'paired_joint_percentile','replicates':replicates,'seed':seed,'confidence':confidence,'group_count':len(keys),'query_count':len(ids),'metrics':{name:value['metrics'] for name,value in arms.items()},'pairs':differences,'derived_aliases':aliases or {},'invalid':'retained exactly as frozen evaluator','multiplicity':'exploratory comparisons are not selectively promoted to primary claims'}

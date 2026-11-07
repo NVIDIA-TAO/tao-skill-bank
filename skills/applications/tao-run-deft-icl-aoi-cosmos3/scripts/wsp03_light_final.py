@@ -14,7 +14,7 @@ from wsp03_bindings import Recipe,ReferenceSelector,PROFILES,file_hash,pinned
 from wsp03_final_builder import FinalInputBuilder
 from wsp03_io import json_write
 from wsp03_runtime import validate_worker_output
-from wsp03_statistics import run as statistics
+from wsp03_statistics import run as statistics,paired
 from wsp03_worker import digest
 from tht_contract import external_evaluator,grade
 
@@ -37,11 +37,20 @@ def claim(path,value):
 
 
 def freeze_gate(cfg):
-    if set(cfg['freezes'])!={'R3','R4'} or set(cfg['editor_containers'])!={'R3','R4'}:
-        raise ValueError('both frozen tracks and their editor container lists required')
+    extended=bool(cfg.get('r3_ext'))
+    expected_editors={'R3','R4','R3-ext'} if extended else {'R3','R4'}
+    if set(cfg['freezes'])!={'R3','R4'} or set(cfg['editor_containers'])!=expected_editors:
+        raise ValueError('all configured editor tracks and their container lists required')
+    if bool(cfg.get('r4_c_freeze'))!=extended:raise ValueError('extended evaluation requires both R3-ext and R4-C freeze bindings')
     freezes={name:read(asset) for name,asset in cfg['freezes'].items()}
+    if extended:
+        freezes['R4-C']=read(cfg['r4_c_freeze']);freezes['R3-ext']=read(cfg['r3_ext']['freeze'])
+        preregistration=pinned(**cfg['r3_ext']['preregistration'])
+        if freezes['R3-ext'].get('preregistration_sha256')!=file_hash(preregistration):raise ValueError('R3-ext freeze must bind its own preregistration')
+        if freezes['R4-C'].get('profile')!='P01' or freezes['R4-C'].get('patch_manifest_sha256')!=cfg['r4_selection']['patch_manifest_sha256']:
+            raise ValueError('R4-C must freeze P01 with original frozen R3 weights')
     if any(value.get('status')!='FROZEN' for value in freezes.values()):
-        raise ValueError('both tracks must have a successful FROZEN artifact; no base substitution')
+        raise ValueError('all configured arms must be successfully FROZEN; no base substitution')
     selection=cfg['r4_selection']
     if selection['freeze_sha256']!=cfg['freezes']['R4']['sha256'] or selection['profile'] not in PROFILES:
         raise ValueError('normalized R4 selection must bind its exact freeze and registered profile')
@@ -56,22 +65,27 @@ def freeze_gate(cfg):
     return freezes,states
 
 
-def snapshot_patch(cfg,freeze,output):
-    source=Path(cfg['r3_export']);patch=source/'patch';files={}
+def snapshot_patch(cfg,freeze,output,*,arm='R3'):
+    extension=cfg.get('r3_ext',{}) if arm=='R3-ext' else {}
+    source=Path(extension['export'] if extension else cfg['r3_export']);patch=source/'patch';files={}
+    suffix='/'+extension.get('export_directory_name',source.name)+'/'
     for path in patch.rglob('*'):
         if not path.is_file():continue
         relative=path.relative_to(source).as_posix()
-        matches=[value for name,value in freeze['reusable_exports'].items() if name.endswith('/frozen-r3/'+relative)]
-        if len(matches)!=1 or file_hash(path)!=matches[0]:raise ValueError('R3 frozen patch bytes differ: '+relative)
+        matches=[value for name,value in freeze['reusable_exports'].items() if name.endswith(suffix+relative)]
+        if len(matches)!=1 or file_hash(path)!=matches[0]:raise ValueError(arm+' frozen patch bytes differ: '+relative)
         files[path.relative_to(patch).as_posix()]=matches[0]
-    if 'manifest.json' not in files or files['manifest.json']!=cfg['r4_selection']['patch_manifest_sha256']:
-        raise ValueError('R4 and R3 must bind the same frozen patch manifest')
+    expected=extension['patch_manifest_sha256'] if extension else cfg['r4_selection']['patch_manifest_sha256']
+    if 'manifest.json' not in files or files['manifest.json']!=expected:
+        raise ValueError(arm+' must bind its exact frozen patch manifest')
     manifest=json.loads((patch/'manifest.json').read_text())
     if not manifest.get('valid') or manifest.get('changed_elements',0)<=0:raise ValueError('no valid nonzero frozen patch')
     shutil.copytree(patch,output)
     for name,expected in files.items():
         if file_hash(output/name)!=expected:raise ValueError('patch copy changed')
-    json_write(output.parent/'patch-binding.json',{'files':files,'manifest_digest':digest(manifest),'replay':'absolute replacements once onto original model before CUDA','all_arms_same_weights':True})
+    filename='patch-binding-r3-ext.json' if extension else 'patch-binding.json'
+    json_write(output.parent/filename,{'files':files,'manifest_digest':digest(manifest),'replay':'absolute replacements once onto original model before CUDA',
+        'arms':['R3-ext'] if extension else ['R3','R4','R4-C'],'post_hoc':bool(extension)})
     return manifest
 
 
@@ -145,6 +159,7 @@ def evaluate(cfg,recipe,runtime,patch,manifest,output,arm,profile,split):
     request=directory/'requests.json';json_write(request,rows)
     binding={'arm':arm,'profile':profile,'split':split,'requests_sha256':digest(rows),'patch_manifest_sha256':digest(manifest),
              'image_sha256':{key:file_hash(value) for key,value in images.items()},'attempted_at':time.time()}
+    if arm=='R3-ext':binding['post_hoc']=True
     claim(directory/'attempt.json',binding)
     job=native(runtime,output,arm+'-'+split,[CONTAINER_SCRIPTS+'/wsp03_worker.py','--model','/model','--candidate','/candidate','--requests','/requests.json','--output','/results/worker','--mode','generation','--split',split],
         [*code_mounts(),(cfg['model'],'/model',True),(patch,'/candidate',True),(inputs,'/input',True),(request,'/requests.json',True)],gpu=True,timeout=cfg.get('pass_timeout_seconds',7200))
@@ -172,7 +187,44 @@ def score_all(cfg,recipe,results,output):
         identities={qid:{key:recipe.rows[qid][key] for key in ('object_name','scan_id')} for qid in recipe.members[split]}
         payload['splits'][split]={'arms':arms,'identities':identities,'aliases':aliases}
     path=output/'statistics-input.json';json_write(path,payload)
-    return statistics(path,output/'statistics.json',cfg['evaluator_directory'])
+    original=statistics(path,output/'statistics.json',cfg['evaluator_directory'])
+    if cfg.get('r3_ext'):
+        extension={'arm':'R3-ext','analysis':'post-hoc extension after original R3 development results; not a replacement for preregistered R3',
+            'freeze':cfg['r3_ext']['freeze'],'preregistration':cfg['r3_ext']['preregistration'],'editor_token_limit':None,'splits':{}}
+        for split in ('holdout','benchmark'):
+            result=results['R3-ext:'+split];raw=Recipe.jsonl(Path(result['raw_directory'])/'raw_answers.jsonl')
+            gold=Recipe.jsonl(pinned(**cfg['final_inputs'][split+'_gold']));score=grade(raw,gold,evaluator)
+            json_write(output/'arms'/split/'R3-ext'/'score.json',score)
+            source=payload['splits'][split]
+            arms={name:value for name,value in source['arms'].items() if name in ('R3','B','C')};arms['R3-ext']=score
+            extension['splits'][split]=paired(arms,source['identities'],evaluator,expected_groups=255 if split=='benchmark' else 600,
+                pairs=(('R3-ext','C'),('R3-ext','B'),('R3-ext','R3')))
+        json_write(output/'statistics-r3-ext.json',extension)
+    return original
+
+
+def write_results(output,results):
+    # Keep the original six-key result contract unchanged for existing reports.
+    json_write(output/'results.json',{key:value for key,value in results.items() if not key.startswith('R3-ext:')})
+    extension={key:value for key,value in results.items() if key.startswith('R3-ext:')}
+    if extension:json_write(output/'results-r3-ext.json',extension)
+
+
+def evaluate_arms(cfg,recipe,runtime,patch,manifest,output,ext_patch=None,ext_manifest=None,results=None):
+    selected=cfg['r4_selection']['profile'];results={} if results is None else results
+    for split in ('holdout','benchmark'):
+        for arm,profile in [('R3','P00'),('R4-C','P01')]+([('R4',selected)] if selected not in ('P00','P01') else []):
+            results[arm+':'+split]=evaluate(cfg,recipe,runtime,patch,manifest,output,arm,profile,split)
+            write_results(output,results)
+        if selected in ('P00','P01'):
+            source='R3' if selected=='P00' else 'R4-C';result=dict(results[source+':'+split],arm='R4',alias_of=source+':'+split,generation_debit=0)
+            destination=output/'arms'/split/'R4';destination.mkdir();json_write(destination/'result.json',result);results['R4:'+split]=result
+            write_results(output,results)
+        if cfg.get('r3_ext'):
+            results['R3-ext:'+split]=evaluate(cfg,recipe,runtime,ext_patch,ext_manifest,output,'R3-ext','P00',split)
+            results['R3-ext:'+split]['post_hoc']=True
+            write_results(output,results)
+    return results
 
 
 def sample_gpu(output,stop):
@@ -188,28 +240,23 @@ def sample_gpu(output,stop):
 def run(config_file):
     cfg=json.loads(Path(config_file).read_text());freezes,states=freeze_gate(cfg)
     output=Path(cfg['output']);output.mkdir(parents=True,exist_ok=False)
-    claim(output/'attempt.json',{'config_sha256':file_hash(config_file),'freezes':cfg['freezes'],'editor_states':states,'started_at':time.time(),'automatic_retry':False})
+    claim(output/'attempt.json',{'config_sha256':file_hash(config_file),'freezes':dict(cfg['freezes'],**({'R4-C':cfg['r4_c_freeze'],'R3-ext':cfg['r3_ext']['freeze']} if cfg.get('r3_ext') else {})),'editor_states':states,'started_at':time.time(),'automatic_retry':False})
     results={};started=time.time();stop=threading.Event();sampler=threading.Thread(target=sample_gpu,args=(output,stop),daemon=True);sampler.start();terminal='failed'
     try:
         patch=output/'frozen-patch';manifest=snapshot_patch(cfg,freezes['R3'],patch)
+        ext_patch=ext_manifest=None
+        if cfg.get('r3_ext'):
+            ext_patch=output/'frozen-patch-r3-ext';ext_manifest=snapshot_patch(cfg,freezes['R3-ext'],ext_patch,arm='R3-ext')
         if not cfg.get('model_files'):raise ValueError('original frozen model file inventory required')
         for relative,expected in cfg['model_files'].items():
             name=Path(relative)
             if name.is_absolute() or '..' in name.parts or file_hash(Path(cfg['model'])/name)!=expected:raise ValueError('original model inventory differs')
-        json_write(output/'model-binding.json',{'files':cfg['model_files'],'all_arms':'same original model plus frozen absolute replacement patch'})
+        json_write(output/'model-binding.json',{'files':cfg['model_files'],'original_arms':'same original model plus original frozen R3 patch','R3-ext':'same original model plus independent extension patch' if cfg.get('r3_ext') else None})
         recipe=Recipe(cfg['recipe']['path'],cfg['recipe']['sha256'])
         runtime=Docker(output/'jobs',cfg['image'],gpus='device='+str(cfg.get('gpu',0)))
         data_runtime=Docker(output/'jobs',cfg['data_image'],gpus='device='+str(cfg.get('gpu',0)))
         prepare_inputs(cfg,recipe,freezes,runtime,data_runtime,output)
-        selected=cfg['r4_selection']['profile']
-        for split in ('holdout','benchmark'):
-            for arm,profile in [('R3','P00'),('R4-C','P01')]+([('R4',selected)] if selected not in ('P00','P01') else []):
-                results[arm+':'+split]=evaluate(cfg,recipe,runtime,patch,manifest,output,arm,profile,split)
-                json_write(output/'results.json',results)
-            if selected in ('P00','P01'):
-                source='R3' if selected=='P00' else 'R4-C';result=dict(results[source+':'+split],arm='R4',alias_of=source+':'+split,generation_debit=0)
-                destination=output/'arms'/split/'R4';destination.mkdir();json_write(destination/'result.json',result);results['R4:'+split]=result
-                json_write(output/'results.json',results)
+        results=evaluate_arms(cfg,recipe,runtime,patch,manifest,output,ext_patch,ext_manifest,results=results)
         score_all(cfg,recipe,results,output);terminal='complete'
     finally:
         stop.set();sampler.join(timeout=6)

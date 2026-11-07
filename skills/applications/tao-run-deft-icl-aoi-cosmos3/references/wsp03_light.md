@@ -114,3 +114,41 @@ logs are mutable/self-reported, and these observations are not strict quotas.
 
 Native Codex deployments must include `codex-code-mode-host` and `codex-exec-server` beside the configured `binary`; the launcher mounts all three executables read-only. To recover an interrupted native session, keep its existing work and CODEX_HOME, set `resume_session` to its recorded UUID, and provide a continuation task file. Preserve and remove the old work/LIGHT_START marker before preparing the replacement container so it remains gated until `start`; do not reset session token logs or experiment elapsed time.
 Set `wall_started_at` to the original LIGHT_START Unix timestamp when resuming; the monitor then preserves the original elapsed wall budget.
+
+## Unlimited tokens and a live policy change
+
+Set `token_target` explicitly to JSON `null` for unlimited editor tokens. The
+native cumulative token self-report, GPU samples and configured wall limit
+continue unchanged. An omitted target still means 5,000,000 tokens.
+
+A monitor can read a narrow owner-written override on every poll without
+changing the immutable launch receipt or the editor container:
+
+```sh
+python3 scripts/wsp03_light.py monitor /private/run.json --budget-override /private/owner-budget.json
+```
+
+```json
+{
+  "job_id": "EXACT_NATIVE_JOB_ID",
+  "token_target": null,
+  "reason": "Authorized removal of the editor token limit",
+  "effective_at": 1794000000,
+  "observed_tokens_at_change": 1234567
+}
+```
+
+Keep that file outside editor mounts and update it by atomic replacement. It
+may change only the token target plus the displayed metadata; wall time,
+model, paths and other settings cannot be overridden. A different job ID,
+unknown fields or malformed policy stops the owned job instead of silently
+changing its budget. The `budget_override_file` config key is an alternative
+to the CLI option for future launches.
+
+`budget-policy.jsonl` records the original configured policy from zero and
+each observed change, its source digest and cumulative token boundary. Each
+GPU/usage sample includes the effective policy; `cost.json` retains all policy
+events and final usage. Differences between those cumulative boundaries split
+usage before and after removal of the limit. Boundaries and native usage are
+self-reported/best-effort; in-flight usage remains unknown until logged. A live
+policy switch does not reset the original start time or 24-hour wall budget.

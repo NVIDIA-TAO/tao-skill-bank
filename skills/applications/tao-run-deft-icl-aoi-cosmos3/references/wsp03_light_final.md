@@ -111,3 +111,52 @@ intervals, fixed groups). `results.json`, `terminal.json`, native job records,
 worker token/latency/peak-memory fields, and 10-second `gpu-samples.jsonl` retain
 best-effort costs. Failed in-flight usage and kernel-active GPU seconds may be
 unknown. No heavy Service, Ledger, UID sandbox or provider relay is instantiated.
+
+## Post-hoc R3-ext addendum
+
+For the amended experiment, add these fields to the configuration above and
+include the extension's native containers in `editor_containers`:
+
+```json
+{
+  "editor_containers": {
+    "R3": ["R3_CONTAINER_ID"],
+    "R4": ["R4_CONTAINER_ID"],
+    "R3-ext": ["R3_EXT_CONTAINER_ID"]
+  },
+  "r4_c_freeze": {"path": "/private/R4-C/FREEZE.json", "sha256": "R4_C_FREEZE_SHA"},
+  "r3_ext": {
+    "freeze": {"path": "/private/R3-ext/FREEZE.json", "sha256": "EXT_FREEZE_SHA"},
+    "preregistration": {"path": "/private/R3-ext/preregistration.json", "sha256": "EXT_PREREG_SHA"},
+    "export": "/private/R3-ext/frozen-r3-ext",
+    "patch_manifest_sha256": "EXT_PATCH_MANIFEST_FILE_SHA"
+  }
+}
+```
+
+The separate R4-C FREEZE is a small owner artifact with `status: FROZEN`,
+`profile: P01`, and `patch_manifest_sha256` equal to the original frozen R3
+patch manifest file SHA. It has no editor. The R3-ext FREEZE follows R3's
+`status` and `reusable_exports` format and additionally contains its own
+`preregistration_sha256`. The preregistration must have been recorded before
+any R3-ext development result. By default, frozen export paths are matched by
+the configured export directory basename; if the copy was renamed, specify
+`r3_ext.export_directory_name` with the original exported basename.
+
+All four pinned FREEZE artifacts and stopped editor tracks are checked before
+any final source access. R3-ext uses the original base model plus its own
+independent replacement patch and P00 zero-shot requests. Original R3, R4 and
+R4-C continue using their original R3 patch. R4 P00/P01 aliases remain intact;
+R3-ext always has its own once-per-split attempt and is never substituted for
+R3. No new reference selection is performed for R3-ext.
+
+The original six-key `results.json` and original `statistics.json` contracts
+are preserved. `results-r3-ext.json` and `statistics-r3-ext.json` separately
+report the post-hoc extension. The extension statistics include R3-ext minus
+historical C, B and preregistered R3, using the same paired-joint bootstrap,
+MCC, Macro-F1 and balanced accuracy. Holdout has only the available R3
+comparison. These addendum files explicitly identify the extension as a
+post-hoc experiment after the original R3 development results, with unlimited
+editor tokens. Original comparisons and primary-outcome definitions do not
+change. Configuration without these extension fields retains the original
+three-arm protocol; the amended experiment must supply both extension fields.
