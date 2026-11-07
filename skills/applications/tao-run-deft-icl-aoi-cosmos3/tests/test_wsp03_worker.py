@@ -32,3 +32,13 @@ class WorkerContractTests(unittest.TestCase):
             (p/'raw_answers.jsonl').write_text(json.dumps({'id':'x','request_sha256':m.digest(r),'raw_answer':'INVALID'})+'\n')
             self.assertEqual(m.recovery(p,[r])['x']['raw_answer'],'INVALID')
             with self.assertRaises(ValueError):m.recovery(p,[dict(r,messages=[1])])
+
+class TargetSpanTests(unittest.TestCase):
+    def test_span_uses_full_serialized_json_tokenization(self):
+        from wsp03_worker import canonical_target
+        class Tokenizer:
+            def __call__(self,text,**kwargs):return {'input_ids':list(range(len(text))),'offset_mapping':[(i,i+1) for i in range(len(text))]}
+        text='{"labels":["Dry Contact"]}'
+        ids,positions,span=canonical_target(Tokenizer(),text)
+        self.assertEqual(''.join(text[i] for i in positions),'Dry Contact')
+        self.assertEqual(span['label'],'Dry Contact');self.assertEqual(len(ids),len(text))

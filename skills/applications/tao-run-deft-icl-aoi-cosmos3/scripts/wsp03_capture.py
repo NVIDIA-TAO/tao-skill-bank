@@ -87,19 +87,31 @@ class ActivationCapture:
         return hook
 
     def patch_hook(self, item):
-        def hook(module, args, output):
+        def hook(module, args, output=None):
             import torch
-            value = self.tensor_output(output)
+            is_input=item.get('kind','output')=='input'
+            value = self.tensor_output(args if is_input else output)
             positions = item['positions']
             if value.ndim != 3 or not positions or len(positions) > 64 or any(type(i) is not int or i < 0 or i >= value.shape[1] for i in positions):
                 raise ValueError('invalid diagnostic patch positions')
             patch = torch.tensor(item['values'], dtype=value.dtype, device=value.device)
-            if tuple(patch.shape) != (len(positions), value.shape[-1]) or not bool(torch.isfinite(patch).all()):
+            head=item.get('head')
+            features=list(range(value.shape[-1]))
+            if head is not None:
+                count,dim,index=head['count'],head['dimension'],head['index']
+                if not all(type(v)is int for v in (count,dim,index)) or count<=0 or dim<=0 or not 0<=index<count or count*dim!=value.shape[-1] or not is_input:
+                    raise ValueError('head replacement requires validated pre-projection input mapping')
+                features=list(range(index*dim,(index+1)*dim))
+            if tuple(patch.shape) != (len(positions), len(features)) or not bool(torch.isfinite(patch).all()):
                 raise ValueError('diagnostic patch shape/finiteness mismatch')
             changed = value.clone()
-            if item['mode'] == 'replace': changed[:, positions] = patch
-            elif item['mode'] == 'add': changed[:, positions] += patch
+            for row,position in enumerate(positions):
+                if item['mode'] == 'replace': changed[:, position, features] = patch[row]
+                elif item['mode'] == 'add': changed[:, position, features] += patch[row]
+                else: raise ValueError('unsupported diagnostic intervention')
+            if item['mode'] in ('replace','add'): pass
             else: raise ValueError('unsupported diagnostic intervention')
+            if is_input:return (changed,*args[1:])
             if isinstance(output, tuple): return (changed, *output[1:])
             if isinstance(output, list): return [changed, *output[1:]]
             return changed
@@ -144,7 +156,9 @@ class ActivationCapture:
                 self.attention_hooks(item)
             for item in self.spec.get('patches', []):
                 if item['module'] not in self.modules: raise ValueError('unknown diagnostic patch module')
-                self.handles.append(self.modules[item['module']].register_forward_hook(self.patch_hook(item)))
+                if item.get('kind','output')=='input':self.handles.append(self.modules[item['module']].register_forward_pre_hook(self.patch_hook(item)))
+                elif item.get('kind','output')=='output':self.handles.append(self.modules[item['module']].register_forward_hook(self.patch_hook(item)))
+                else:raise ValueError('unknown patch kind')
             return self
         except BaseException:
             self.__exit__(None, None, None)

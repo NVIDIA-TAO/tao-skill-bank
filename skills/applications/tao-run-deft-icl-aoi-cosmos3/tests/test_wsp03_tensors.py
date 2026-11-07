@@ -97,3 +97,33 @@ class CaptureTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
+class ScanTests(unittest.TestCase):
+    def test_scan_detects_bfloat16_nan_infinity_and_finite_values(self):
+        import torch
+        from safetensors.torch import save_file
+        from wsp03_scan import scan
+        with tempfile.TemporaryDirectory() as t:
+            base=Path(t)/'base';base.mkdir()
+            save_file({'weight':torch.tensor([1,float('nan'),float('inf'),-1],dtype=torch.bfloat16)},base/'model.safetensors')
+            result=scan(base,Path(t)/'report.json')
+            self.assertFalse(result['passed']);self.assertEqual(result['nonfinite_elements'],2)
+    def test_scan_refuses_truncated_payload(self):
+        import torch
+        from safetensors.torch import save_file
+        from wsp03_scan import scan
+        with tempfile.TemporaryDirectory() as t:
+            base=Path(t)/'base';base.mkdir();file=base/'model.safetensors'
+            save_file({'weight':torch.ones(4)},file);file.write_bytes(file.read_bytes()[:-2])
+            with self.assertRaises(Exception):scan(base,Path(t)/'report.json')
+
+class DiagnosticHeadTests(unittest.TestCase):
+    def test_preprojection_head_slice_changes_only_selected_head_then_removes_hook(self):
+        import torch
+        from wsp03_capture import ActivationCapture
+        model=torch.nn.Sequential(torch.nn.Linear(8,8,bias=False))
+        with torch.no_grad():model[0].weight.copy_(torch.eye(8))
+        x=torch.zeros(1,1,8)
+        spec={'patches':[{'module':'0','kind':'input','positions':[0],'mode':'replace','head':{'count':2,'dimension':4,'index':1},'values':[[1,2,3,4]]}]}
+        with ActivationCapture(model,spec):y=model(x)
+        self.assertEqual(y.tolist(),[[[0,0,0,0,1,2,3,4]]]);self.assertEqual(model(x).sum().item(),0)

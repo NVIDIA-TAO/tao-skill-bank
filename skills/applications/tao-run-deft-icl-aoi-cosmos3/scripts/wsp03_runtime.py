@@ -9,6 +9,7 @@ The scientific editor is deliberately not launched by this engineering entry.
 from __future__ import annotations
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -72,6 +73,21 @@ def validate_probe_inputs(requests, view, expected_ids_sha256):
     return needed
 
 
+def validate_worker_output(directory, requests, *, mode='generation', split='probe'):
+    directory=Path(directory)
+    rows=[json.loads(line) for line in (directory/'raw_answers.jsonl').read_text().splitlines()]
+    completion=json.loads((directory/'completion.json').read_text())
+    profile=json.loads((directory/'runtime_profile.json').read_text())
+    if [r['id'] for r in rows]!=[r['id'] for r in requests]:raise ValueError('worker output lacks exact ordered full membership')
+    for row,request in zip(rows,requests):
+        if row.get('completed') is not True or row.get('request_sha256')!=digest(request) or row.get('mode')!=mode:raise ValueError('worker answer identity/completion mismatch')
+    if completion.get('status')!='complete' or completion.get('n')!=len(requests) or completion.get('requests_sha256')!=digest(requests) or completion.get('mode')!=mode or completion.get('split')!=split:raise ValueError('worker completion receipt mismatch')
+    expected={'mode':mode,'split':split,'batch_size':1,'requests_sha256':digest(requests),'generation_hooks':False,
+        'candidate_manifest_sha256':None,'seed':42,'dtype':'bfloat16','attention':'sdpa','do_sample':False,'max_new_tokens':4096,'query_seconds':180}
+    if any(profile.get(k)!=v for k,v in expected.items()):raise ValueError('worker runtime profile mismatch')
+    return rows
+
+
 def compute_mode(gpu):
     p=subprocess.run(['nvidia-smi','-i',str(gpu),'--query-gpu=compute_mode','--format=csv,noheader'],check=True,text=True,capture_output=True)
     return p.stdout.strip()
@@ -100,14 +116,15 @@ def probe(*, model, zs_requests, icl_requests, input_view, output, image, lease_
             changed=False
             try:
                 if previous!='Exclusive_Process':set_compute_mode(gpu,'Exclusive_Process');changed=True
-                for label,path in zip(('zs','icl'),request_paths):
+                for label,path,batch in zip(('zs','icl'),request_paths,requests):
                     def admitted(job):
                         jobs.append(dict(job,mode=label));receipt.update(jobs=jobs,generation_passes=len(jobs))
                         json_write(output/'probe.json',receipt)
-                    gated_job(runtime,lease,'wsp03-probe-'+label,
+                    completed_job=gated_job(runtime,lease,'wsp03-probe-'+label,
                         ['/app/scripts/wsp03_worker.py','--model','/model','--requests','/request.json','--output','/results/worker','--mode','generation','--split','probe','--query-seconds',str(query_seconds)],
                         [(APP,'/app',True),(model,'/model',True),(view,'/input',True),(path,'/request.json',True)],
                         deadline=time.time()+64*query_seconds+900,on_admit=admitted)
+                    validate_worker_output(Path(completed_job['results_dir'])/'worker',batch)
                 receipt['status']='complete'
             finally:
                 for job in jobs:
@@ -125,15 +142,32 @@ def probe(*, model, zs_requests, icl_requests, input_view, output, image, lease_
         passes=[]
         for job in jobs:
             directory=Path(job['results_dir'])/'worker';answers=directory/'raw_answers.jsonl'
-            rows=[json.loads(line) for line in answers.read_text().splitlines()] if answers.exists() else []
-            times=sorted(r['wall_seconds'] for r in rows)
-            passes.append({'mode':job['mode'],'job_id':job['job_id'],'n':len(rows),'forward_wall_seconds':sum(times),
-                'mean_query_seconds':sum(times)/len(times) if times else None,
-                'p95_query_seconds':times[min(len(times)-1,int(.95*len(times)))] if times else None,
-                'input_tokens':sum(r['inference_input_tokens'] for r in rows),'output_tokens':sum(r['inference_output_tokens'] for r in rows),
-                'peak_allocated_bytes':max((r['peak_allocated_bytes'] for r in rows),default=None),
-                'peak_reserved_bytes':max((r['peak_reserved_bytes'] for r in rows),default=None),
-                'runtime_profile':str(directory/'runtime_profile.json'),'raw_answers':str(answers)})
+            rows=[];decode_errors=0
+            for line in answers.read_text().splitlines() if answers.exists() else []:
+                try:rows.append(json.loads(line))
+                except (ValueError,TypeError):decode_errors+=1
+            def numbers(key):
+                return [r[key] for r in rows if type(r.get(key)) in (int,float) and math.isfinite(r[key]) and r[key]>=0]
+            times=sorted(numbers('wall_seconds'))
+            complete=receipt['status']=='complete' and len(rows)==64 and not decode_errors
+            attempts_path=directory/'attempts.jsonl';attempts=[]
+            for line in attempts_path.read_text().splitlines() if attempts_path.exists() else []:
+                try:attempts.append(json.loads(line))
+                except (ValueError,TypeError):decode_errors+=1
+            answered={r.get('id') for r in rows}
+            unresolved=sorted({r.get('id') for r in attempts if isinstance(r.get('id'),str)}-answered)
+            passes.append({'mode':job['mode'],'job_id':job['job_id'],'n_completed_answers':len(rows),'n':len(rows),
+                'completed_forward_wall_seconds':sum(times),'forward_wall_seconds':sum(times) if complete else None,
+                'mean_query_seconds':sum(times)/len(times) if complete and times else None,
+                'p95_query_seconds':times[min(len(times)-1,int(.95*len(times)))] if complete and times else None,
+                'completed_input_tokens':sum(numbers('inference_input_tokens')),'completed_output_tokens':sum(numbers('inference_output_tokens')),
+                'input_tokens':sum(numbers('inference_input_tokens')) if complete else None,
+                'output_tokens':sum(numbers('inference_output_tokens')) if complete else None,
+                'token_total_coverage':'complete' if complete else 'unknown; completed-answer subtotals only',
+                'unresolved_query_ids':unresolved,'decode_errors':decode_errors,
+                'peak_allocated_bytes':max(numbers('peak_allocated_bytes'),default=None),
+                'peak_reserved_bytes':max(numbers('peak_reserved_bytes'),default=None),
+                'runtime_profile':str(directory/'runtime_profile.json'),'raw_answers':str(answers),'attempts':str(attempts_path)})
         receipt.update(wall_seconds=time.time()-started,passes=passes,jobs=jobs,generation_passes=len(jobs),ended_at=time.time())
         if receipt['status']=='complete':
             mean=max(p['mean_query_seconds'] for p in passes)

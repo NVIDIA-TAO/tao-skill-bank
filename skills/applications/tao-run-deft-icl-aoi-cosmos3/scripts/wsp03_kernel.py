@@ -68,7 +68,7 @@ def whole_tensor_scaling(base, edited):
 
 
 class TensorStore:
-    def __init__(self, base, output, *, max_tensors=32, max_elements=2000000000, storage_limit=250*1024**3):
+    def __init__(self, base, output, *, max_tensors=32, max_elements=2000000000, storage_limit=250*1024**3, max_candidate_attempts=98):
         from safetensors import safe_open
         self.base, self.output = Path(base).resolve(strict=True), Path(output).resolve(strict=False)
         if self.output.is_relative_to(self.base):
@@ -76,6 +76,8 @@ class TensorStore:
         self.output.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.max_tensors, self.max_elements, self.storage_limit = max_tensors, max_elements, storage_limit
         self.staged = {}
+        self.max_candidate_attempts=max_candidate_attempts
+        self.attempts_file=self.output/'candidate-attempts.jsonl'
         index = self.base / 'model.safetensors.index.json'
         if index.exists():
             self.index = json.loads(index.read_text())['weight_map']
@@ -154,9 +156,13 @@ class TensorStore:
     def commit_candidate(self, candidate, hypothesis, method='strict_wsp'):
         import torch
         from safetensors.torch import save_file
+        attempts=len(self.attempts_file.read_text().splitlines()) if self.attempts_file.exists() else 0
+        if attempts>=self.max_candidate_attempts:raise ValueError('candidate attempt budget exhausted')
+        append_event(self.attempts_file,{'attempt':attempts+1,'candidate':candidate,'time':time.time(),'hypothesis':hypothesis,'method':method})
+        if method=='algebraic_closed_form':method='gradient_free_algebraic'
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}', candidate) or candidate == 'base':
             raise ValueError('unsafe candidate ID')
-        if not hypothesis or method not in ('strict_wsp', 'algebraic_closed_form') or not self.staged:
+        if not hypothesis or method not in ('strict_wsp', 'gradient_free_algebraic', 'mixed') or not self.staged:
             raise ValueError('hypothesis, method and nonzero patch required')
         dst = self.output / candidate
         if dst.exists():

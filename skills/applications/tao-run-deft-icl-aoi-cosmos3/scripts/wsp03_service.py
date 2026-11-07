@@ -33,16 +33,20 @@ class Service:
     def dispatch(self, action, params):
         self.require_launch()
         if action=='status':return self.ledger.status()
-        if action=='python':return self.python(params['code'])
+        if action in ('python','tensor.read','reference.attribute','edit.family','edit.direction','edit.rank1','edit.memit','edit.head_scale','edit.commit','edit.replay','edit.revert','export.checkpoint'):
+            if self.contract.get('weights_frozen') and action not in ('tensor.read','reference.attribute','edit.replay','export.checkpoint'):raise AdmissionError('track weights are immutable')
+            return self.numeric(action,params)
+        if action in ('activation.read','activation.patch'):return self.forward('read',params)
+        if action=='eval.dev':return self.forward('explore',params)
         if action=='read':return self.forward('read',params)
         if action=='explore':return self.forward('explore',params)
         raise AdmissionError('editor action not exposed')
 
-    def python(self, code):
+    def numeric(self, action, params):
         self.require_launch();rid=uuid.uuid4().hex
-        self.ledger.admit('python',rid,{'code_sha256':digest(code)})
+        self.ledger.admit('python',rid,{'operation':action,'parameters_sha256':digest(params)})
         # An uncertain transport failure deliberately leaves the debit running.
-        response=self.kernel.call({'op':'python','code':code})
+        response=self.kernel.call({'op':'python','code':params['code']} if action=='python' else {'op':'atomic','operation':action,'parameters':params})
         self.ledger.finish(rid,{'complete':response.get('ok') is True,'response':response})
         for path in sorted(self.edit_root.glob('*/manifest.json')):
             manifest=json.loads(path.read_text());cid=manifest['id']
@@ -73,6 +77,9 @@ class Service:
             if len(refs)!=len(set(refs)) or not set(refs)<=pool or len(refs)>self.contract['max_references']:raise ValueError('reference pool/count violation')
             qjoint=self.contract['joints'][qid]
             if any(self.contract['joints'][ref]==qjoint for ref in refs):raise ValueError('same-joint reference excluded')
+            for field in ('source_ids','image_hashes','components'):
+                identities=self.contract.get(field)
+                if identities and any(identities[qid]==identities[ref] for ref in refs):raise ValueError(field+' reference exclusion')
             row=self.request_factory(qid,refs,mode)
             if row['id']!=qid or row.get('references',[])!=refs:raise ValueError('trusted renderer identity mismatch')
             if mode=='read':row=dict(row,capture=params.get('capture',{}))
@@ -103,4 +110,5 @@ class Service:
         if kind in ('explore','full'):
             metrics=self.grader(result,split)
             self.ledger.result(candidate,kind,metrics)
+            if not trusted:return {'complete':True,'candidate':candidate,'split':split,'metrics':metrics,'request_id':rid}
         return result

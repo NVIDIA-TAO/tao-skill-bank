@@ -19,9 +19,6 @@ class AdmissionError(RuntimeError):
     pass
 
 
-DEFAULT_CAPS = {
-    'T1': {'probe': 2, 'explore': 89, 'full': 3, 'trusted': 6, 'read': 100, 'python': 500, 'candidate': 98},
-    'T2': {'probe': 0, 'explore': 93, 'full': 3, 'trusted': 4, 'read': 100, 'python': 500, 'candidate': 98}}
 
 
 class Ledger:
@@ -44,10 +41,11 @@ class Ledger:
         for name in ('generation_passes', 'wall_seconds', 'gpu_allocated_seconds', 'input_tokens', 'output_tokens'):
             if not isinstance(debit.get(name), (int, float)) or not math.isfinite(debit[name]) or debit[name] < 0:
                 raise ValueError('invalid probe debit')
-        cap = dict(caps or DEFAULT_CAPS[track])
+        if caps is None:raise ValueError('explicit frozen versioned budget allocation required')
+        cap = dict(caps)
         cap.setdefault('baseline', 0)
-        if sum(cap[k] for k in ('probe', 'explore', 'full', 'trusted', 'baseline')) != 100 or cap['full'] > 3:
-            raise ValueError('generation allocation must total100 and finalists≤3')
+        if sum(cap[k] for k in ('probe', 'explore', 'full', 'trusted', 'baseline')) > 100 or cap['full'] > 3:
+            raise ValueError('authorized generation allocation must be≤100 and finalists≤3; unused capacity is unavailable')
         if debit['generation_passes'] > cap['probe'] or debit['wall_seconds'] >= development_wall:
             raise ValueError('probe exhausted allocation')
         contract = {'track': track, 'caps': cap, 'probe_debit': debit, 'full_size': full_size, 'explore_size': explore_size,
@@ -157,10 +155,11 @@ class Ledger:
 
     def finish(self, request_id, result):
         with self.tx():
-            row = self.db.execute('SELECT state FROM requests WHERE id=?', (request_id,)).fetchone()
+            row = self.db.execute('SELECT state,payload FROM requests WHERE id=?', (request_id,)).fetchone()
             if not row or row[0] != 'running':
                 raise AdmissionError('unknown or terminal request')
-            self.db.execute('UPDATE requests SET state=?,payload=? WHERE id=?', ('complete' if result.get('complete') else 'failed', canonical(result), request_id))
+            merged=dict(json.loads(row[1]),**result)
+            self.db.execute('UPDATE requests SET state=?,payload=? WHERE id=?', ('complete' if result.get('complete') else 'failed', canonical(merged), request_id))
             self.event('finish', {'id': request_id, 'result': result})
 
     def usage(self, response_id, input_tokens, output_tokens, cached_tokens):
@@ -215,7 +214,7 @@ class Ledger:
         records = []
         for cid, payload, manifest in self.db.execute('SELECT r.id,r.payload,c.payload FROM results r JOIN candidates c ON r.id=c.id WHERE r.phase=?', (phase,)):
             m, c = json.loads(payload), json.loads(manifest)
-            records.append(((-m['mcc'], -m['macro_f1'], m['invalid'], c['changed_elements'], cid), cid))
+            records.append(((-m['mcc'], -m['macro_f1'], m['invalid'], c.get('mean_reference_count',c['changed_elements']), cid), cid))
         return [cid for _, cid in sorted(records)]
 
     def nominate(self):
@@ -233,6 +232,10 @@ class Ledger:
             if self.get('phase') != 'finalists' or self.db.execute("SELECT 1 FROM requests WHERE state='running'").fetchone():
                 raise AdmissionError('freeze requires resolved finalist phase')
             ranked = self.ranked('full')
+            for cid in self.get('shortlist'):
+                attempted=self.db.execute("SELECT 1 FROM requests WHERE kind='full' AND state='failed' AND json_extract(payload,'$.candidate')=?",(cid,)).fetchone()
+                if cid not in ranked and not attempted and self.status()['remaining_development_seconds']>0:
+                    raise AdmissionError('unresolved finalist must be evaluated before freeze')
             selected = ranked[0] if ranked else None
             self.set('selected', selected)
             self.set('phase', 'frozen' if selected else 'no_valid_patch')

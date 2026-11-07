@@ -19,7 +19,7 @@ class StateTests(unittest.TestCase):
         self.mod = importlib.import_module('wsp03_state')
 
     def ledger(self, track='T1', **kw):
-        return self.mod.Ledger(self.path / 'state.sqlite', track=track, clock=lambda: 1000, **kw)
+        return self.mod.Ledger(self.path / 'state.sqlite', track=track, clock=lambda: 1000, caps={'probe':2,'baseline':5,'explore':88,'full':3,'trusted':2,'read':512,'python':500,'candidate':98}, **kw)
 
     def test_soft_stop_survives_reopen_and_keeps_trusted_path(self):
         x = self.ledger()
@@ -101,6 +101,8 @@ class StateTests(unittest.TestCase):
         x.nominate()
         with self.assertRaises(ValueError):
             x.result('a', 'full', {'n': 2916, 'complete': True, 'mcc': .9, 'macro_f1': .9, 'invalid': 0})
+        with self.assertRaises(self.mod.AdmissionError):x.freeze()
+        x.admit('full','failed-finalist',{'candidate':'a'});x.finish('failed-finalist',{'complete':False})
         self.assertIsNone(x.freeze())
         x.close()
 
@@ -124,9 +126,6 @@ class ResourceTests(unittest.TestCase):
                 with m.GPULease(Path(t) / 'gpu.lock', 'a', query=lambda: [{'pid': 123, 'memory_bytes': 1}]):
                     pass
 
-
-if __name__ == '__main__':
-    unittest.main()
 
 class DataTests(unittest.TestCase):
     def test_grouped_split_preserves_rare_and_rejects_size_drift(self):
@@ -162,3 +161,5 @@ class SourceGuardTests(unittest.TestCase):
             (root / 'mining/samples.jsonl').write_text('{}\n')
             with self.assertRaisesRegex(ValueError, 'source digest'):
                 m.prepare(root, root / 'missing', root.parent / 'unused-wsp03-fixture', expected_source_sha256='0' * 64)
+
+if __name__ == '__main__':unittest.main()
