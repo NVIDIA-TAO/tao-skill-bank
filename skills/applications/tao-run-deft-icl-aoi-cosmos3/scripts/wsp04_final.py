@@ -83,10 +83,14 @@ def requests_and_images(asset, destination, expected_refs):
 
 def run(config):
     cfg=json.loads(Path(config).read_text());freezes,states=freeze_gate(cfg)
+    operational=read(cfg['operational_policy'])
+    if (operational['query_seconds'],operational['job_seconds'])!=(600,21600):
+        raise ValueError('final operational deadlines differ from recorded policy')
     output=Path(cfg['output']);output.mkdir(parents=True,exist_ok=False)
     json_write(output/'attempt.json',{'schema':'wsp04-final/1','config_sha256':file_hash(config),
         'started_at':time.time(),'registration':cfg['registration'],'editor_states':states,
-        'freeze_bindings':{a:cfg['arms'][a]['freeze'] for a in ARMS},'automatic_retry':False})
+        'freeze_bindings':{a:cfg['arms'][a]['freeze'] for a in ARMS},'automatic_retry':False,
+        'operational_policy':cfg['operational_policy'],'operational_deadlines':operational})
     runtime=Docker(output/'jobs',cfg['image'],gpus='device=0')
     stop=threading.Event();sampler=threading.Thread(target=sample_gpu,args=(output,stop),daemon=True)
     sampler.start();results={}
@@ -111,9 +115,10 @@ def run(config):
                 'image_sha256':hashes,'automatic_retry':False,'profile':'C-nearest1' if arm=='W3' else 'B-single'})
             job=native(runtime,output,arm+'-benchmark',[CONTAINER_SCRIPTS+'/wsp03_worker.py',
                 '--model','/model','--candidate','/candidate','--requests','/requests.json',
-                '--output','/results/worker','--mode','generation','--split','benchmark'],
+                '--output','/results/worker','--mode','generation','--split','benchmark',
+                '--query-seconds',str(operational['query_seconds'])],
                 [*code_mounts(),(cfg['model'],'/model',True),(patch,'/candidate',True),
-                 (d/'input','/input',True),(requests,'/requests.json',True)],gpu=True,timeout=7200)
+                 (d/'input','/input',True),(requests,'/requests.json',True)],gpu=True,timeout=operational['job_seconds'])
             worker=Path(job['results_dir'])/'worker'
             raw=validate_worker_output(worker,reqs,mode='generation',split='benchmark',candidate_manifest_sha256=digest(manifest))
             if len(raw)!=271:raise ValueError('incomplete independent final pass')
