@@ -9,6 +9,7 @@ provides durable, bounded launch/monitoring and least-privilege runtime mounts.
 from __future__ import annotations
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -27,7 +28,8 @@ def json_write(path,value):
 class Docker:
     def __init__(self,root,image,*,gpus='device=0'):
         self.root=Path(root).resolve(); self.image=image; self.gpus=gpus
-        if '@sha256:' not in image: raise ValueError('resolved immutable image required')
+        if '@sha256:' not in image and re.fullmatch(r'sha256:[0-9a-f]{64}', image) is None:
+            raise ValueError('resolved immutable image required')
     def record(self,*args):
         return subprocess.check_output([sys.executable,str(BANK/'scripts/tao_job_record.py'),*args],text=True).strip()
     def submit(self,stage,command,*,mounts=(),env=(),gpu=True,network='none',entrypoint='/workspace/.venv/bin/python',retry_of=None,extra_args=(),on_open=None,launch_timeout=120):
