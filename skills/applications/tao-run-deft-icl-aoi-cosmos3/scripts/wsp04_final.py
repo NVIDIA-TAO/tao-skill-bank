@@ -3,8 +3,8 @@
 """Once-only final inference and paired statistics after every WSP04 editor stops.
 
 This host operation is never mounted in an editor. The config is assembled only
-after all three freezes. It binds original main-suite request/image views and
-historical B/C predictions; it never runs new baseline inference.
+after all four freezes. It binds original main-suite request/image views and
+historical B/C/D/F predictions; it never runs new baseline inference.
 """
 from __future__ import annotations
 import argparse, json, shutil, subprocess, threading, time
@@ -18,19 +18,24 @@ from wsp03_io import json_write
 from tht_contract import external_evaluator, grade
 from wsp03_statistics import paired
 
-ARMS=('W1','W2','W3')
-PAIRS=(('W1','B'),('W1','C'),('W2','W1'),('W2','C'),('W3','C'),('W3','W1'))
+ARMS=('W1','W2','W3','W4')
+PAIRS=(('W1','B'),('W1','C'),('W2','W1'),('W2','C'),('W3','C'),('W3','W1'),
+       ('W4','D'),('W4','C'),('W4','F'))
 
 def read(asset):return json.loads(pinned(**asset).read_text())
 
 def freeze_gate(cfg, state_reader=None):
-    if set(cfg['arms'])!=set(ARMS):raise ValueError('all three WSP04 records required')
+    if set(cfg['arms'])!=set(ARMS):raise ValueError('all four WSP04 records required')
     reg=read(cfg['registration'])
     if reg.get('schema')!='wsp04-registration/1':raise ValueError('wrong experiment registration')
+    extension=read(cfg['w4_registration'])
+    if extension.get('schema')!='wsp04-w4-registration/1' or extension.get('track')!='W4':
+        raise ValueError('wrong finetuned-base extension registration')
     states={};freezes={}
     for arm in ARMS:
         row=cfg['arms'][arm];f=read(row['freeze']);freezes[arm]=f
-        if f.get('track')!=arm or f.get('preregistration_sha256')!=cfg['registration']['sha256']:
+        registration=cfg['w4_registration'] if arm=='W4' else cfg['registration']
+        if f.get('track')!=arm or f.get('preregistration_sha256')!=registration['sha256']:
             raise ValueError('arm/preregistration binding differs')
         if f.get('status') not in ('FROZEN','NO_VALID_PATCH'):raise ValueError('unfinished track')
         if f['status']=='NO_VALID_PATCH' and (not f.get('reason') or not row.get('terminal_evidence')):
@@ -89,36 +94,40 @@ def run(config):
         raise ValueError('final operational deadlines differ from recorded policy')
     output=Path(cfg['output']);output.mkdir(parents=True,exist_ok=False)
     json_write(output/'attempt.json',{'schema':'wsp04-final/1','config_sha256':file_hash(config),
-        'started_at':time.time(),'registration':cfg['registration'],'editor_states':states,
+        'started_at':time.time(),'registration':cfg['registration'],'w4_registration':cfg['w4_registration'],'editor_states':states,
         'freeze_bindings':{a:cfg['arms'][a]['freeze'] for a in ARMS},'automatic_retry':False,
         'operational_policy':cfg['operational_policy'],'operational_deadlines':operational,'generation_amendment':cfg['generation_amendment'],'max_new_tokens':128})
     runtime=Docker(output/'jobs',cfg['image'],gpus='device=0')
     stop=threading.Event();sampler=threading.Thread(target=sample_gpu,args=(output,stop),daemon=True)
     sampler.start();results={}
     try:
-        if {p.name for p in Path(cfg['model']).iterdir() if p.is_file()}!=set(cfg['model_files']):
-            raise ValueError('incomplete original model inventory')
-        for name,expected in cfg['model_files'].items():
-            if Path(name).name!=name or file_hash(Path(cfg['model'])/name)!=expected:
-                raise ValueError('original model inventory changed')
+        if set(cfg['models'])!={'B','D'}:raise ValueError('explicit base Nano and finetuned D bindings required')
+        for base in cfg['models'].values():
+            if {p.name for p in Path(base['path']).iterdir() if p.is_file()}!=set(base['files']):
+                raise ValueError('incomplete model inventory')
+            for name,expected in base['files'].items():
+                if Path(name).name!=name or file_hash(Path(base['path'])/name)!=expected:
+                    raise ValueError('frozen base model inventory changed')
         for arm in ARMS:
             d=output/arm;d.mkdir()
             if freezes[arm]['status']=='NO_VALID_PATCH':
                 results[arm]={'status':'NO_VALID_PATCH','reason':freezes[arm]['reason'],'inference_passes':0}
                 json_write(d/'result.json',results[arm]);continue
             row=cfg['arms'][arm];src=Path(row['patch_manifest']['path']).parent
+            base_id='D' if arm=='W4' else 'B';base=cfg['models'][base_id]
             patch=d/'patch';shutil.copytree(src,patch)
             if file_hash(patch/'manifest.json')!=row['patch_manifest']['sha256']:raise ValueError('patch copy changed')
             manifest=json.loads((patch/'manifest.json').read_text())
             reqs,hashes=requests_and_images(cfg['icl_requests' if arm=='W3' else 'single_requests'],d/'input',1 if arm=='W3' else 0)
             requests=d/'requests.json';json_write(requests,reqs)
             json_write(d/'binding.json',{'requests_sha256':digest(reqs),'patch_sha256':row['patch_manifest']['sha256'],
-                'image_sha256':hashes,'automatic_retry':False,'profile':'C-nearest1' if arm=='W3' else 'B-single'})
+                'image_sha256':hashes,'automatic_retry':False,'profile':'C-nearest1' if arm=='W3' else 'single',
+                'base_arm':base_id,'base_model_files':base['files']})
             job=native(runtime,output,arm+'-benchmark',[CONTAINER_SCRIPTS+'/wsp03_worker.py',
                 '--model','/model','--candidate','/candidate','--requests','/requests.json',
                 '--output','/results/worker','--mode','generation','--split','benchmark',
                 '--query-seconds',str(operational['query_seconds']),'--max-new-tokens','128'],
-                [*code_mounts(),(cfg['model'],'/model',True),(patch,'/candidate',True),
+                [*code_mounts(),(base['path'],'/model',True),(patch,'/candidate',True),
                  (d/'input','/input',True),(requests,'/requests.json',True)],gpu=True,timeout=operational['job_seconds'])
             worker=Path(job['results_dir'])/'worker'
             raw=validate_worker_output(worker,reqs,mode='generation',split='benchmark',candidate_manifest_sha256=digest(manifest),max_new_tokens=128,query_seconds=operational['query_seconds'])
@@ -136,7 +145,7 @@ def run(config):
         evaluator=external_evaluator(cfg['evaluator_directory']);arms={}
         gold_by_id={r['id']:r['labels'][0] for r in gold}
         if len(gold)!=271 or len(gold_by_id)!=271:raise ValueError('exact271 gold identities required')
-        for arm in ('B','C'):
+        for arm in ('B','C','D','F'):
             arms[arm]=read(cfg['historical_predictions'][arm])
             historical={r['id']:r['truth'] for r in arms[arm]['predictions']}
             if historical!=gold_by_id or len(arms[arm]['predictions'])!=271:
