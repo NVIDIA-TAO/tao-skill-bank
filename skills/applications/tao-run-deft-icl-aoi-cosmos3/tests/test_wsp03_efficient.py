@@ -127,6 +127,44 @@ class Efficient(unittest.TestCase):
                 fast_profile=dict(fast_profile, candidate_manifest_sha256='wrong'),
                 frozen_profile=profile, base_inventory_sha256='base')
 
+    def test_production_preamble_merges_identity_and_selects_each_backend(self):
+        class FakeBatch:
+            processor = type('Processor', (), {'chat_template': 'fixture'})
+            def __init__(self, cfg):
+                pass
+            def generate(self, batch):
+                return [dict(rows(1)[0], id=item['id'], rendered_prompt='fixture') for item in batch]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            requests = [{'id': str(i), 'messages': [], 'references': []} for i in range(64)]
+            (root/'requests.json').write_text(json.dumps(requests))
+            (root/'ids.json').write_text(json.dumps([str(i) for i in range(64)]))
+            identity = {'base_inventory_sha256': 'frozen-base', 'candidate_manifest_sha256': 'frozen-patch'}
+            for backend, selected_name, unused_name in (
+                    ('hf', 'HFBatch', 'VLLMBatch'), ('vllm', 'VLLMBatch', 'HFBatch')):
+                with self.subTest(backend=backend):
+                    cfg = {'split': 'development', 'stage': 'PARITY64', 'requests': str(root/'requests.json'),
+                           'development_ids': str(root/'ids.json'), 'output': str(root/backend),
+                           'track_started_at': time.time(), 'candidate_id': 'x'}
+                    selection = {'backend': backend, 'reason': 'mocked availability'}
+                    with patch.object(fast, 'evaluator_for', return_value=Evaluator), patch.object(fast, 'verify_model', return_value=identity) as verify, patch.object(fast, 'select_backend', return_value=selection) as select, patch.object(fast, selected_name, side_effect=FakeBatch) as selected, patch.object(fast, unused_name, side_effect=AssertionError('wrong backend')) as unused:
+                        # Deliberately do not inject backend_factory: exercise the
+                        # production preamble used by the actual paired64 probe.
+                        receipt = fast.generation(cfg)
+                    verify.assert_called_once_with(cfg)
+                    select.assert_called_once_with(cfg)
+                    selected.assert_called_once_with(cfg)
+                    unused.assert_not_called()
+                    self.assertEqual(receipt['status'], 'COMPLETE')
+                    self.assertEqual(receipt['n'], 64)
+                    self.assertEqual(receipt['backend'], backend)
+                    for key, value in identity.items():
+                        self.assertEqual(receipt[key], value)
+                    profile = json.loads((root/backend/'runtime_profile.json').read_text())
+                    self.assertEqual(profile['candidate_manifest_sha256'], 'frozen-patch')
+                    self.assertEqual(profile['max_new_tokens'], 4096)
+                    self.assertFalse(profile['do_sample'])
+
     def test_atomic_degenerate_pass_retains32_and_refuses_retry(self):
         class FakeBatch:
             calls = 0

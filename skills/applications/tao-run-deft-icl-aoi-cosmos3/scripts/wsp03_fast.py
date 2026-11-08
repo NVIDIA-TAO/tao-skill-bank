@@ -321,7 +321,8 @@ def generation(cfg, *, backend_factory=None, evaluator=None):
             raise TimeoutError("six-hour track wall already exhausted")
         evaluator = evaluator or evaluator_for(cfg)
         if backend_factory is None:
-            profile.update(verify_model(cfg), select_backend(cfg))
+            profile.update(verify_model(cfg))
+            profile.update(select_backend(cfg))
             backend_factory = HFBatch if profile['backend'] == 'hf' else VLLMBatch
         else:
             profile.update(cfg.get('fixture_identity', {}), backend='synthetic')
