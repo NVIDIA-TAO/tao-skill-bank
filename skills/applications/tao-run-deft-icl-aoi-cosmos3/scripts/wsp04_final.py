@@ -52,8 +52,10 @@ def freeze_gate(cfg, state_reader=None):
             if not manifest.get('valid') or manifest.get('changed_elements',0)<=0:
                 raise ValueError('frozen edited patch must be finite, nonempty and valid')
             for item in manifest['tensors']:
-                p=Path(row['patch_manifest']['path']).parent/item['file']
-                if not p.is_file() or p.is_symlink():raise ValueError('replacement tensor missing/unsafe')
+                parent=Path(row['patch_manifest']['path']).parent.resolve()
+                p=parent/item['file']
+                if not p.is_file() or p.is_symlink() or p.resolve().parent!=parent:
+                    raise ValueError('replacement tensor missing/unsafe')
     return freezes,states
 
 def requests_and_images(asset, destination, expected_refs):
@@ -89,6 +91,8 @@ def run(config):
     stop=threading.Event();sampler=threading.Thread(target=sample_gpu,args=(output,stop),daemon=True)
     sampler.start();results={}
     try:
+        if {p.name for p in Path(cfg['model']).iterdir() if p.is_file()}!=set(cfg['model_files']):
+            raise ValueError('incomplete original model inventory')
         for name,expected in cfg['model_files'].items():
             if Path(name).name!=name or file_hash(Path(cfg['model'])/name)!=expected:
                 raise ValueError('original model inventory changed')
@@ -135,7 +139,8 @@ def run(config):
             if results[arm]['status']!='COMPLETE':continue
             raw=[json.loads(s) for s in (Path(results[arm]['worker'])/'raw_answers.jsonl').read_text().splitlines()]
             arms[arm]=grade(raw,gold,evaluator);json_write(output/arm/'score.json',arms[arm])
-        identities=read(cfg['identities'])
+        identities=read(cfg['identities']) if cfg.get('identities') else read(
+            cfg['identities_from_statistics'])['splits']['benchmark']['identities']
         stats=paired(arms,identities,evaluator,expected_groups=255,pairs=PAIRS)
         stats['unavailable']={a:results[a] for a in ARMS if results[a]['status']!='COMPLETE'}
         stats['skipped_pairs']=[{'left':a,'right':b,'reason':'one or both arms unavailable'} for a,b in PAIRS if a not in arms or b not in arms]
