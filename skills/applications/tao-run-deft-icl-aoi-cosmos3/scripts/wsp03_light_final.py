@@ -18,6 +18,8 @@ from wsp03_statistics import run as statistics,paired
 from wsp03_worker import digest
 from tht_contract import external_evaluator,grade
 
+EXTENSIONS = {'R3-ext': 'r3_ext', 'R3-ext2': 'r3_ext2', 'R4-ext': 'r4_ext'}
+
 APP=Path(__file__).resolve().parent
 CONTAINER_SCRIPTS='/bank/'+APP.relative_to(BANK).as_posix()
 
@@ -37,23 +39,51 @@ def claim(path,value):
 
 
 def freeze_gate(cfg):
-    extended=bool(cfg.get('r3_ext'))
-    expected_editors={'R3','R4','R3-ext'} if extended else {'R3','R4'}
-    if set(cfg['freezes'])!={'R3','R4'} or set(cfg['editor_containers'])!=expected_editors:
-        raise ValueError('all configured editor tracks and their container lists required')
-    if bool(cfg.get('r4_c_freeze'))!=extended:raise ValueError('extended evaluation requires both R3-ext and R4-C freeze bindings')
-    freezes={name:read(asset) for name,asset in cfg['freezes'].items()}
-    if extended:
-        freezes['R4-C']=read(cfg['r4_c_freeze']);freezes['R3-ext']=read(cfg['r3_ext']['freeze'])
-        preregistration=pinned(**cfg['r3_ext']['preregistration'])
-        if freezes['R3-ext'].get('preregistration_sha256')!=file_hash(preregistration):raise ValueError('R3-ext freeze must bind its own preregistration')
-        if freezes['R4-C'].get('profile')!='P01' or freezes['R4-C'].get('patch_manifest_sha256')!=cfg['r4_selection']['patch_manifest_sha256']:
-            raise ValueError('R4-C must freeze P01 with original frozen R3 weights')
-    if any(value.get('status')!='FROZEN' for value in freezes.values()):
-        raise ValueError('all configured arms must be successfully FROZEN; no base substitution')
-    selection=cfg['r4_selection']
-    if selection['freeze_sha256']!=cfg['freezes']['R4']['sha256'] or selection['profile'] not in PROFILES:
-        raise ValueError('normalized R4 selection must bind its exact freeze and registered profile')
+    required = {'R3', 'R4', 'R3-ext', 'R3-ext2', 'R4-ext'}
+    if set(cfg.get('freezes', {})) != {'R3', 'R4'} or set(cfg.get('editor_containers', {})) != required:
+        raise ValueError('all six frozen arms and all five stopped editor tracks required')
+    if not cfg.get('r4_c_freeze') or any(not cfg.get(key) for key in ('r3_ext', 'r3_ext2', 'r4_ext')):
+        raise ValueError('six-arm freeze gate: missing extension or R4-C binding')
+    freezes = {name: read(asset) for name, asset in cfg['freezes'].items()}
+    freezes['R4-C'] = read(cfg['r4_c_freeze'])
+    for arm, key in EXTENSIONS.items():
+        extension = cfg[key]
+        freezes[arm] = read(extension['freeze'])
+        preregistration = pinned(**extension['preregistration'])
+        if freezes[arm].get('preregistration_sha256') != file_hash(preregistration):
+            raise ValueError(arm + ' freeze must bind its own preregistration')
+    if any(freezes[arm].get('status') != 'FROZEN' for arm in ('R3', 'R4', 'R4-C')):
+        raise ValueError('original three arms must be FROZEN')
+    for arm in EXTENSIONS:
+        value = freezes[arm]
+        if value.get('status') not in ('FROZEN', 'NO_VALID_PATCH'):
+            raise ValueError('all six tracks must be frozen or terminal before protected reads')
+        if value['status'] == 'NO_VALID_PATCH' and (
+                not isinstance(value.get('reason'), str) or not value['reason'].strip()
+                or not isinstance(value.get('counts'), dict) or not value['counts']):
+            raise ValueError('NO_VALID_PATCH requires immutable reason and candidate/stage counts')
+    selection = cfg['r4_selection']
+    if selection['freeze_sha256'] != cfg['freezes']['R4']['sha256'] or selection['profile'] != 'P09':
+        raise ValueError('original R4 selection must bind its exact freeze and P09')
+    if freezes['R4-C'].get('profile') != 'P01' or freezes['R4-C'].get('patch_manifest_sha256') != selection['patch_manifest_sha256']:
+        raise ValueError('R4-C must freeze P01 with original frozen R3 weights')
+    if freezes['R3-ext2'].get('parent') != 'base':
+        raise ValueError('R3-ext2 parent must be pristine base')
+    r4ext = freezes['R4-ext']
+    if (r4ext.get('parent') != 'R4' or r4ext.get('parent_freeze_sha256') != cfg['freezes']['R4']['sha256']
+            or r4ext.get('profile') != 'P09' or r4ext.get('reference_state_sha256') != cfg['reference_state']['sha256']):
+        raise ValueError('R4-ext must retain original R4 parent, P09 and reference state')
+    plan = read(cfg['extension_statistics'])
+    if set(plan) != set(EXTENSIONS):
+        raise ValueError('pinned statistics plan required for all extension arms')
+    available = {'B', 'C', 'R3', 'R4', 'R4-C'}
+    for arm in EXTENSIONS:
+        available.add(arm)
+        pairs = plan[arm]
+        if not pairs or any(len(pair) != 2 or pair[0] != arm or pair[1] not in available-{arm} for pair in pairs):
+            raise ValueError('post-hoc statistics pairs must bind available earlier arms')
+    if ['R4-ext', 'R4'] not in plan['R4-ext']:
+        raise ValueError('R4-ext minus original R4 is the required primary weight comparison')
     states={}
     for track,containers in cfg['editor_containers'].items():
         if not containers:raise ValueError('editor container identity required for '+track)
@@ -66,7 +96,7 @@ def freeze_gate(cfg):
 
 
 def snapshot_patch(cfg,freeze,output,*,arm='R3'):
-    extension=cfg.get('r3_ext',{}) if arm=='R3-ext' else {}
+    extension=cfg.get(EXTENSIONS.get(arm,''),{})
     source=Path(extension['export'] if extension else cfg['r3_export']);patch=source/'patch';files={}
     suffix='/'+extension.get('export_directory_name',source.name)+'/'
     for path in patch.rglob('*'):
@@ -83,9 +113,9 @@ def snapshot_patch(cfg,freeze,output,*,arm='R3'):
     shutil.copytree(patch,output)
     for name,expected in files.items():
         if file_hash(output/name)!=expected:raise ValueError('patch copy changed')
-    filename='patch-binding-r3-ext.json' if extension else 'patch-binding.json'
+    filename='patch-binding-'+arm.lower()+'.json' if extension else 'patch-binding.json'
     json_write(output.parent/filename,{'files':files,'manifest_digest':digest(manifest),'replay':'absolute replacements once onto original model before CUDA',
-        'arms':['R3-ext'] if extension else ['R3','R4','R4-C'],'post_hoc':bool(extension)})
+        'arms':[arm] if extension else ['R3','R4','R4-C'],'post_hoc':bool(extension)})
     return manifest
 
 
@@ -159,7 +189,7 @@ def evaluate(cfg,recipe,runtime,patch,manifest,output,arm,profile,split):
     request=directory/'requests.json';json_write(request,rows)
     binding={'arm':arm,'profile':profile,'split':split,'requests_sha256':digest(rows),'patch_manifest_sha256':digest(manifest),
              'image_sha256':{key:file_hash(value) for key,value in images.items()},'attempted_at':time.time()}
-    if arm=='R3-ext':binding['post_hoc']=True
+    if arm in EXTENSIONS:binding['post_hoc']=True
     claim(directory/'attempt.json',binding)
     job=native(runtime,output,arm+'-'+split,[CONTAINER_SCRIPTS+'/wsp03_worker.py','--model','/model','--candidate','/candidate','--requests','/requests.json','--output','/results/worker','--mode','generation','--split',split],
         [*code_mounts(),(cfg['model'],'/model',True),(patch,'/candidate',True),(inputs,'/input',True),(request,'/requests.json',True)],gpu=True,timeout=cfg.get('pass_timeout_seconds',7200))
@@ -188,30 +218,56 @@ def score_all(cfg,recipe,results,output):
         payload['splits'][split]={'arms':arms,'identities':identities,'aliases':aliases}
     path=output/'statistics-input.json';json_write(path,payload)
     original=statistics(path,output/'statistics.json',cfg['evaluator_directory'])
-    if cfg.get('r3_ext'):
-        extension={'arm':'R3-ext','analysis':'post-hoc extension after original R3 development results; not a replacement for preregistered R3',
-            'freeze':cfg['r3_ext']['freeze'],'preregistration':cfg['r3_ext']['preregistration'],'editor_token_limit':None,'splits':{}}
-        for split in ('holdout','benchmark'):
-            result=results['R3-ext:'+split];raw=Recipe.jsonl(Path(result['raw_directory'])/'raw_answers.jsonl')
-            gold=Recipe.jsonl(pinned(**cfg['final_inputs'][split+'_gold']));score=grade(raw,gold,evaluator)
-            json_write(output/'arms'/split/'R3-ext'/'score.json',score)
-            source=payload['splits'][split]
-            arms={name:value for name,value in source['arms'].items() if name in ('R3','B','C')};arms['R3-ext']=score
-            extension['splits'][split]=paired(arms,source['identities'],evaluator,expected_groups=255 if split=='benchmark' else 600,
-                pairs=(('R3-ext','C'),('R3-ext','B'),('R3-ext','R3')))
-        json_write(output/'statistics-r3-ext.json',extension)
+    plan = read(cfg['extension_statistics'])
+    scores = {split: dict(payload['splits'][split]['arms']) for split in ('holdout', 'benchmark')}
+    for arm, key in EXTENSIONS.items():
+        extension = {'arm': arm, 'analysis': 'post-hoc extension; original main analysis unchanged',
+            'freeze': cfg[key]['freeze'], 'preregistration': cfg[key]['preregistration'],
+            'statistics_plan': cfg['extension_statistics'], 'editor_token_limit': None, 'splits': {}}
+        for split in ('holdout', 'benchmark'):
+            result = results[arm+':'+split]
+            pairs = tuple(tuple(pair) for pair in plan[arm])
+            if result.get('status') == 'NO_VALID_PATCH':
+                unavailable = {'status': 'UNAVAILABLE', 'reason': result['reason'],
+                    'pairs': {}, 'skipped_pairs': [
+                        {'left': left, 'right': right, 'reason': arm+' NO_VALID_PATCH: '+result['reason']}
+                        for left, right in pairs]}
+                json_write(output/'arms'/split/arm/'score.json', unavailable)
+                extension['splits'][split] = unavailable
+                continue
+            raw = Recipe.jsonl(Path(result['raw_directory'])/'raw_answers.jsonl')
+            gold = Recipe.jsonl(pinned(**cfg['final_inputs'][split+'_gold']))
+            score = grade(raw, gold, evaluator)
+            json_write(output/'arms'/split/arm/'score.json', score)
+            scores[split][arm] = score
+            source = payload['splits'][split]
+            needed = {name for pair in pairs for name in pair}
+            arms = {name: value for name, value in scores[split].items() if name in needed}
+            valid_pairs = tuple(pair for pair in pairs if all(name in arms for name in pair))
+            extension['splits'][split] = paired(arms, source['identities'], evaluator,
+                expected_groups=255 if split=='benchmark' else 600, pairs=valid_pairs)
+            extension['splits'][split]['skipped_pairs'] = [
+                {'left': left, 'right': right,
+                 'reason': results.get(right+':'+split, {}).get('reason', right+' unavailable for '+split)}
+                for left, right in pairs if (left, right) not in valid_pairs]
+        json_write(output/('statistics-'+arm.lower()+'.json'), extension)
     return original
 
 
 def write_results(output,results):
     # Keep the original six-key result contract unchanged for existing reports.
-    json_write(output/'results.json',{key:value for key,value in results.items() if not key.startswith('R3-ext:')})
-    extension={key:value for key,value in results.items() if key.startswith('R3-ext:')}
-    if extension:json_write(output/'results-r3-ext.json',extension)
+    json_write(output/'results.json', {key: value for key, value in results.items()
+        if key.split(':', 1)[0] in ('R3', 'R4', 'R4-C')})
+    for arm in EXTENSIONS:
+        extension = {key: value for key, value in results.items() if key.startswith(arm+':')}
+        if extension:
+            json_write(output/('results-'+arm.lower()+'.json'), extension)
 
 
-def evaluate_arms(cfg,recipe,runtime,patch,manifest,output,ext_patch=None,ext_manifest=None,results=None):
+def evaluate_arms(cfg,recipe,runtime,patch,manifest,output,ext_patch=None,ext_manifest=None,results=None,extension_patches=None,terminal_extensions=None):
     selected=cfg['r4_selection']['profile'];results={} if results is None else results
+    patches = dict(extension_patches or {})
+    if ext_patch is not None: patches['R3-ext'] = (ext_patch, ext_manifest)
     for split in ('holdout','benchmark'):
         for arm,profile in [('R3','P00'),('R4-C','P01')]+([('R4',selected)] if selected not in ('P00','P01') else []):
             results[arm+':'+split]=evaluate(cfg,recipe,runtime,patch,manifest,output,arm,profile,split)
@@ -220,10 +276,27 @@ def evaluate_arms(cfg,recipe,runtime,patch,manifest,output,ext_patch=None,ext_ma
             source='R3' if selected=='P00' else 'R4-C';result=dict(results[source+':'+split],arm='R4',alias_of=source+':'+split,generation_debit=0)
             destination=output/'arms'/split/'R4';destination.mkdir();json_write(destination/'result.json',result);results['R4:'+split]=result
             write_results(output,results)
-        if cfg.get('r3_ext'):
-            results['R3-ext:'+split]=evaluate(cfg,recipe,runtime,ext_patch,ext_manifest,output,'R3-ext','P00',split)
-            results['R3-ext:'+split]['post_hoc']=True
-            write_results(output,results)
+        for arm, key in EXTENSIONS.items():
+            if not cfg.get(key):
+                continue
+            terminal = (terminal_extensions or {}).get(arm, {})
+            if terminal.get('status') == 'NO_VALID_PATCH':
+                unavailable = {'arm': arm, 'split': split, 'status': 'NO_VALID_PATCH',
+                    'available': False, 'post_hoc': True, 'reason': terminal['reason'],
+                    'counts': terminal['counts'], 'generation_debit': 0,
+                    'inference_skipped': True, 'no_base_substitution': True}
+                destination = output/'arms'/split/arm
+                destination.mkdir(parents=True, exist_ok=False)
+                json_write(destination/'result.json', unavailable)
+                results[arm+':'+split] = unavailable
+                write_results(output, results)
+                continue
+            extra_patch, extra_manifest = patches[arm]
+            profile = 'P09' if arm == 'R4-ext' else 'P00'
+            results[arm+':'+split] = evaluate(cfg, recipe, runtime, extra_patch, extra_manifest,
+                                            output, arm, profile, split)
+            results[arm+':'+split]['post_hoc'] = True
+            write_results(output, results)
     return results
 
 
@@ -240,13 +313,17 @@ def sample_gpu(output,stop):
 def run(config_file):
     cfg=json.loads(Path(config_file).read_text());freezes,states=freeze_gate(cfg)
     output=Path(cfg['output']);output.mkdir(parents=True,exist_ok=False)
-    claim(output/'attempt.json',{'config_sha256':file_hash(config_file),'freezes':dict(cfg['freezes'],**({'R4-C':cfg['r4_c_freeze'],'R3-ext':cfg['r3_ext']['freeze']} if cfg.get('r3_ext') else {})),'editor_states':states,'started_at':time.time(),'automatic_retry':False})
+    claim(output/'attempt.json',{'config_sha256':file_hash(config_file),'freezes':dict(cfg['freezes'], **{'R4-C': cfg['r4_c_freeze']}, **{arm: cfg[key]['freeze'] for arm,key in EXTENSIONS.items()}),'editor_states':states,'started_at':time.time(),'automatic_retry':False})
     results={};started=time.time();stop=threading.Event();sampler=threading.Thread(target=sample_gpu,args=(output,stop),daemon=True);sampler.start();terminal='failed'
     try:
         patch=output/'frozen-patch';manifest=snapshot_patch(cfg,freezes['R3'],patch)
-        ext_patch=ext_manifest=None
-        if cfg.get('r3_ext'):
-            ext_patch=output/'frozen-patch-r3-ext';ext_manifest=snapshot_patch(cfg,freezes['R3-ext'],ext_patch,arm='R3-ext')
+        extension_patches = {}
+        for arm, key in EXTENSIONS.items():
+            if freezes[arm]['status'] == 'NO_VALID_PATCH':
+                continue
+            ext_patch = output/('frozen-patch-'+arm.lower())
+            ext_manifest = snapshot_patch(cfg, freezes[arm], ext_patch, arm=arm)
+            extension_patches[arm] = (ext_patch, ext_manifest)
         if not cfg.get('model_files'):raise ValueError('original frozen model file inventory required')
         for relative,expected in cfg['model_files'].items():
             name=Path(relative)
@@ -256,7 +333,7 @@ def run(config_file):
         runtime=Docker(output/'jobs',cfg['image'],gpus='device='+str(cfg.get('gpu',0)))
         data_runtime=Docker(output/'jobs',cfg['data_image'],gpus='device='+str(cfg.get('gpu',0)))
         prepare_inputs(cfg,recipe,freezes,runtime,data_runtime,output)
-        results=evaluate_arms(cfg,recipe,runtime,patch,manifest,output,ext_patch,ext_manifest,results=results)
+        results=evaluate_arms(cfg,recipe,runtime,patch,manifest,output,results=results,extension_patches=extension_patches,terminal_extensions=freezes)
         score_all(cfg,recipe,results,output);terminal='complete'
     finally:
         stop.set();sampler.join(timeout=6)

@@ -31,23 +31,18 @@ class LightExtension(unittest.TestCase):
                 override.write_text(json.dumps(bad))
                 with self.assertRaises(ValueError):light.budget_policy({},'owned',override)
 
-    def test_four_freezes_and_stopped_editors(self):
+    def test_six_freezes_and_stopped_editors(self):
+        from test_wsp03_efficient import final_config
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);base=asset(root/'r3.json',{'status':'FROZEN'});r4=asset(root/'r4.json',{'status':'FROZEN'})
-            prereg=asset(root/'prereg.json',{'before_own_results':True})
-            ext=asset(root/'ext.json',{'status':'FROZEN','preregistration_sha256':prereg['sha256']})
-            control=asset(root/'r4c.json',{'status':'FROZEN','profile':'P01','patch_manifest_sha256':'old-patch'})
-            cfg={'freezes':{'R3':base,'R4':r4},'r4_selection':{'freeze_sha256':r4['sha256'],'profile':'P02','patch_manifest_sha256':'old-patch'},
-                 'editor_containers':{'R3':['one'],'R4':['two'],'R3-ext':['three']},'r4_c_freeze':control,'r3_ext':{'freeze':ext,'preregistration':prereg}}
-            with patch.object(final.subprocess,'check_output',return_value='{"Running":false,"Status":"exited"}') as inspect:
-                freezes,_=final.freeze_gate(cfg);self.assertEqual(set(freezes),{'R3','R4','R4-C','R3-ext'});self.assertEqual(inspect.call_count,3)
-                del cfg['r4_c_freeze']
-                with self.assertRaises(ValueError):final.freeze_gate(cfg)
-                cfg['r4_c_freeze']=control
-            with patch.object(final.subprocess,'check_output',return_value='{"Running":true,"Status":"running"}'):
-                with self.assertRaises(RuntimeError):final.freeze_gate(cfg)
-            cfg['r3_ext']['preregistration']=asset(root/'other.json',{'changed':True})
-            with self.assertRaises(ValueError):final.freeze_gate(cfg)
+            cfg = final_config(Path(tmp))
+            with patch.object(final.subprocess, 'check_output', return_value='{"Running":false,"Status":"exited"}') as inspect:
+                freezes, _ = final.freeze_gate(cfg)
+                self.assertEqual(set(freezes), {'R3','R4','R4-C','R3-ext','R3-ext2','R4-ext'})
+                self.assertEqual(inspect.call_count, 5)
+            with patch.object(final.subprocess, 'check_output', return_value='{"Running":true,"Status":"running"}'):
+                with self.assertRaises(RuntimeError): final.freeze_gate(cfg)
+            del cfg['r3_ext2']
+            with self.assertRaises(ValueError): final.freeze_gate(cfg)
 
     def test_distinct_base_relative_patch_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:
