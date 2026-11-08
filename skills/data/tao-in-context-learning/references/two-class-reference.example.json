@@ -1,0 +1,34 @@
+{
+  "schema": "tao-reference-preparation/1",
+  "mode": "similarity",
+  "classes": [
+    "class-a",
+    "class-b",
+    "class-c"
+  ],
+  "reference_capacity": 2,
+  "queries": {
+    "path": "/input/queries.json",
+    "sha256": "REPLACE_WITH_SHA256"
+  },
+  "references": {
+    "path": "/input/mining-references.json",
+    "sha256": "REPLACE_WITH_SHA256"
+  },
+  "output": "/results/private-references.json",
+  "policy": {
+    "toolset": "similarity-reference-v2",
+    "version": 2,
+    "max_calls": 1,
+    "rationale": "Fixed comparison: two candidate classes, one example each.",
+    "parameters": {
+      "strategy": "different_classes",
+      "reference_count": 2,
+      "class_count": 2,
+      "per_class": 1,
+      "distinct_joints": true,
+      "ordering": "class_ranked",
+      "instruction": "Use these labeled examples as visual references. The final label may be any configured task class."
+    }
+  }
+}

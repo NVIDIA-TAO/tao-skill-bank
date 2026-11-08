@@ -4,7 +4,7 @@ description: Run Cosmos3 AOI DEFT with adaptive in-context learning, including t
 license: Apache-2.0 AND CC-BY-4.0
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Cosmos3 AOI with ICL
@@ -24,7 +24,46 @@ Read its backend contract and the Docker platform skill before execution.
   target and the copied [paired workflow](references/paired-workflow.md).
   Its binary Benchmark-gate behavior does not apply to the THT suite.
 - General ICL policy/toolset work delegates to `tao-in-context-learning`.
-  Do not substitute a fixed grid or preselect twelve candidates.
+  The frozen legacy six-arm suite retains its adaptive policy protocol. New
+  user-requested fixed comparisons and grid/tool harnesses use the separate
+  routing below; never silently rewrite an old frozen policy.
+
+## High-level ICL routing
+
+The application owns the experiment question, data roles, model/prompt/runtime,
+Proxy budget and final freeze. The data skill owns reference selection and
+presentation; future toolsets are selected explicitly through configuration.
+A new reference strategy does not require changing the legacy six-arm suite.
+
+- **One-shot similarity**: one nearest labeled Mining image plus query to the
+  VLM. Keep the original C/E profile when reproducing those frozen arms.
+- **Similarity-only baseline**: copy the same nearest reference label, no VLM.
+  Report it independently of Nano; a labeled reference pool is not zero-shot.
+- **Fixed few-shot comparison**: nearest-N, or top candidate classes with a
+  per-class quota. For example, two different classes with one example each is
+  two references, but the model still chooses among all task classes unless a
+  separately registered protocol explicitly restricts outputs.
+- **ICL (1 grid: 8 classes × 4 images)**: use the optional pinned external
+  Maxwell grid profile. Grid-only and grid + search/class-example tools/guidance
+  are separate profiles. They are not interchangeable with one-shot similarity.
+
+Use `python scripts/icl_toolset.py prepare-references --config CONFIG` for the
+new generic reference preparer. Use `prepare-maxwell` / `run-maxwell` only with
+[the data skill's native profile contract](../../data/tao-in-context-learning/references/maxwell-profile.md).
+All model operations run inside the selected platform's submit/status/logs/cancel
+job lifecycle with narrow mounts, an immutable model/runtime and JSON receipts.
+The adapter is a declared cap128 adaptation, not an exact historical score
+reproduction. Native full grid/tool inference still requires development
+capacity and parser validation; synthetic tests do not establish that evidence.
+
+Follow explicit user-specified fixed arms as fixed comparisons. For adaptive
+work, propose/select on Proxy only under the application's registered limit.
+Do not use Benchmark feedback, including aggregate metrics, to select or alter
+settings. Freeze before final evaluation and retain failed/INVALID outputs.
+Separate weight status (base/fine-tuned) from inference references (none/labeled
+pool), and report both source-example count and model-image count for grids.
+Changes to prompt wording, token cap, tool loop, retrieval or checkpoint must
+appear in the run receipt and report, not be called a pure shot-count ablation.
 
 ## THT execution contract
 

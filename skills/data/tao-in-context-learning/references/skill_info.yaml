@@ -1,5 +1,5 @@
 name: tao-in-context-learning
-description: Adaptive Proxy-selected image ICL with extensible toolsets.
+description: Explicit image-reference policies and bounded toolsets; preserve frozen legacy runs.
 toolsets:
   siglip-retrieval-v1:
     version: 1
@@ -12,3 +12,37 @@ toolsets:
     excludes: [source_identity, image_bytes, normalized_joint]
     policy_owner: agent
     selection_evidence: proxy_only
+  similarity-reference-v2:
+    entrypoint: scripts/reference_policy.py
+    strategies: [nearest, different_classes]
+    parameters: [reference_count, class_count, per_class, distinct_joints, ordering, instruction]
+    selection_evidence: proxy_only
+    output_type: private_reference_manifest_and_json_receipt
+  fixed-atlas-selection-v1:
+    entrypoint: scripts/reference_policy.py
+    mode: fixed_atlas
+    parameters: [classes, per_class, salt]
+    query_independent: true
+    overlap_action: block
+  maxwell-grid32-cap128:
+    entrypoint: scripts/maxwell_profile.py
+    external_source_required: true
+    native_mode: E_atlas_only
+    examples: 32
+    source_images_per_grid: 32
+    classes: 8
+    tools: false
+    max_new_tokens: 128
+    format_retries: 0
+    validation_scope: synthetic_adapter_tests_not_historical_score_parity
+  maxwell-grid32-tools-guidance-cap128:
+    entrypoint: scripts/maxwell_profile.py
+    external_source_required: true
+    native_mode: A_full
+    initial_examples: 32
+    classes: 8
+    tools: [search_similar_examples, get_class_examples]
+    max_tool_rounds: 10
+    max_new_tokens: 128
+    format_retries: 0
+    validation_scope: synthetic_adapter_tests_not_historical_score_parity

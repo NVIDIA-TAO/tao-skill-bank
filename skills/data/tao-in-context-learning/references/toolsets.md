@@ -1,41 +1,100 @@
-# Toolset contract
+# Reference and toolset contracts
 
-Common policy fields: `toolset`, `version`, `rationale`, `max_calls`, and
-toolset-owned `parameters`. A toolset declares required artifacts, allowed
-role views, operation costs, capacity limits measured in smoke tests, and its
-output type. It must emit actual prompts/calls, ordered reference identities,
-input/output hashes, job handles, wall time and model/agent usage. Unknown
-measurements are null with a reason. Future toolsets may emit a call plan or
-execute a bounded interaction instead of static messages.
+Every policy records toolset/version, rationale, max_calls, parameters, input
+hashes, selected identities/order, actual rendered prompt and a JSON receipt.
+Model weights and labeled query answers are not policy inputs. The application
+owns role visibility, preprocessing, runtime, capacity and final freeze.
 
-`siglip-retrieval-v1` version 1 uses `reference_count`, `ordering`
-(`nearest_first`, `farthest_first`, `class_grouped`) and `instruction`.
-Its `max_calls` is 1. Reference count must be positive and no larger than the
-capacity validated by the application. The agent selects these values from
-Proxy evidence, one trial at a time. The toolset makes no initial grid.
+## Legacy siglip-retrieval-v1
 
-Encoder: `google/siglip-base-patch16-224`, immutable revision supplied in the
-task profile. Both source and target use the exact local snapshot, processor
-and embedding configuration. The first implementation uses the existing
-TAO Data Services `embedding image_embeddings` and `tmm nearest_neighbors`
-entrypoints. The latter outputs unique source paths, not query/neighbor pairs;
-invoke it with a single target per query so provenance is unambiguous. Source
-exclusions happen before that invocation. Reorder its returned candidates by
-cosine similarity from the same embeddings (stable source-ID tie break).
+Version1 parameters remain exactly `reference_count`, `ordering`
+(`nearest_first`, `farthest_first`, `class_grouped`) and `instruction`;
+max_calls1. `retrieval.py` and original suite behavior are unchanged. It uses
+existing `tao-generate-image-embeddings` and `tao-mine-nearest-neighbors`, pinned
+SigLIP snapshot/processor/specs. TMM outputs unique source paths, so invoke one
+query per mining operation; reorder returned candidates by exact cosine and
+reference ID. Mine the measured capacity once and share the retrieval cache
+across prompt/order variants. Do not use its truncated candidate list as a full
+class-discovery pool.
 
-Input queries have `id`, `image`, `image_sha256`. Trusted exclusion identities
-add `source_id`, `object_name`, `scan_id` without gold. References add one
-allowed `labels` entry and those identity fields. Use a validated label-free identity projection; never mount private source
-rows into classifiers or proposal agents. `SCN_` is removed from the scan identifier before equality.
+Original exclusion order is source identity, original bytes, normalized
+physical joint, then reference source-ID/byte deduplication in manifest order.
+The legacy selector does not enforce diversity between selected reference
+joints. Keep this distinction when changing reference count or class quotas.
 
-Static output: an OpenAI-style `messages` array, ordered reference IDs,
-policy hash and image hashes. Query and reference PNGs have the declared task
-preprocessing. No atlas or label-derived visual hint is added implicitly.
-The THT adapter applies its RGB padded256/NEAREST query profile to both source
-and target embedding views before the pinned native SigLIP processor, and
-records both original and embedding-view hashes.
+## similarity-reference-v2
 
-Cache native retrieval by embedding hashes, allowed IDs, query identity, metric,
-capacity and runtime digest. Prompt/rationale/presentation order are not retrieval
-inputs. Mine the validated maximum once, then select the nearest requested count
-and apply the proposed order. Record shared cache costs once.
+Version2 parameters are all explicit:
+
+```json
+{
+  "toolset": "similarity-reference-v2",
+  "version": 2,
+  "rationale": "Compare two likely classes using one example each",
+  "max_calls": 1,
+  "parameters": {
+    "strategy": "different_classes",
+    "reference_count": 2,
+    "class_count": 2,
+    "per_class": 1,
+    "distinct_joints": false,
+    "ordering": "class_ranked",
+    "instruction": "Use the labeled reference images as examples. Follow the original query instructions and output format."
+  }
+}
+```
+
+`nearest` selects reference_count from the full eligible pool, with class_count
+and per_class null. `different_classes` ranks classes by maximum eligible
+cosine, configured class-order ties, then takes per_class references from the
+first class_count classes. Within a class, descending cosine/reference-ID ties.
+Reference count equals class_count×per_class. `nearest_first` presents all
+selected references globally sorted; `class_ranked` groups candidate classes.
+`distinct_joints` adds within-group joint diversity; it never relaxes the
+query exclusion. Insufficient quota blocks instead of replacing a class.
+
+The output class vocabulary remains the original configured task vocabulary;
+two candidate classes do not implicitly constrain the answer to those two.
+Class-coverage analysis belongs to trusted scoring after selection, never to
+retrieval. Use complete hash-bound embedding caches; no query gold.
+
+The generic CLI consumes JSON arrays of identity/reference records with
+embeddings and an explicit class vocabulary:
+
+```json
+{
+  "schema": "tao-reference-preparation/1",
+  "mode": "similarity",
+  "queries": {"path": "/input/query-identities.json", "sha256": "<hash>"},
+  "references": {"path": "/input/mining-references.json", "sha256": "<hash>"},
+  "classes": ["<class-a>", "<class-b>"],
+  "reference_capacity": 2,
+  "policy": "<replace with the complete policy object above>",
+  "output": "/results/selected-references.private.json"
+}
+```
+
+The application renders selected image/label pairs before the query using the
+frozen task profile. These are static one/few-shot inputs, not model-driven
+tool calls. A separate1NN control copies the first label without invoking a VLM.
+
+## fixed-atlas-selection-v1
+
+Use the same CLI with `mode: fixed_atlas`, classes/per_class/salt and the same
+bound query/reference assets; omit policy/reference_capacity. Selection sorts
+SHA256(salt+referenceID), keeps distinct physical joints per class, and emits
+a fixed membership manifest. Default salt is `atlas-v1:`. Native Maxwell
+pixel parity additionally requires its exact filename identities, selection
+manifest, renderer/font and frozen atlas; the generic selector alone does not
+establish that parity. Fixed-grid overlap audit blocks, without per-query tile
+substitution. For the eight-class four-example grid, show `ICL (1 grid: 8
+classes × 4 images)`, distinct from `ICL (1 grid + tools + guidance)`.
+
+## Future toolsets
+
+Declare input artifacts/roles, atomic operations, measured capacity, call/token
+budget, stopping/resume rules and output schema. A bounded interaction can
+emit multiple requests instead of static messages. Keep the application-level
+ICL section high-level; detailed strategies belong here or a toolset reference.
+Do not expand the frozen legacy suite schema as a side effect of adding a new
+executor. Register and test the new entrypoint explicitly.

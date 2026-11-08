@@ -1,0 +1,20 @@
+{
+  "skill_name": "tao-in-context-learning",
+  "evals": [
+    {
+      "id": 0,
+      "name": "fixed-two-class-comparison",
+      "prompt": "Use Cosmos Nano for a fixed two-shot comparison: select two different classes via the frozen SigLIP Mining bank and provide one image from each. The query has no label. Mining/Proxy/Benchmark are already frozen. Give the exact application/data-skill routing and a complete policy config; explain the no-VLM control and when Benchmark is allowed. Do not run inference."
+    },
+    {
+      "id": 1,
+      "name": "maxwell-grid-vs-tools",
+      "prompt": "I want ICL (1 grid: 8 classes x 4 images), following Maxwell, and a separate grid-plus-tools-plus-guidance arm. Explain deterministic selection, source/asset/runtime requirements, tool loop and output cap, what is and is not historically equivalent, and the commands/receipts. Do not claim synthetic tests prove real model capacity and do not run models."
+    },
+    {
+      "id": 2,
+      "name": "preserve-legacy-and-freeze",
+      "prompt": "Resume an existing frozen original C nearest-one experiment, then plan a separate new different-class reference study. The first dev trial is better on Proxy but an aggregate Benchmark score suggests another policy. Explain the correct action, how you label frozen/fine-tuned versus references, and whether a 32-example grid is 32 model images. Do not edit the frozen run or run models."
+    }
+  ]
+}
