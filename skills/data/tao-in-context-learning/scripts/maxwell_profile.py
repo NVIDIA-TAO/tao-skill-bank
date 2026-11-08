@@ -18,6 +18,9 @@ import time
 PROFILES = {'maxwell-grid32-cap128': 'E_atlas_only',
             'maxwell-grid32-tools-guidance-cap128': 'A_full'}
 PIN = '1711959a40f89cbf4072ea343de318a204903dfd'
+NATIVE_ATLAS_SHA256 = '09b29726dfadbecdbd58c49ba74c5dd3aa8e7312d770732d8ab1fa30db61dddd'
+NATIVE_SELECTION_SHA256 = '54e2f494aff841189efefe13095d483fd6ba0da0f0d83b179bcfaf1735138a44'
+CLASSES = ('Good', 'Bright', 'Interrupted', 'Trapped', 'Hidden', 'Bridge', 'Dry Contact', 'Less Solder')
 PINNED = {'aoi_harness/analysis/tht_ablation.py': '26f56278291e10842661f3c73cf10f0d0730fd3946c0bbe28025b9e2e86412f0',
           'aoi_harness/analysis/tht_ablation_runtime.py': 'e1227fd0958c53b602f8a2401522217bc5012fa8a53c3c3bfca48b14e3f3ad1b'}
 
@@ -43,13 +46,17 @@ def within(root, relative):
     return path
 
 
-def verify_inventory(path, root):
+def verify_inventory(path, root, complete=False, required=()):
     inventory = read(path)
     if not isinstance(inventory, dict) or not inventory:
         raise ValueError('nonempty path-to-hash inventory required')
     for name, expected in inventory.items():
         if sha(within(root, name)) != expected:
             raise ValueError('inventory binding changed')
+    if not set(required) <= set(inventory):
+        raise ValueError('required inventory files missing')
+    if complete and set(inventory) != {str(p.relative_to(root)) for p in Path(root).rglob('*') if p.is_file()}:
+        raise ValueError('inventory does not cover the complete snapshot')
     return inventory
 
 
@@ -72,6 +79,66 @@ def verify_dataset_view(manifest, root, split):
     if actual != set(inventory):
         raise ValueError('dataset view contains unbound files')
     return inventory
+
+
+def verify_atlas_selection(selection, dataset):
+    if selection.get('source_split') != 'train':
+        raise ValueError('atlas must come from Mining/train')
+    selected = selection['samples']
+    rows = [json.loads(line) for line in (Path(dataset) / 'train.jsonl').read_text().splitlines() if line.strip()]
+    mining = {r['filename']: r for r in rows}
+    if len(mining) != len(rows) or len(selected) != 32 or len({r['filename'] for r in selected}) != 32:
+        raise ValueError('unique original Mining and atlas identities required')
+    if {tuple(r['labels']) for r in selected} != {(c,) for c in CLASSES}:
+        raise ValueError('atlas requires the canonical eight single-label classes')
+    for row in selected:
+        original = mining.get(row['filename'])
+        if original is None or any(row[k] != original[k] for k in ('labels', 'object_name', 'scan_id')):
+            raise ValueError('atlas selection differs from Mining provenance')
+        if sha(within(dataset, row['filename'])) != row['sha256']:
+            raise ValueError('atlas source image differs from Mining bytes')
+    for label in CLASSES:
+        group = [r for r in selected if r['labels'] == [label]]
+        if len(group) != 4 or len({identity(r) for r in group}) != 4:
+            raise ValueError('atlas class quota or joint diversity differs')
+    return selected
+
+
+def binding_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def case_seal(output, trace_path, row, binding):
+    trace = read(trace_path)
+    requests = [turn['request'] for turn in trace['turns']]
+    if not requests or len(set(requests)) != len(requests):
+        raise ValueError('unique native requests required')
+    return {'binding_sha256': binding, 'query_sha256': binding_digest(row),
+            'trace_sha256': sha(trace_path),
+            'request_sha256': {name: sha(within(output, name)) for name in requests}}
+
+
+def complete_seal(output, binding):
+    cases = {str(p.relative_to(output)): sha(p) for p in (output / 'cases').glob('*/adapter-receipt.json')}
+    return {'binding_sha256': binding, 'complete_sha256': sha(output / 'complete.json'),
+            'case_receipts_sha256': binding_digest(cases)}
+
+
+def validate_case(output, case, row, binding):
+    trace_path, seal_path = case / 'trace.json', case / 'adapter-receipt.json'
+    if not trace_path.is_file() or not seal_path.is_file():
+        raise ValueError('partial case without terminal binding; explicit reconciliation required')
+    trace, seal = read(trace_path), read(seal_path)
+    if seal != case_seal(output, trace_path, row, binding):
+        raise ValueError('saved case belongs to different input or trace changed')
+    if trace.get('status') not in ('complete', 'invalid_final') or not trace.get('turns') or not trace.get('assets'):
+        raise ValueError('terminal trace is incomplete')
+    if trace.get('prediction') not in (*CLASSES, 'INVALID'):
+        raise ValueError('saved prediction is outside the native vocabulary')
+    for name, asset in trace['assets'].items():
+        if sha(within(output, name)) != asset['sha256']:
+            raise ValueError('saved case image artifact changed')
+    return trace
 
 
 def verify_config(path):
@@ -100,8 +167,10 @@ def verify_config(path):
         if sha(assets[key]['path']) != assets[key]['sha256']:
             raise ValueError('asset binding changed')
     for key in ('training_cache', 'query_cache'):
-        verify_inventory(assets[key]['manifest'], assets[key]['path'])
-    verify_inventory(c['model']['inventory'], c['model']['path'])
+        verify_inventory(assets[key]['manifest'], assets[key]['path'], complete=True, required=('metadata.json', 'features.npz'))
+    verify_inventory(c['model']['inventory'], c['model']['path'], complete=True, required=('config.json', 'tokenizer_config.json'))
+    if not any(name.endswith('.safetensors') for name in read(c['model']['inventory'])):
+        raise ValueError('model inventory must bind the actual weight files')
     rows = [json.loads(line) for line in Path(assets['queries']['path']).read_text().splitlines() if line.strip()]
     if not rows or len({r['filename'] for r in rows}) != len(rows):
         raise ValueError('nonempty unique query identities required')
@@ -114,13 +183,9 @@ def verify_config(path):
     split_rows = [json.loads(line) for line in (dataset / (c['query_split'] + '.jsonl')).read_text().splitlines() if line.strip()]
     if split_rows != rows:
         raise ValueError('native split must match the supplied label-free projection')
-    selected = read(assets['selection']['path'])['samples']
-    if len(selected) != 32 or len({r['labels'][0] for r in selected}) != 8:
-        raise ValueError('fixed eight-class four-per-class atlas required')
-    for label in {r['labels'][0] for r in selected}:
-        group = [r for r in selected if r['labels'] == [label]]
-        if len(group) != 4 or len({identity(r) for r in group}) != 4:
-            raise ValueError('atlas class quota or joint diversity differs')
+    if assets['atlas']['sha256'] != NATIVE_ATLAS_SHA256 or assets['selection']['sha256'] != NATIVE_SELECTION_SHA256:
+        raise ValueError('this native profile requires the pinned original atlas/selection pair')
+    selected = verify_atlas_selection(read(assets['selection']['path']), dataset)
     if any(identity(q) == identity(r) or q['image_sha256'] == r['sha256'] or q['filename'] == r['filename']
            for q in rows for r in selected):
         raise ValueError('fixed-atlas overlap blocks this study; never silently replace tiles')
@@ -159,71 +224,91 @@ def main():
     parser.add_argument('--config', required=True)
     a = parser.parse_args(); config, rows = verify_config(a.config)
     output = Path(config['output']); output.mkdir(parents=True, exist_ok=True)
-    lock = (output / 'adapter.lock').open('a+'); fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    sys.path.insert(0, str(Path(config['native']['checkout']).resolve()))
-    from aoi_harness.analysis.tht_ablation import Mode
-    from aoi_harness.analysis.tht_ablation_runtime import run_case
-    mode = Mode(PROFILES[config['profile']]); mode.split = config['query_split']
-    assets = config['assets']; mode.dataset = Path(assets['dataset_view'])
-    mode.atlas_path = Path(assets['atlas']['path']); mode.selection_path = Path(assets['selection']['path'])
-    mode.train_cache = Path(assets['training_cache']['path']); mode.query_cache = Path(assets['query_cache']['path'])
-    args = SimpleNamespace(model='cosmos_reason3_8b', cosmos_reasoning='off',
-        prompt_config=config['native']['prompt_config'], examples_per_class=4, max_rounds=10, seed=0, limit=None, workers=1)
-    native_rows = [{k: v for k, v in row.items() if k != 'image_sha256'} for row in rows]
-    prepared = mode.prepare(args, native_rows)
-    if prepared.label_mode != 'names': raise ValueError('original class names required')
-    receipt = {'schema': 'tao-icl-maxwell-receipt/1', 'status': 'PREPARED', 'config_sha256': sha(a.config),
-               'profile': config['profile'], 'query_count': len(rows), 'source_revision': PIN,
-               'native_source_manifest_sha256': sha(config['native']['source_manifest']),
-               'model_inventory_sha256': sha(config['model']['inventory']),
-               'native_declared_model': prepared.settings['model'], 'actual_model': config['model']['path'],
-               'native_declared_split': prepared.settings['split'], 'actual_split': config['query_split'],
-               'max_new_tokens': 128, 'native_max_new_tokens': 4096, 'format_retries': 0,
-               'atlas_overlap_audit': 'PASS; stricter adapter gate than native fixed atlas',
-               'prompt_sha256': hashlib.sha256(prepared.user.encode()).hexdigest(),
-               'tool_schema_sha256': hashlib.sha256(json.dumps(mode.schemas('names'), sort_keys=True).encode()).hexdigest(),
-               'tool_round_limit': prepared.settings['max_tool_rounds']}
-    marker = output / 'prepared.json'
-    if marker.exists():
-        if read(marker) != receipt: raise ValueError('prepared configuration changed')
-    else:
-        mode.prepare_output(output, 'names')
-        write(output / 'native-settings.private.json', prepared.settings); write(marker, receipt)
-    if a.action == 'prepare': print(json.dumps(receipt)); return
-    if (output / 'complete.json').exists(): print(json.dumps(read(output / 'complete.json'))); return
-    completed = []; pending = []
-    for row in native_rows:
-        case = output / 'cases' / hashlib.sha256(row['filename'].encode()).hexdigest()
-        trace = case / 'trace.json'
-        if trace.exists():
-            saved = read(trace)
-            if saved['status'] not in ('complete', 'invalid_final'):
-                raise ValueError('ambiguous previous generation; explicit reconciliation required')
-            completed.append(saved)
-        else: pending.append((row, case))
-    peak_allocated = peak_reserved = None
-    if pending:
-        from aoi_harness.harness_backends import CosmosBackend
-        backend = cap_backend(CosmosBackend(model_path=config['model']['path']))
-        backend.torch.cuda.reset_peak_memory_stats()
-        for row, case in pending:
-            completed.append(run_case(backend, prepared.bank, mode.query_path(row), mode.query_identity(row), output,
-                case, prepared.system, prepared.user, prepared.settings['max_tool_rounds'], reasoning=False, label_mode='names', mode=mode))
-            print(json.dumps({'operation': 'maxwell-profile-progress', 'completed': len(completed), 'planned': len(rows)}), flush=True)
-        peak_allocated = backend.torch.cuda.max_memory_allocated()
-        peak_reserved = backend.torch.cuda.max_memory_reserved()
-    result = {**receipt, 'status': 'COMPLETE', 'completed': len(completed),
-              'invalid': sum(t['status'] == 'invalid_final' for t in completed),
-              'model_calls': sum(len(t['turns']) for t in completed),
-              'tool_calls': sum(len(turn['model_response']['calls']) for t in completed for turn in t['turns']),
-              'source_atlas_sha256': sha(mode.atlas_path), 'rendered_atlas_sha256': sha(output / 'reference_atlas.png'),
-              'case_wall_seconds': sum(t['seconds'] for t in completed),
-              'input_tokens': sum(turn['model_response']['usage']['input_tokens'] for t in completed for turn in t['turns']),
-              'output_tokens': sum(turn['model_response']['usage']['completion_tokens'] for t in completed for turn in t['turns']),
-              'kernel_active_seconds': None, 'currency': None,
-              'peak_allocated_bytes': peak_allocated, 'peak_reserved_bytes': peak_reserved,
-              'cost_quality': 'native trace timing/usage; kernel time and currency not measured', 'finished_at': time.time()}
-    write(output / 'complete.json', result); print(json.dumps(result))
+    with (output / 'adapter.lock').open('a+') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        sys.path.insert(0, str(Path(config['native']['checkout']).resolve()))
+        from aoi_harness.analysis.tht_ablation import Mode
+        from aoi_harness.analysis.tht_ablation_runtime import run_case
+        mode = Mode(PROFILES[config['profile']]); mode.split = config['query_split']
+        assets = config['assets']; mode.dataset = Path(assets['dataset_view'])
+        mode.atlas_path = Path(assets['atlas']['path']); mode.selection_path = Path(assets['selection']['path'])
+        mode.train_cache = Path(assets['training_cache']['path']); mode.query_cache = Path(assets['query_cache']['path'])
+        args = SimpleNamespace(model='cosmos_reason3_8b', cosmos_reasoning='off',
+            prompt_config=config['native']['prompt_config'], examples_per_class=4, max_rounds=10, seed=0, limit=None, workers=1)
+        native_rows = [{k: v for k, v in row.items() if k != 'image_sha256'} for row in rows]
+        prepared = mode.prepare(args, native_rows)
+        if prepared.label_mode != 'names': raise ValueError('original class names required')
+        receipt = {'schema': 'tao-icl-maxwell-receipt/2', 'status': 'PREPARED', 'config_sha256': sha(a.config),
+                   'profile': config['profile'], 'query_count': len(rows), 'source_revision': PIN,
+                   'native_source_manifest_sha256': sha(config['native']['source_manifest']),
+                   'model_inventory_sha256': sha(config['model']['inventory']),
+                   'dataset_inventory_sha256': sha(assets['dataset_manifest']),
+                   'training_cache_inventory_sha256': sha(assets['training_cache']['manifest']),
+                   'query_cache_inventory_sha256': sha(assets['query_cache']['manifest']),
+                   'native_settings_sha256': binding_digest(prepared.settings),
+                   'native_declared_model': prepared.settings['model'], 'actual_model': config['model']['path'],
+                   'native_declared_split': prepared.settings['split'], 'actual_split': config['query_split'],
+                   'max_new_tokens': 128, 'native_max_new_tokens': 4096, 'format_retries': 0,
+                   'atlas_overlap_audit': 'PASS; stricter adapter gate than native fixed atlas',
+                   'prompt_sha256': hashlib.sha256(prepared.user.encode()).hexdigest(),
+                   'tool_schema_sha256': hashlib.sha256(json.dumps(mode.schemas('names'), sort_keys=True).encode()).hexdigest(),
+                   'tool_round_limit': prepared.settings['max_tool_rounds']}
+        marker = output / 'prepared.json'
+        if marker.exists():
+            receipt['rendered_atlas_sha256'] = sha(output / 'reference_atlas.png')
+            if read(marker) != receipt: raise ValueError('prepared configuration changed')
+            if binding_digest(read(output / 'native-settings.private.json')) != receipt['native_settings_sha256']:
+                raise ValueError('stored native settings changed')
+        else:
+            if (output / 'cases').exists() or (output / 'complete.json').exists():
+                raise ValueError('run artifacts exist without a preparation binding')
+            mode.prepare_output(output, 'names')
+            receipt['rendered_atlas_sha256'] = sha(output / 'reference_atlas.png')
+            write(output / 'native-settings.private.json', prepared.settings); write(marker, receipt)
+        if a.action == 'prepare': print(json.dumps(receipt)); return
+        binding = binding_digest(receipt)
+        completed = []; pending = []
+        for row in native_rows:
+            case = output / 'cases' / hashlib.sha256(row['filename'].encode()).hexdigest()
+            trace = case / 'trace.json'
+            if case.exists():
+                completed.append(validate_case(output, case, row, binding))
+            else: pending.append((row, case))
+        if (output / 'complete.json').exists():
+            result = read(output / 'complete.json')
+            seal = read(output / 'complete-seal.json')
+            if pending or seal != complete_seal(output, binding):
+                raise ValueError('completed run seal or case coverage differs')
+            if result.get('status') != 'COMPLETE' or result.get('completed') != len(rows) or any(result.get(k) != v for k, v in receipt.items() if k != 'status'):
+                raise ValueError('completed run belongs to a different configuration')
+            print(json.dumps(result)); return
+        peak_allocated = peak_reserved = None
+        if pending:
+            from aoi_harness.harness_backends import CosmosBackend
+            backend = cap_backend(CosmosBackend(model_path=config['model']['path']))
+            backend.torch.cuda.reset_peak_memory_stats()
+            for row, case in pending:
+                run_case(backend, prepared.bank, mode.query_path(row), mode.query_identity(row), output,
+                    case, prepared.system, prepared.user, prepared.settings['max_tool_rounds'], reasoning=False, label_mode='names', mode=mode)
+                write(case / 'adapter-receipt.json', case_seal(output, case / 'trace.json', row, binding))
+                completed.append(validate_case(output, case, row, binding))
+                print(json.dumps({'operation': 'maxwell-profile-progress', 'completed': len(completed), 'planned': len(rows)}), flush=True)
+            peak_allocated = backend.torch.cuda.max_memory_allocated()
+            peak_reserved = backend.torch.cuda.max_memory_reserved()
+        result = {**receipt, 'status': 'COMPLETE', 'completed': len(completed),
+                  'invalid': sum(t['status'] == 'invalid_final' for t in completed),
+                  'model_calls': sum(len(t['turns']) for t in completed),
+                  'tool_calls': sum(len(turn['model_response']['calls']) for t in completed for turn in t['turns']),
+                  'source_atlas_sha256': sha(mode.atlas_path), 'rendered_atlas_sha256': sha(output / 'reference_atlas.png'),
+                  'case_wall_seconds': sum(t['seconds'] for t in completed),
+                  'input_tokens': sum(turn['model_response']['usage']['input_tokens'] for t in completed for turn in t['turns']),
+                  'output_tokens': sum(turn['model_response']['usage']['completion_tokens'] for t in completed for turn in t['turns']),
+                  'kernel_active_seconds': None, 'currency': None,
+                  'peak_allocated_bytes': peak_allocated, 'peak_reserved_bytes': peak_reserved,
+                  'cost_quality': 'native trace timing/usage; kernel time and currency not measured', 'finished_at': time.time()}
+        write(output / 'complete.json', result)
+        write(output / 'complete-seal.json', complete_seal(output, binding))
+        print(json.dumps(result))
 
 
 if __name__ == '__main__':

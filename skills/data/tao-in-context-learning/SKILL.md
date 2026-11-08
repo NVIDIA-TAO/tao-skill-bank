@@ -45,6 +45,12 @@ artifacts. Other encoders, toolsets, class counts and datasets may be registered
 explicitly; the generic selector does not hardcode THT labels or a model path.
 The optional Maxwell adapter is explicitly THT-specific external integration.
 
+For the Cosmos AOI application, use
+[its launch contract](../../applications/tao-run-deft-icl-aoi-cosmos3/SKILL.md)
+and `scripts/icl_toolset.py` to route preparation/run through the selected
+platform. The current no-tools grid adapter is E_atlas_only, not historical
+Atlas v1; see the native-profile contract before naming a reproduction.
+
 ## Evidence and selection
 
 When the user supplies fixed comparison arms, register those arms and run the

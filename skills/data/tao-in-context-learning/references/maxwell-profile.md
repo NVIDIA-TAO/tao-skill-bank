@@ -32,6 +32,14 @@ final-only response. Stop at the first non-tool response, save it, then parse;
 INVALID is terminal. A previous incomplete trace blocks automatic retry.
 Terminal valid/invalid traces can be reused without a new generation.
 
+Receipt v2 binds every input inventory, freshly prepared native settings, the
+stored settings artifact and rendered atlas. Each terminal case seals its query,
+trace and actual request JSON files, and revalidates every image artifact before
+reuse. The final seal binds the exact set of case receipts. Any existing case
+directory without a valid terminal seal requires explicit reconciliation before
+continuing; do not automatically regenerate it. Pre-v2 outputs are not silently
+upgraded or accepted as v2 evidence.
+
 The initial atlas has four distinct Mining joints per class and remains fixed.
 Native tools exclude atlas members/query joint, rank the next two classes by
 max eligible C-RADIO spatial_mean_rotation_mean cosine, then return four
@@ -52,6 +60,17 @@ All inventories are JSON objects mapping root-relative filenames to SHA256.
 Use a code/prompt-only external source view with every Python/text/JSON file
 bound; exclude historical results/reports and datasets. Dataset inventory binds
 the staged Mining manifest, label-free query manifest and permitted images.
+Model inventories must cover the complete configured snapshot, including actual
+weights and processor/configuration files. Cache inventories cover the complete
+snapshot and must contain metadata.json and features.npz. This versioned THT
+profile pins the original atlas/selection pair and independently verifies all32
+selected image bytes, labels and joint identities against Mining. Register other
+atlas pairs separately; the generic atlas selector remains available.
+
+The no-tools profile above is the current E_atlas_only ablation. It is not the
+historical Atlas v1 static protocol: that uses original JPEG queries, its original
+system/user prompt and original unmodified atlas, with native greedy128. Keep
+those experiment identities distinct when comparing reported scores.
 
 ```json
 {
