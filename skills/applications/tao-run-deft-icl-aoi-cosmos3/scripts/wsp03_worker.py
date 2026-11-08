@@ -124,7 +124,8 @@ def apply_candidate(model, directory):
     return digest(manifest)
 
 
-def run(model_path, requests_path, output_dir, *, mode='generation', split='probe', candidate=None, query_seconds=180):
+def run(model_path, requests_path, output_dir, *, mode='generation', split='probe', candidate=None, query_seconds=180, max_new_tokens=4096):
+    if type(max_new_tokens) is not int or not 1<=max_new_tokens<=4096:raise ValueError('generation cap must be1..4096')
     output=Path(output_dir);output.mkdir(parents=True,exist_ok=True)
     requests=json.loads(Path(requests_path).read_text());validate_requests(requests,mode,split)
     done=recovery(output,requests)
@@ -140,7 +141,7 @@ def run(model_path, requests_path, output_dir, *, mode='generation', split='prob
     model.to('cuda');torch.cuda.synchronize()
     profile={'schema':'wsp03-worker/1','mode':mode,'split':split,'torch':torch.__version__,'transformers':transformers.__version__,
         'candidate_manifest_sha256':candidate_hash,'dtype':'bfloat16','attention':'sdpa','batch_size':1,'seed':42,
-        'max_new_tokens':4096,'do_sample':False,'query_seconds':query_seconds,'model_load_seconds':time.monotonic()-start,
+        'max_new_tokens':max_new_tokens,'do_sample':False,'query_seconds':query_seconds,'model_load_seconds':time.monotonic()-start,
         'chat_template_sha256':hashlib.sha256(str(processor.chat_template).encode()).hexdigest(),
         'requests_sha256':digest(requests),'generation_hooks':False,'reasoning':'prompted_off','native_thinking_disabled':False}
     old_profile=output/'runtime_profile.json'
@@ -163,10 +164,10 @@ def run(model_path, requests_path, output_dir, *, mode='generation', split='prob
         try:
             with torch.inference_mode():
                 if mode=='generation':
-                    tokens=model.generate(**inputs,do_sample=False,max_new_tokens=4096)
+                    tokens=model.generate(**inputs,do_sample=False,max_new_tokens=max_new_tokens)
                     completion=tokens[0,prompt_length:];raw=processor.tokenizer.decode(completion,skip_special_tokens=True)
                     result={'raw_answer':raw,'completion_token_ids':completion.cpu().tolist(),
-                        'finish_reason':'length' if len(completion)>=4096 else 'stop','inference_output_tokens':len(completion)}
+                        'finish_reason':'length' if len(completion)>=max_new_tokens else 'stop','inference_output_tokens':len(completion)}
                 else:
                     target,class_positions,class_span=canonical_target(processor.tokenizer,request['forced_text'])
                     if len(target)>64:raise ValueError('bounded canonical target required')
@@ -230,7 +231,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('model','requests','output'):p.add_argument('--'+name,required=True)
     p.add_argument('--mode',choices=['generation','read'],default='generation');p.add_argument('--split',required=True)
-    p.add_argument('--candidate');p.add_argument('--query-seconds',type=int,default=180)
-    a=p.parse_args();run(a.model,a.requests,a.output,mode=a.mode,split=a.split,candidate=a.candidate,query_seconds=a.query_seconds)
+    p.add_argument('--candidate');p.add_argument('--query-seconds',type=int,default=180);p.add_argument('--max-new-tokens',type=int,default=4096)
+    a=p.parse_args();run(a.model,a.requests,a.output,mode=a.mode,split=a.split,candidate=a.candidate,query_seconds=a.query_seconds,max_new_tokens=a.max_new_tokens)
 
 if __name__=='__main__':main()

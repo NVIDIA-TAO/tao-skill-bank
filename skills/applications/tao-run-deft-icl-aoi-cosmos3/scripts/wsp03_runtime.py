@@ -76,7 +76,7 @@ def validate_probe_inputs(requests, view, expected_ids_sha256):
     return needed
 
 
-def validate_worker_output(directory, requests, *, mode='generation', split='probe', candidate_manifest_sha256=None, artifact_owner=None):
+def validate_worker_output(directory, requests, *, mode='generation', split='probe', candidate_manifest_sha256=None, artifact_owner=None, max_new_tokens=4096, query_seconds=180):
     directory=Path(directory)
     if artifact_owner is None:
         rows=[json.loads(line) for line in (directory/'raw_answers.jsonl').read_text().splitlines()]
@@ -91,7 +91,7 @@ def validate_worker_output(directory, requests, *, mode='generation', split='pro
         if row.get('completed') is not True or row.get('request_sha256')!=digest(request) or row.get('mode')!=mode:raise ValueError('worker answer identity/completion mismatch')
     if completion.get('status')!='complete' or completion.get('n')!=len(requests) or completion.get('requests_sha256')!=digest(requests) or completion.get('mode')!=mode or completion.get('split')!=split:raise ValueError('worker completion receipt mismatch')
     expected={'mode':mode,'split':split,'batch_size':1,'requests_sha256':digest(requests),'generation_hooks':False,
-        'candidate_manifest_sha256':candidate_manifest_sha256,'seed':42,'dtype':'bfloat16','attention':'sdpa','do_sample':False,'max_new_tokens':4096,'query_seconds':180}
+        'candidate_manifest_sha256':candidate_manifest_sha256,'seed':42,'dtype':'bfloat16','attention':'sdpa','do_sample':False,'max_new_tokens':max_new_tokens,'query_seconds':query_seconds}
     if any(profile.get(k)!=v for k,v in expected.items()):raise ValueError('worker runtime profile mismatch')
     return rows
 
