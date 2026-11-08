@@ -39,6 +39,13 @@ not hidden constants. Recipe.render/Recipe.request_images remain available for
 frozen P00/P09 request construction. Images must be the original RGB padded256
 PNGs under a narrow /input mount; do not change preprocessing.
 
+For native light launches, the owner may set development_input to a pre-staged,
+development-only PNG directory. wsp03_light.prepare mounts it read-only at
+/input alongside /development. Name each original PNG with
+wsp03_bindings.image_name(query_id); preserve the original bytes and use the
+same mapping for queries and references. The native editor uses this prepared
+view directly and does not need permission to create /input.
+
 A fast pass config (JSON, placeholders require actual values):
 
 ~~~json
@@ -271,3 +278,10 @@ Use the final R3-ext selection for P00 and original R4/H000 for P09.
 The helper selects eight examples per class from fixed512 explore, ordered by
 sha256 of the fixed seed/purpose/id tuple; both cases and backends use the same64.
 Incomplete or abandoned passes remain INCOMPLETE and are not retried.
+
+The owner probe helper's direct Docker processes write receipts as root.
+Run the owner-side prepare/run orchestration in an appropriate root context, or
+ensure its existing process can read those root-owned receipts. This concerns
+host orchestration; native editor tools execute inside their own container.
+Retain completed outputs and read them in the proper context instead of
+regenerating answers to work around host file permissions.

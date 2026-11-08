@@ -30,7 +30,7 @@ def prepare(config_file):
         companion=sources['binary'].parent/name
         if not companion.is_file():raise FileNotFoundError('native Codex companion missing: '+str(companion))
         mounts.append((companion,'/usr/local/bin/'+name,True))
-    for key,destination in [('development_embeddings','/development-embeddings.jsonl'),('frozen_r3','/frozen-r3')]:
+    for key,destination in [('development_embeddings','/development-embeddings.jsonl'),('frozen_r3','/frozen-r3'),('development_input','/input')]:
         if cfg.get(key):mounts.append((Path(cfg[key]).resolve(strict=True),destination,True))
     forbidden=cfg.get('forbidden_paths',['/holdout','/benchmark','/gold','/var/run/docker.sock','/home/ubuntu/workspace/data','/home/ubuntu/workspace/runs'])
     if any(not isinstance(value,str) or not value.startswith('/') for value in forbidden):raise ValueError('absolute forbidden container paths required')
