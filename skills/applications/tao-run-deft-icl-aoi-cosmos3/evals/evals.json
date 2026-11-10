@@ -43,5 +43,32 @@
       "Forbids Benchmark errors from routing or mining",
       "Uses Proxy errors as the only RCCA/mining source"
     ]
+  },
+  {
+    "id": "cosmos-simple-harness-no-training",
+    "question": "Run Simple harness on base Cosmos3-Nano with a fixed 8-class by 4-example grid. Let Cosmos choose search and example tools across multiple rounds. Skip DEFT and do not launch yet.",
+    "expected_skill": "tao-run-deft-icl-aoi-cosmos3",
+    "expected_script": "scripts/simple_harness.py",
+    "ground_truth": "Route to the inference-only simple-harness-grid32-tools-guidance-native4096 profile. Cosmos owns optional tool decisions; a deterministic runner returns tool images to the same conversation. Ten tool rounds and one final-only turn. Require pinned external native source and C-RADIO caches, label-free queries, Mining reference pool, platform record and preflight; no training or model calls for planning.",
+    "expected_behavior": [
+      "Selects inference-only Simple harness route",
+      "Cosmos, not Astra, selects tools",
+      "No forced search/example sequence",
+      "Requires source/model/cache/prompt pins and gold isolation",
+      "Does not invoke suite.py, DEFT, SFT or AnomalyGen"
+    ]
+  },
+  {
+    "id": "cosmos-simple-harness-terminal-answer",
+    "question": "In Simple harness Cosmos answers immediately. Should the runner force search and class examples first? What if it reaches the tool limit or emits invalid final JSON?",
+    "expected_skill": "tao-run-deft-icl-aoi-cosmos3",
+    "expected_script": "scripts/simple_harness.py",
+    "ground_truth": "Do not force tools. First non-tool response is saved and terminal even if INVALID. At most ten tool rounds followed by a final-only turn with no tools. No final-format repair or hidden Astra answer. Native4096 and cap128 are distinct profiles; no inherited score claim.",
+    "expected_behavior": [
+      "Accepts zero-tool direct answers",
+      "Enforces finite tool rounds",
+      "Preserves INVALID without retry",
+      "Does not let Astra act for Cosmos"
+    ]
   }
 ]

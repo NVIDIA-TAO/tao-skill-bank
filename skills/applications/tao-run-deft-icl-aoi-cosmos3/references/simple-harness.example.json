@@ -1,0 +1,49 @@
+{
+  "schema": "tao-icl-simple-harness-native/1",
+  "profile": "simple-harness-grid32-tools-guidance-native4096",
+  "native": {
+    "checkout": "/native",
+    "revision": "1711959a40f89cbf4072ea343de318a204903dfd",
+    "source_manifest": "/input/native-source-hashes.json",
+    "prompt_config": "config/current/tht-inspection.json"
+  },
+  "assets": {
+    "dataset_view": "/dataset",
+    "dataset_manifest": "/input/dataset-hashes.json",
+    "atlas": {
+      "path": "/input/reference_atlas.png",
+      "sha256": "<hash>"
+    },
+    "selection": {
+      "path": "/input/reference_selection.json",
+      "sha256": "<hash>"
+    },
+    "queries": {
+      "path": "/input/queries.jsonl",
+      "sha256": "<hash>"
+    },
+    "training_cache": {
+      "path": "/cache/train",
+      "manifest": "/input/train-cache-hashes.json"
+    },
+    "query_cache": {
+      "path": "/cache/query",
+      "manifest": "/input/query-cache-hashes.json"
+    }
+  },
+  "query_split": "val",
+  "model": {
+    "path": "/model",
+    "inventory": "/input/model-hashes.json"
+  },
+  "protocol": {
+    "examples_per_class": 4,
+    "seed": 0,
+    "reasoning": "off",
+    "label_mode": "names",
+    "execution_policy": "tht_ablation_no_format_repair_v1",
+    "format_retries": 0,
+    "max_new_tokens": 4096
+  },
+  "output": "/results/profile"
+}

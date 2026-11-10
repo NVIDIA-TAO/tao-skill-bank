@@ -1,13 +1,13 @@
 ---
 name: tao-run-deft-icl-aoi-cosmos3
-description: Run Cosmos3 AOI DEFT with adaptive in-context learning, including the frozen six-arm THT suite, a separately approved AnomalyGen 1.2 single-image generator addendum, a fixed-checkpoint ICL addendum, and compatible paired PCB OK/NG workflows. Uses native Cosmos Framework LoRA, external strict evaluation, isolated Codex classification, SigLIP retrieval, durable recovery and evidence export. Use for THT ICL/DEFT comparisons or Cosmos3 AOI plus ICL, not generic model training.
+description: Run Cosmos3 AOI with ICL, optional DEFT, or an inference-only Simple harness where Cosmos chooses example/search tools over multiple turns. Includes the frozen six-arm THT suite, AnomalyGen 1.2 and fixed-checkpoint ICL addenda, and paired PCB workflows. Use for Cosmos agentic tool calls, grid plus tools plus guidance, Simple harness without training, or THT ICL/DEFT comparisons; not generic model training.
 license: Apache-2.0 AND CC-BY-4.0
 compatibility: Linux, Python 3.11 or later, Docker with NVIDIA GPU support, pinned model and data-service images, and external frozen experiment inputs.
 tags: [computer-vision, aoi, deft, in-context-learning, anomaly-generation]
 allowed-tools: Read, Bash, Write
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Cosmos3 AOI with ICL
@@ -21,6 +21,13 @@ and the Docker platform skill before execution.
 
 ## Route the task explicitly
 
+- Simple harness / Cosmos agentic classification: select the explicit
+  inference-only `simple-harness-grid32-tools-guidance-native4096` profile.
+  Read [Simple harness](references/simple-harness.md) and use
+  `scripts/simple_harness.py`. Cosmos owns every per-query tool decision;
+  the runner executes its requests and returns images into the same dialogue.
+  This route skips DEFT, SFT and AnomalyGen. It is a separate experiment, not
+  a replacement for frozen C/E/H or their existing scores.
 - THT: `mode: tht_single`, one image, eight original class names, exactly one
   JSON label. Use `scripts/suite.py` and the protocol below. No golden image;
   A1/A2 are views of a joint. No multilabel mode.
@@ -36,7 +43,9 @@ and the Docker platform skill before execution.
   target and the copied [paired workflow](references/paired-workflow.md).
   Its binary Benchmark-gate behavior does not apply to the THT suite.
 - General ICL policy/toolset work delegates to `tao-in-context-learning`.
-  Do not substitute a fixed grid or preselect twelve candidates.
+  The adaptive C/E/H policy search does not substitute a fixed grid or
+  preselect twelve candidates. An explicitly requested Simple harness uses
+  its own fixed grid and tool loop instead of that search.
 
 ## THT execution contract
 

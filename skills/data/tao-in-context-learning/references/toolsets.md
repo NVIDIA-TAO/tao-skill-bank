@@ -39,3 +39,14 @@ Cache native retrieval by embedding hashes, allowed IDs, query identity, metric,
 capacity and runtime digest. Prompt/rationale/presentation order are not retrieval
 inputs. Mine the validated maximum once, then select the nearest requested count
 and apply the proposed order. Record shared cache costs once.
+
+## Simple harness (explicit route)
+
+`simple-harness-grid32-tools-guidance-native4096` delegates to the pinned
+external native Cosmos loop. It emits a multi-turn trace rather than one
+preassembled single-call message. The fixed initial grid, C-RADIO feature
+caches, two optional tools and guidance are declared together. Cosmos owns
+tool selection; the runner only executes and records requests. See
+[simple-harness.md](simple-harness.md) for isolation, cap128 adaptation,
+source/model pinning and terminal-answer/resume semantics. This route does
+not change `siglip-retrieval-v1` or use its policy validator.

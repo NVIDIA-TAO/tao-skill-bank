@@ -1,5 +1,5 @@
 name: tao-run-deft-icl-aoi-cosmos3
-version: 0.1.0
+version: 0.2.0
 supported_platforms: [docker]
 model_skill: tao-finetune-cosmos-reason
 backend: cosmos-framework
@@ -16,6 +16,18 @@ companion_skills:
   - tao-run-on-docker
   - tao-launch-workflow
 actions:
+  simple_harness_preflight:
+    mode: args
+    args: {}
+    command: python scripts/simple_harness.py preflight --config {config} --output {output}
+  simple_harness_run:
+    mode: args
+    args: {}
+    command: python scripts/simple_harness.py run --preflight {preflight} --approval {approval} --job-id {job_id}
+  simple_harness_status:
+    mode: args
+    args: {}
+    command: python scripts/simple_harness.py status --results-dir {results_dir}
   preflight:
     mode: args
     args: {}

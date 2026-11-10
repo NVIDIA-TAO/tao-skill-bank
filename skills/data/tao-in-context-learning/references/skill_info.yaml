@@ -1,6 +1,30 @@
 name: tao-in-context-learning
 description: Adaptive Proxy-selected image ICL with extensible toolsets.
 toolsets:
+  simple-harness-grid32-tools-guidance-native4096:
+    version: 1
+    script: scripts/simple_harness.py
+    output_type: native_multiturn_trace
+    decision_owner: cosmos
+    native_arm: A_full
+    encoder: C-RADIOv2-B
+    initial_grid: {classes: 8, examples_per_class: 4}
+    tools: [get_class_examples, search_similar_examples]
+    max_tool_rounds: 10
+    max_model_turns: 11
+    max_new_tokens: 4096
+    format_retries: 0
+    external_source_revision: 1711959a40f89cbf4072ea343de318a204903dfd
+    contract: references/simple-harness.md
+  simple-harness-grid32-tools-guidance-cap128:
+    version: 1
+    script: scripts/simple_harness.py
+    output_type: native_multiturn_trace
+    decision_owner: cosmos
+    native_arm: A_full
+    max_new_tokens: 128
+    deviation: Explicit output-cap adaptation; separate from native4096.
+    contract: references/simple-harness.md
   siglip-retrieval-v1:
     version: 1
     embedding_skill: tao-generate-image-embeddings

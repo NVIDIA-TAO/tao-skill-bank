@@ -1,4 +1,10 @@
-# THT suite routing
+# THT application routing
+
+For Simple harness / Cosmos agentic tool use, select the inference-only
+`simple-harness-grid32-tools-guidance-native4096` profile through
+`scripts/simple_harness.py`. Cosmos chooses the example/search tools; the
+runner returns images. No DEFT, SFT or generation is launched by this route.
+See [the contract](references/simple-harness.md).
 
 For explicit THT single-image eight-class work, use `scripts/suite.py` and
 `SKILL.md`: Proxy-only B/F/C/D/E development, all-arm freeze, then one Benchmark
@@ -43,7 +49,7 @@ Mitigation: The bundled validators, frozen Benchmark hash, and atomic stage comm
 **Other Properties Related to Output:** [Every GPU stage is tracked by a platform job-record and every DEFT commit is recorded in state] <br>
 
 ## Skill Version(s): <br>
-0.1.0 (source: frontmatter) <br>
+0.2.0 (source: frontmatter) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility. Validate this workflow, data rights, defect taxonomy, acceptance criteria, and operational risks with the deploying organization. <br>
