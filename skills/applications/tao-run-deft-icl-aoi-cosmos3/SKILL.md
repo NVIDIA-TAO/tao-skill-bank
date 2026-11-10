@@ -1,13 +1,13 @@
 ---
 name: tao-run-deft-icl-aoi-cosmos3
-description: Run Cosmos3 AOI with ICL, optional DEFT, or an inference-only Simple harness where Cosmos chooses example/search tools over multiple turns. Includes the frozen six-arm THT suite, AnomalyGen 1.2 and fixed-checkpoint ICL addenda, and paired PCB workflows. Use for Cosmos agentic tool calls, grid plus tools plus guidance, Simple harness without training, or THT ICL/DEFT comparisons; not generic model training.
+description: Run Cosmos3 AOI with ICL, optional DEFT, or an inference-only Simple harness where Cosmos chooses example/search tools over multiple turns. Includes the frozen six-arm THT suite, AnomalyGen 1.2 and fixed-checkpoint ICL addenda, and paired PCB workflows. Use for Cosmos agentic tool calls, progressive exploration or repeated search, grid plus tools plus guidance, Simple harness without training, or THT ICL/DEFT comparisons; not generic model training.
 license: Apache-2.0 AND CC-BY-4.0
 compatibility: Linux, Python 3.11 or later, Docker with NVIDIA GPU support, pinned model and data-service images, and external frozen experiment inputs.
 tags: [computer-vision, aoi, deft, in-context-learning, anomaly-generation]
 allowed-tools: Read, Bash, Write
 metadata:
   author: NVIDIA Corporation
-  version: "0.2.0"
+  version: "0.2.1"
 ---
 
 # Cosmos3 AOI with ICL
@@ -28,6 +28,14 @@ and the Docker platform skill before execution.
   the runner executes its requests and returns images into the same dialogue.
   This route skips DEFT, SFT and AnomalyGen. It is a separate experiment, not
   a replacement for frozen C/E/H or their existing scores.
+- Progressive exploration / repeated search: explicitly select
+  `simple-harness-grid32-explore-cap128-v1`. It appends evidence-gathering
+  guidance while retaining Cosmos as the decision maker, the native tools,
+  the 128-token cap and ten-tool-round bound. Read the
+  [exploration extension](references/simple-harness.md#progressive-exploration-extension).
+  Validate successful new search pages on Proxy; retries and duplicate calls
+  do not establish exploration. Keep this TAO extension separate from native
+  reproduction and from existing measured scores.
 - THT: `mode: tht_single`, one image, eight original class names, exactly one
   JSON label. Use `scripts/suite.py` and the protocol below. No golden image;
   A1/A2 are views of a joint. No multilabel mode.

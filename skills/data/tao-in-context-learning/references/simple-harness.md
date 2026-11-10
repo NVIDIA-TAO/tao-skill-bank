@@ -13,6 +13,35 @@ Profiles:
 | simple-harness-grid32-tools-guidance-native4096 | A_full | Fixed32 atlas + query + task/tools/guidance | Native search and class examples |
 | simple-harness-grid32-cap128 | E_atlas_only | Fixed32 atlas + query + detailed task | None |
 | simple-harness-grid32-tools-guidance-cap128 | A_full | Same atlas + query + task/tools/guidance | Native search and class examples |
+| simple-harness-grid32-explore-cap128-v1 | A_full + TAO guidance | Same context plus progressive evidence guidance | Model-selected new search pages / class examples |
+
+The exploration profile appends [versioned guidance](simple-harness-explore-v1.txt)
+to the native user prompt. It changes neither tool schemas nor tool selection
+in the runner: Cosmos may answer directly, request another page, or stop.
+It retains greedy128/seed0 and the ten-tool-round bound, so compare it with
+the cap128 profile to avoid simultaneously changing the generation budget.
+The full effective prompt and guidance SHA256 are bound in preparation and
+revalidated at run time. Receipts disclose `prompt_deviation` and
+`generation_deviation`. A modified guidance file invalidates prior preparation.
+
+This is a TAO extension, not an exact Maxwell reproduction. Search pagination
+changes the candidate-class pair; it does not rewrite the embedding query.
+Search pages are 0–3; class-example pages are 0–9 for one or two class names.
+Duplicate successful requests and invalid tool retries are not new evidence.
+
+After completion, audit without gold or new inference:
+
+```bash
+python scripts/simple_harness_audit.py --results-dir /results/profile \
+  --output /results/exploration-audit.json
+```
+
+Report successful distinct search pages per query, queries that actually
+performed additional searches, new reference IDs from those searches,
+duplicate calls, tool errors, INVALID and calls/costs. New-reference counts
+are relative to earlier tool results for that query, not to the initial atlas.
+Use a separate trusted Proxy scorer for accuracy. More calls do not establish
+better classification; do not infer hidden reasoning from these statistics.
 
 Pin source revision1711959a40f89cbf4072ea343de318a204903dfd, with code/prompt hashes in `simple-harness-source-pins.json`, including the
 mode, native backend, conversation helpers, tool schemas, retrieval, rendering
@@ -47,7 +76,7 @@ The initial atlas has four distinct Mining joints per class and remains fixed.
 Native tools exclude atlas members/query joint, rank the next two classes by
 max eligible C-RADIO spatial_mean_rotation_mean cosine, then return four
 within-class nearest unrotated summary references. Search pages0–3 and class
-pages0–9 remain native. These are not SigLIP features. All three profiles require
+pages0–9 remain native. These are not SigLIP features. All profiles require
 the frozen caches because native preparation constructs the same bank.
 
 Native atlas construction has no per-query exclusion. This adapter adds an

@@ -17,7 +17,8 @@ import sys
 DATA_SKILL = Path(__file__).resolve().parents[3] / 'data/tao-in-context-learning'
 ADAPTER = DATA_SKILL / 'scripts/simple_harness.py'
 PROFILES = ('simple-harness-grid32-tools-guidance-native4096',
-            'simple-harness-grid32-tools-guidance-cap128')
+            'simple-harness-grid32-tools-guidance-cap128',
+            'simple-harness-grid32-explore-cap128-v1')
 
 
 def read(path):
@@ -72,6 +73,7 @@ def preflight(config_path, output):
         'max_tool_rounds': 10, 'max_model_turns': 11,
         'generation': {'do_sample': False, 'max_new_tokens': prepared['max_new_tokens'], 'seed': 0},
         'format_retries': 0, 'generation_deviation': prepared['generation_deviation'],
+        'prompt_deviation': prepared.get('prompt_deviation'),
         'gpu_smoke': 'not performed by preflight',
         'platform': 'docker; narrow mounts and record-before-launch are platform-owned',
     }

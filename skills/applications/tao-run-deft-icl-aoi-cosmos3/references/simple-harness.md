@@ -100,7 +100,43 @@ available and unchanged.
    if unmeasured. Record reused-Benchmark/post-hoc status; never reuse a prior
    0.727 or historical 0.731 as this branch's new result.
 
-## Suggested launch prompt
+## Progressive exploration extension
+
+For an explicit request to search again and explore unresolved alternatives,
+choose `simple-harness-grid32-explore-cap128-v1`. Copy the same config template,
+set that profile and set `protocol.max_new_tokens` to 128. Use a fresh output
+directory. The adapter appends the versioned TAO exploration guidance to the
+native prompt and records its SHA256; the original profiles remain unchanged.
+
+Cosmos checks whether retrieved appearances distinguish the plausible classes.
+When evidence conflicts or there is no convincing match, the guidance asks it
+to search an unseen page or inspect an unseen class-example page. Cosmos still
+chooses every call and may stop for a clear case. The runner does not force a
+second search, select candidate classes or repair a final answer. Search pages
+0–3 expose different candidate-class pairs, not rewritten search queries.
+
+Start with a separately recorded Proxy evaluation. Use
+`tao-in-context-learning/scripts/simple_harness_audit.py` on completed results.
+Separate multiple successful search pages/new reference IDs from duplicates
+and invalid-argument retries. Compare accuracy and costs with the cap128
+baseline using the existing independent evaluator. A larger call count alone
+is not success. Do not claim actual exploration until traces demonstrate it.
+
+Keep the frozen historical runs and their scores intact. This extension is
+not an exact reproduction. Freeze a selected policy before any separately
+authorized Benchmark evaluation; a Proxy smoke does not authorize that run.
+
+```text
+Add progressive evidence gathering to the Cosmos Simple harness.
+Use simple-harness-grid32-explore-cap128-v1 with base Nano, the frozen Mining
+grid and C-RADIO tools. Let Cosmos decide when unresolved alternatives need
+another search page or more class examples; keep the ten-tool-round limit.
+Skip DEFT, SFT and AnomalyGen. Run Proxy only and report actual new search
+pages, new references, tool errors, classification metrics and resource costs.
+Do not run Benchmark or replace an existing measured score.
+```
+
+## Suggested native reproduction launch prompt
 
 ```text
 Run an inference-only Simple harness experiment in my workspace.

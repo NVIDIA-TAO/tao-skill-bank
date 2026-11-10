@@ -166,6 +166,26 @@ def test_examples_can_be_requested_before_search(execute):
     assert len(backend.requests) == 2 and trace['prediction'] == 'Good'
 
 
+def test_model_can_search_another_page_after_class_examples(execute):
+    backend, session, trace, _ = execute([
+        call('search_similar_examples', page=0),
+        call('get_class_examples', classes=['Good', 'Bright'], page=0),
+        call('search_similar_examples', page=1),
+        call('get_class_examples', classes=['Interrupted'], page=1),
+        '{"labels":["Interrupted"]}'])
+    assert session.calls == [
+        ('search_similar_examples', {'page': 0}),
+        ('get_class_examples', {'classes': ['Good', 'Bright'], 'page': 0}),
+        ('search_similar_examples', {'page': 1}),
+        ('get_class_examples', {'classes': ['Interrupted'], 'page': 1})]
+    assert len(backend.requests) == 5
+    assert trace['prediction'] == 'Interrupted'
+    # Every executed tool's image envelope is part of the next model request.
+    for request in backend.requests[1:]:
+        assert request['messages'][-1]['role'] == 'user'
+        assert request['messages'][-1]['content'][1]['type'] == 'image'
+
+
 def test_budget_adds_one_final_only_turn(execute):
     backend, session, trace, _ = execute([
         call('search_similar_examples', page=0), '{"labels":["Good"]}'], max_rounds=1)

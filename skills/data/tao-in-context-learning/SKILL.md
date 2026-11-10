@@ -1,9 +1,9 @@
 ---
 name: tao-in-context-learning
-description: Select, evaluate and freeze in-context learning policies from Proxy evidence, or run an explicitly requested Simple harness with a fixed class grid and Cosmos-driven example/search tool calls. Use for image reference retrieval, ICL search and bounded multi-turn visual evidence gathering.
+description: Select, evaluate and freeze in-context learning policies from Proxy evidence, or run an explicitly requested Simple harness with a fixed class grid and Cosmos-driven example/search tool calls. Use for image reference retrieval, ICL search, repeated search, progressive exploration and bounded multi-turn visual evidence gathering.
 license: Apache-2.0
 metadata:
-  version: "0.2.0"
+  version: "0.2.1"
   author: NVIDIA Corporation
 allowed-tools: Read Bash Write
 ---
@@ -26,6 +26,15 @@ and `search_similar_examples` calls, sees their returned images, and decides
 again. No Astra agent chooses the tools on Cosmos's behalf. The runner uses
 the pinned, externally supplied Maxwell source; it does not vendor that code.
 Keep this path distinct from the one-call SigLIP toolset below.
+
+For requested repeated search or progressive exploration, opt into
+`simple-harness-grid32-explore-cap128-v1`. This is a TAO prompt extension,
+not a change to the native reproduction defaults. Cosmos decides whether
+ambiguity warrants another search page or more class examples. Run
+`scripts/simple_harness_audit.py` on completed traces to separate successful
+new search pages and new references from repeated calls and tool errors.
+Measure the behavior on Proxy before making a claim; guidance alone is not
+evidence that the model explored or became more accurate.
 
 Read [references/toolsets.md](references/toolsets.md) for the toolset interface.
 The initial `siglip-retrieval-v1` toolset composes

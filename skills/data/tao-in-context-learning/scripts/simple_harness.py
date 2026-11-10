@@ -18,8 +18,11 @@ import time
 
 PROFILES = {'simple-harness-grid32-cap128': 'E_atlas_only',
             'simple-harness-grid32-tools-guidance-cap128': 'A_full',
-            'simple-harness-grid32-tools-guidance-native4096': 'A_full'}
+            'simple-harness-grid32-tools-guidance-native4096': 'A_full',
+            'simple-harness-grid32-explore-cap128-v1': 'A_full'}
 CAPS = {profile: 4096 if profile.endswith('native4096') else 128 for profile in PROFILES}
+EXPLORE_PROFILE = 'simple-harness-grid32-explore-cap128-v1'
+EXPLORE_GUIDANCE = Path(__file__).resolve().parents[1] / 'references/simple-harness-explore-v1.txt'
 PIN = '1711959a40f89cbf4072ea343de318a204903dfd'
 NATIVE_ATLAS_SHA256 = '09b29726dfadbecdbd58c49ba74c5dd3aa8e7312d770732d8ab1fa30db61dddd'
 NATIVE_SELECTION_SHA256 = '54e2f494aff841189efefe13095d483fd6ba0da0f0d83b179bcfaf1735138a44'
@@ -36,6 +39,21 @@ def sha(path):
 
 
 def read(path): return json.loads(Path(path).read_text())
+
+
+def apply_guidance(prepared, profile):
+    """Opt-in prompt extension; never force, synthesize or repair model actions."""
+    if profile != EXPLORE_PROFILE:
+        return None
+    guidance = EXPLORE_GUIDANCE.read_text().strip()
+    if not guidance:
+        raise ValueError('exploration guidance is empty')
+    prepared.user += '\n\n' + guidance
+    prepared.settings['user_prompt'] = prepared.user
+    deviation = {'kind': 'appended_exploration_guidance', 'version': 1,
+                 'sha256': sha(EXPLORE_GUIDANCE)}
+    prepared.settings['prompt_deviation'] = deviation
+    return deviation
 
 
 def write(path, value):
@@ -249,6 +267,7 @@ def main():
         native_rows = [{k: v for k, v in row.items() if k != 'image_sha256'} for row in rows]
         prepared = mode.prepare(args, native_rows)
         if prepared.label_mode != 'names': raise ValueError('original class names required')
+        prompt_deviation = apply_guidance(prepared, config['profile'])
         receipt = {'schema': 'tao-icl-simple-harness-receipt/2', 'status': 'PREPARED', 'config_sha256': sha(a.config),
                    'adapter_sha256': sha(__file__), 'source_pins_sha256': sha(PINS_PATH),
                    'profile': config['profile'], 'query_count': len(rows), 'source_revision': PIN,
@@ -262,6 +281,7 @@ def main():
                    'native_declared_split': prepared.settings['split'], 'actual_split': config['query_split'],
                    'max_new_tokens': CAPS[config['profile']], 'native_max_new_tokens': 4096, 'format_retries': 0,
                    'generation_deviation': None if CAPS[config['profile']] == 4096 else 'max_new_tokens: 4096 -> 128',
+                   'prompt_deviation': prompt_deviation,
                    'decision_owner': 'CosmosBackend', 'tool_sequence': 'model_selected',
                    'atlas_overlap_audit': 'PASS; stricter adapter gate than native fixed atlas',
                    'prompt_sha256': hashlib.sha256(prepared.user.encode()).hexdigest(),

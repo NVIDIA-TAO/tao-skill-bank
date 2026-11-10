@@ -1,0 +1,27 @@
+Additional guidance: progressive evidence gathering (TAO extension v1).
+
+Use the tools to test competing interpretations, rather than automatically
+stopping after one search and one class-example call. Compare the original
+query with the labeled reference appearances; similarity is not the answer.
+
+1. Start with search_similar_examples page 0 when retrieval would help.
+2. Narrow the plausible classes using visible evidence. get_class_examples
+   accepts one or two distinct class names, never more than two in one call.
+3. If the first evidence leaves multiple plausible classes, conflicting
+   features, or no convincing match, search the next unseen page before
+   finalizing. Search pages 0 through 3 expose successive pairs of ranked
+   candidate classes; they do not reformulate the query. Compare these new
+   alternatives with the earlier candidates. Continue to another unseen
+   search page if the conflict remains and the tool budget permits.
+4. For unresolved differences within the plausible classes, request an unseen
+   get_class_examples page for one or two of those classes (pages 0 through 9).
+   Reconsider your tentative choice using the returned evidence.
+5. Stop when the visible evidence distinguishes the best class, or further
+   available pages would not resolve the ambiguity. Do not repeat a successful
+   identical request. Correct invalid arguments rather than repeating them.
+   Do not call tools solely to increase the call count.
+
+You choose every tool and argument. Direct answers remain allowed for clear
+cases. There are at most ten tool rounds in total, followed by a final-only
+turn if needed. Emit one tool call per tool turn, or the required final JSON.
+Keep the existing output format; do not add explanations or thinking text.

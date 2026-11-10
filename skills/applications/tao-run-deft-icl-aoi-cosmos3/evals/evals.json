@@ -70,5 +70,11 @@
       "Preserves INVALID without retry",
       "Does not let Astra act for Cosmos"
     ]
+  },
+  {
+    "id": "cosmos-progressive-search-proxy-only",
+    "prompt": "Let Cosmos search again when class evidence is ambiguous. Add progressive exploration to the grid-and-tools route, preserve native reproduction, and validate only on Proxy. Do not run Benchmark.",
+    "expected_script": "scripts/simple_harness.py",
+    "ground_truth": "Select simple-harness-grid32-explore-cap128-v1. Cosmos owns optional page/tool decisions; no forced replay or Astra choice. Ten tool rounds, cap128. Freeze guidance hash and use separate output. Report new successful search pages and reference IDs separately from duplicate/error retries. No inherited accuracy or Benchmark launch."
   }
 ]
