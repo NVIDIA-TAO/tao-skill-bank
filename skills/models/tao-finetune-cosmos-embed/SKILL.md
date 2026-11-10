@@ -100,58 +100,51 @@ The image downloads the BERT Q-Former component under `/usr/local/lib/python3.12
 
 Keep `-w /results`: with a cold Triton cache, a working directory containing `specs/` makes GCC read `./specs` as a compiler spec file (`cannot read spec file './specs': Is a directory`).
 
-For Cosmos-Embed images that ship `protobuf==7.x`, run a small startup
-preamble before every action:
-
-```bash
-python -m pip install "protobuf<7"
-```
-
-`wandb==0.21.0` cannot import with `protobuf==7.x`; the preamble is a no-op where protobuf is already below 7. Keep `WANDB_DISABLED=true` for smoke or offline runs. The Q-Former path may download the public `google-bert/bert-base-uncased` even with the model checkpoint disabled, so provide `HF_TOKEN` through the environment or an `--env-file`, or mount a persistent HuggingFace cache. Never write the token into specs, logs, or reports.
+Run `cosmos-embed1` directly; do not `pip install` anything into the container first. The pinned image ships a matched `wandb`/`onnx`/`protobuf` set, and its `PIP_CONSTRAINT` resolves `pip install "protobuf<7"` to `protobuf==4.24.4`, which breaks ONNX export. Keep `WANDB_DISABLED=true` for smoke or offline runs. The Q-Former path may download the public `google-bert/bert-base-uncased` even with the model checkpoint disabled, so provide `HF_TOKEN` through the environment or an `--env-file`, or mount a persistent HuggingFace cache. Never write the token into specs, logs, or reports.
 
 Train:
 
 ```bash
 docker run "${DOCKER_COMMON[@]}" "$COSMOS_EMBED_IMAGE" \
-  bash -lc "python -m pip install 'protobuf<7' && cosmos-embed1 train -e /specs/train.yaml results_dir=/results"
+  cosmos-embed1 train -e /specs/train.yaml results_dir=/results
 ```
 
 Evaluate:
 
 ```bash
 docker run "${DOCKER_COMMON[@]}" "$COSMOS_EMBED_IMAGE" \
-  bash -lc "python -m pip install 'protobuf<7' && cosmos-embed1 evaluate -e /specs/evaluate.yaml results_dir=/results"
+  cosmos-embed1 evaluate -e /specs/evaluate.yaml results_dir=/results
 ```
 
 Inference:
 
 ```bash
 docker run "${DOCKER_COMMON[@]}" "$COSMOS_EMBED_IMAGE" \
-  bash -lc "python -m pip install 'protobuf<7' && cosmos-embed1 inference -e /specs/inference.yaml \
-  'inference.query.input_texts=[\"a man is singing on stage\"]' \
+  cosmos-embed1 inference -e /specs/inference.yaml \
+  'inference.query.input_texts=["a man is singing on stage"]' \
   inference.k=5 \
-  results_dir=/results"
+  results_dir=/results
 ```
 
 Export ONNX (one graph per tower, dynamic batch axis; run once with `export.mode=video` and once with `export.mode=text`):
 
 ```bash
 docker run "${DOCKER_COMMON[@]}" "$COSMOS_EMBED_IMAGE" \
-  bash -lc "python -m pip install 'protobuf<7' && cosmos-embed1 export -e /specs/export_onnx.yaml \
+  cosmos-embed1 export -e /specs/export_onnx.yaml \
   export.checkpoint=/results/train/checkpoints/iter_000000001.pt \
   export.mode=video export.batch_size=-1 export.on_cpu=true \
   export.onnx_file=/results/export/cosmos_embed1_vision.onnx \
-  results_dir=/results"
+  results_dir=/results
 ```
 
 Export HuggingFace format:
 
 ```bash
 docker run "${DOCKER_COMMON[@]}" "$COSMOS_EMBED_IMAGE" \
-  bash -lc "python -m pip install 'protobuf<7' && cosmos-embed1 export -e /specs/export_hf.yaml \
+  cosmos-embed1 export -e /specs/export_hf.yaml \
   export.checkpoint=/results/train/checkpoints/iter_000000001.pt \
   export.hf_output_dir=/results/export_hf/cosmos_embed1_hf \
-  results_dir=/results"
+  results_dir=/results
 ```
 
 For a LoRA checkpoint, every downstream spec (`evaluate`, `inference`, `export`) must carry the training spec's `model.lora` block and list exactly the modules that were trained in `target_modules`; export merges the adapters into the weights. See `references/lora-finetune-physicalai.md`.
@@ -262,7 +255,8 @@ The per-tower ONNX input/output contract and TensorRT notes are in `references/l
 | `MSRVTTDataset: 0 videos found` | `mp4_urls` is not a local glob or metadata filenames do not match videos. | Mount data into the container and set `mp4_urls=/data/video/*.mp4`. |
 | Chunk manifest loads 0 videos or skips most entries | Manifest paths (`videos/<file>.mp4`) were not rewritten to the mounted folder. | Set `dataset.*.path_prefix_mapping` from the manifest prefix to the container path. |
 | HF download/auth failure | Missing or invalid `HF_TOKEN`, or model agreement not accepted. | Accept the model terms and pass `-e HF_TOKEN`. |
-| `cannot import name 'Imports' from 'wandb.proto.wandb_telemetry_pb2'` | `wandb==0.21.0` in the container is incompatible with `protobuf==7.x`. | Run `python -m pip install "protobuf<7"` in the container before invoking `cosmos-embed1`. |
+| ONNX export fails with `cannot import name 'runtime_version' from 'google.protobuf'` | protobuf was downgraded in the container; the image's `PIP_CONSTRAINT` resolves `pip install "protobuf<7"` to 4.24.4, below what its `onnx` needs. | Rerun in a fresh container from the pinned image with no `pip install` step. |
+| `cannot import name 'Imports' from 'wandb.proto.wandb_telemetry_pb2'` | A 7.0.x Cosmos-Embed image (`wandb==0.21.0` with `protobuf==7.x`). | Use the pinned image; do not pin protobuf at runtime. |
 | Resume fails with `Model does not implement 'apply_fsdp'` | Single-GPU resume loaded a consolidated checkpoint while `model.fsdp_shard_size` stayed at the default 8. | Set `model.fsdp_shard_size=1` for local single-GPU resume/retrain. |
 | LoRA injection failure | Transformer Engine visual encoder is enabled. | Set `model.network.visual_encoder.transformer_engine=false`. |
 | Every `visual_encoder.*.lora_B` tensor is zero after training | Image older than the pinned one (reentrant activation checkpointing with a frozen ViT input; `attn.qkv` bypassed its LoRA wrapper). | Use the pinned image and re-run the `lora_B` check in `references/lora-finetune-physicalai.md`. |

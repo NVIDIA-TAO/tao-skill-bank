@@ -24,7 +24,7 @@ The template uses `caption_field: [caption_queries, anomaly_queries, action_quer
 
 ```bash
 docker run "${DOCKER_COMMON[@]}" "$COSMOS_EMBED_IMAGE" \
-  bash -lc "python -m pip install 'protobuf<7' && cosmos-embed1 train -e /specs/train_lora.yaml results_dir=/results"
+  cosmos-embed1 train -e /specs/train_lora.yaml results_dir=/results
 ```
 
 - `train.grad_accum_iter` multiplies the per-GPU batch; `max_iter`, `validation_iter`, and `checkpoint_iter` count optimizer updates, not micro-steps.
