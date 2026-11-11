@@ -231,7 +231,7 @@ class FrameworkActionBackendTests(unittest.TestCase):
         self.assertEqual(parsed["generation"]["max_tokens"], 4)
 
         command = submit_cfw_evaluate.build_docker_argv(
-            immutable_image="example/framework@sha256:" + "c" * 64,
+            immutable_image="nvcr.io/nvidia/tao/tao-toolkit@sha256:" + "c" * 64,
             job_id="docker-eval-test",
             config_host=pathlib.Path("/workspace/specs/evaluate.toml"),
             workspace=pathlib.Path("/workspace"),
@@ -245,6 +245,31 @@ class FrameworkActionBackendTests(unittest.TestCase):
         self.assertIn(
             "type=bind,src=/workspace/results/iter1/train,dst=/workspace/results/iter1/train",
             command,
+        )
+        self.assertNotIn(submit_cfw_evaluate.EVALUATE_COMPAT_CONTAINER, command)
+
+    def test_evaluate_compat_shim_is_scoped_to_the_broken_ga_digest(self) -> None:
+        command = submit_cfw_evaluate.build_docker_argv(
+            immutable_image=submit_cfw_evaluate.EVALUATE_COMPAT_IMAGE,
+            job_id="docker-eval-compat-test",
+            config_host=pathlib.Path("/workspace/specs/evaluate.toml"),
+            workspace=pathlib.Path("/workspace"),
+            results_dir=pathlib.Path("/workspace/results/evaluate"),
+            writable_export_parent=None,
+            gpus="all",
+            offline=False,
+        )
+        compat_dir = (
+            pathlib.Path(submit_cfw_evaluate.__file__).resolve().parent
+            / "cfw_evaluate_compat"
+        )
+        self.assertIn(
+            "type=bind,src="
+            f"{compat_dir},dst={submit_cfw_evaluate.EVALUATE_COMPAT_CONTAINER},readonly",
+            command,
+        )
+        self.assertIn(
+            f"PYTHONPATH={submit_cfw_evaluate.EVALUATE_COMPAT_CONTAINER}", command
         )
 
     def test_inference_submit_uses_native_entrypoint_and_dcp_handoff(self) -> None:
