@@ -25,6 +25,11 @@ from submit_cfw_train import default_bank, resolve_image
 
 CONTAINER_CONFIG = "/tao/config/evaluate.toml"
 LEGACY_WORKSPACE = "/tao-workspace"
+EVALUATE_COMPAT_IMAGE = (
+    "nvcr.io/nvidia/tao/tao-toolkit@"
+    "sha256:897c7cb2088e761bb48003029f1f5ed4fac32997388efe4d158e93dd8d36ac8d"
+)
+EVALUATE_COMPAT_CONTAINER = "/opt/tao/cfw-evaluate-compat"
 
 
 def _username() -> str:
@@ -221,6 +226,18 @@ def build_docker_argv(
         command.extend([
             "--mount",
             _mount(writable_export_parent, str(writable_export_parent), readonly=False),
+        ])
+    if immutable_image == EVALUATE_COMPAT_IMAGE:
+        compat_dir = pathlib.Path(__file__).resolve().parent / "cfw_evaluate_compat"
+        if not compat_dir.is_dir():
+            raise FileNotFoundError(
+                f"Framework Evaluate compatibility files are missing: {compat_dir}"
+            )
+        command.extend([
+            "--mount",
+            _mount(compat_dir, EVALUATE_COMPAT_CONTAINER, readonly=True),
+            "-e",
+            f"PYTHONPATH={EVALUATE_COMPAT_CONTAINER}",
         ])
     if offline:
         command.extend(["-e", "HF_HUB_OFFLINE=1", "-e", "TRANSFORMERS_OFFLINE=1"])
