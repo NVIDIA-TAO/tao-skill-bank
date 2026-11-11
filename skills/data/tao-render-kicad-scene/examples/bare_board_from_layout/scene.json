@@ -1,0 +1,8 @@
+{
+  "render": {"resolution": [320, 320], "samples": 32, "seed": 17},
+  "camera": {"type": "ORTHO", "target_mm": [8.0, 8.0], "ortho_scale_mm": 16.0, "elevation_deg": 90.0},
+  "lighting": {
+    "world_strength": 0.6,
+    "area": [{"name": "white_fill", "position_mm": [8.0, 8.0, 25.0], "power_w": 0.02, "size_mm": 30.0}]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "render": {"resolution": [480, 320], "samples": 32, "seed": 17, "view_transform": "Standard"},
+  "camera": {"type": "ORTHO", "target_mm": [3.0, 2.0], "ortho_scale_mm": 6.0, "elevation_deg": 90.0},
+  "lighting": {
+    "world_strength": 0.5, "world_color": [1, 1, 1],
+    "area": [{"name": "white_fill", "position_mm": [3.0, 2.0, 20.0], "power_w": 0.01, "size_mm": 20.0}]
+  },
+  "assets": [
+    {"type": "box", "name": "body", "center_mm": [3.25, 2.1], "size_mm": [2.6, 0.9], "height_mm": 0.8,
+     "rotation_deg": 12.0, "z_offset_mm": 0.03, "color": [0.75, 0.78, 0.76], "roughness": 0.45}
+  ]
+}

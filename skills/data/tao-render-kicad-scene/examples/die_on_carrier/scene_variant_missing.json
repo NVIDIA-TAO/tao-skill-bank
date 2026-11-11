@@ -1,0 +1,7 @@
+{
+  "render": {"resolution": [240, 200], "samples": 32, "seed": 17, "view_transform": "Standard"},
+  "camera": {"type": "ORTHO", "target_mm": [1.2, 1.0], "ortho_scale_mm": 2.4, "elevation_deg": 90.0},
+  "lighting": {"world_strength": 1.0, "world_color": [1, 1, 1], "area": []},
+  "assets": [],
+  "materials": {"overrides": {"board:": {"color": [0.08, 0.08, 0.08], "roughness": 0.8}}}
+}
