@@ -52,7 +52,7 @@ batch_size:     64
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/verify_embed_encoder.py \
   --spec "$EMBED_SPEC" --results-dir "${RESULTS_DIR}"
 
-docker run --rm --name "deft_iter${N}_embed" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+docker run --rm --name "deft_${DEFT_RUN_TAG}_iter${N}_embed" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   embedding image_embeddings -e "$EMBED_SPEC"
