@@ -85,6 +85,15 @@ def test_lfs_pointer_to_private_file_is_blocked(repo):
     assert code == 1 and "Git LFS oid is a private source file" in problems
 
 
+def test_build_works_outside_a_repository_and_refuses_inside(repo, tmp_path):
+    work, private, _ = repo
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    assert run(outside, "build", "--root", str(private), "--out", str(outside / "d.txt")).returncode == 0
+    inside = run(work, "build", "--root", str(private), "--out", str(work / "d.txt"))
+    assert inside.returncode != 0 and "outside the repository" in inside.stderr
+
+
 def test_missing_or_empty_denylist_fails_closed(repo):
     work, _, denylist = repo
     assert run(work, "check", "--denylist", str(denylist) + ".absent", "--staged").returncode != 0

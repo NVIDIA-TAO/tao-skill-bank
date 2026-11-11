@@ -97,7 +97,10 @@ def cmd_build(args):
                     digest.update(block)
             rows.append(digest.hexdigest())
     out = Path(args.out).resolve()
-    top = Path(git("rev-parse", "--show-toplevel").decode().strip()) if args.in_repo_check else None
+    try:  # outside any repository there is nothing to protect the denylist from
+        top = Path(git("rev-parse", "--show-toplevel").decode().strip()) if args.in_repo_check else None
+    except subprocess.CalledProcessError:
+        top = None
     if top and (out == top or top in out.parents):
         raise SystemExit("Keep the denylist outside the repository")
     out.parent.mkdir(parents=True, exist_ok=True)
