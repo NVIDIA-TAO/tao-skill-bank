@@ -1,16 +1,18 @@
 ---
 name: tao-render-kicad-scene
 description: >-
-  Build or modify a small PCB scene with the KiCad pcbnew SDK, export it with
-  kicad-cli, add parametric solder and AOI lighting in Blender, render it, and
-  replay the run from its JSON receipt. Use to reconstruct a board, component
-  or solder-joint scene from a description or reference measurements and to
-  make controlled variants. Not for training, dataset export, or full CAD recovery.
+  Build or modify a small PCB scene with the KiCad pcbnew SDK, reusing library
+  footprints and their 3D models, export it with kicad-cli, add parametric
+  solder and lighting in Blender, render it, and replay the run from its JSON
+  receipt. Use to reconstruct a board, component or solder-joint scene from a
+  description or reference measurements, fit its appearance within fixed
+  bounds, and make controlled variants. Not for training, dataset export, or
+  full CAD recovery.
 license: Apache-2.0
 compatibility: Requires an extracted KiCad 10.0.5 AppDir and Blender 4.2.1 installed outside the repository. Linux x64, CPU only. Python 3.10+ for the controller; numpy and Pillow enable pixel comparison on replay.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.2.0"
 allowed-tools: Read Bash Write
 tags: [tao, data, kicad, blender, pcb, synthetic-data, rendering, aoi]
 ---
@@ -18,7 +20,7 @@ tags: [tao, data, kicad, blender, pcb, synthetic-data, rendering, aoi]
 # Render a KiCad Scene
 
 You write short KiCad SDK scripts that create or edit a board, then export,
-render and replay them. The skill adds a few thin helpers and four small
+render and replay them. The skill adds a few thin helpers and six small
 worked examples; KiCad, its libraries and Blender are external runtimes you reuse.
 
 One image cannot recover the original CAD or a unique physical truth. Keep
@@ -52,9 +54,14 @@ and a Python that has numpy and Pillow.
 | Scene | KiCad owns | Custom asset | Example |
 |---|---|---|---|
 | Library part, pads, solder | Footprints, pads, tracks, STEP models | `solder_fillet` per pad | `synthetic_0402` |
+| Library part with shared, renamed or several models | The models each footprint declares, with their transforms | none | `library_models` |
 | Part with no library match | SDK-built SMD pads (`smd_footprint`) | `box` body | `custom_part` |
 | Bare-board copper, opens and shorts | F.Cu polygons traced from a two-level image | none | `bare_board_from_layout` |
 | Die or other object on a carrier | Carrier outline, optional attach pad | `box` die | `die_on_carrier` |
+
+`examples/appearance_fit` is not a scene type: it renders a reference with a
+known look and then searches for it on the same geometry, as a check of the
+appearance search itself.
 
 ## Workflow
 
@@ -64,16 +71,53 @@ and a Python that has numpy and Pillow.
    that are visible; the camera and lighting; and each assumption. Pixel size
    is not millimetres until a known dimension fixes the scale.
 3. **Create the board** with an SDK script (start from
-   `examples/synthetic_0402/create_board.py`). Prefer a standard-library
-   footprint and its STEP model; add a custom asset only when the library has none.
+   `examples/synthetic_0402/create_board.py`). Search the library first (see
+   "Library first"); add a custom asset only for what the library lacks, and
+   say what you searched and why it was rejected.
 4. **Export** with `kicad-cli pcb export glb` (flags in `run.sh`).
 5. **Render** with `scripts/blender_scene.py` and a scene JSON.
 6. **Read `render_receipt.json`** before looking at the picture: pad alignment
-   must be `pass`, each solder asset `built` with a positive volume, and the
-   entities you expect must have pixels in `entity_ids.pixel_counts`.
-7. **Modify one factor** in a new script or scene JSON that reads the parent and
+   must be `pass`, `model_check` must show every resolved model in the export,
+   each solder asset `built` with a positive volume, and the entities you
+   expect must have pixels in `entity_ids.pixel_counts`.
+7. **Fit appearance only after geometry and camera are accepted** (see
+   "Appearance search"). Keep the initial render, the best one and the history.
+8. **Modify one factor** in a new script or scene JSON that reads the parent and
    writes a new directory. Compare receipts to confirm only that factor moved.
-8. **Seal and replay**: `finish`, then `replay` into a new directory.
+9. **Seal and replay**: `finish`, then `replay` into a new directory.
+
+## Library first
+
+Reuse what KiCad already has before modelling anything yourself.
+
+1. **Describe and measure.** A photograph needs someone or something to say
+   what the objects are. `scripts/offline_describe.py` asks a vision-language
+   model stored on the host (no network) and returns text only; treat its
+   answers as provisional and check each against another question or a
+   measurement. `offline_image.py profile` gives ordered colour runs along an
+   axis, which is how body, termination and pad edges are separated. Write
+   down which statements you used, which you rejected and why.
+2. **Search.** `scripts/library_search.py` lists footprints by pad count,
+   mounting style and body proportions and shows whether each one's models
+   resolve in this install. Proportions are all a picture gives without a
+   known dimension, so several sizes of one family usually survive.
+3. **Compare at most three candidates.** Build each with `place`, render at
+   the reference's pixel size, and score regions with `region` and `rois`.
+   Record what fits and what does not for each; a silhouette alone often
+   cannot separate neighbouring sizes.
+4. **Calibrate what the library cannot know.** Lands and silkscreen belong to
+   the board, not to the part: resize pads or add graphics with pcbnew and
+   list every change as a deviation from the library footprint. Agreement of
+   those items afterwards is by construction, not evidence.
+
+`place` reads the models the footprint itself declares. A footprint may name
+none, one or several, each with its own offset, rotation and scale, under a
+file name unrelated to the footprint and shared with others. References may
+use `${KICAD10_3DMODEL_DIR}` (older `KICADn_3DMODEL_DIR` and `KISYS3DMOD` are
+aliases), `${KIPRJMOD}`, your own variables, or relative and absolute paths.
+A file that is missing, or in a format not yet checked with this exporter, is
+an error; `missing="drop"` removes that model on purpose and records it.
+Nothing is ever replaced by a box.
 
 ## Recording steps
 
@@ -107,7 +151,8 @@ pcbnew directly for everything else.
 |---|---|
 | `seed_ids(seed)` | Call first. KiCad saves items in UUID order, so unseeded IDs reorder the board and the GLB between runs. |
 | `new_board(outline_mm)` | Board with a closed Edge.Cuts outline. |
-| `place(board, library, name, ref, x, y, angle)` | Standard footprint plus its STEP model by absolute path. |
+| `place(board, library, name, ref, x, y, angle)` | Footprint from a library name or `.pretty` path, with every model it declares resolved and bound. |
+| `footprint_models(fp)` / `bind_models(fp)` / `add_model(fp, ref, offset, rotation, scale)` | Inspect, resolve or declare model references yourself; transforms are kept. |
 | `connect(board, net, pads, width_mm, via_points_mm)` | One net with straight F.Cu segments. |
 | `smd_footprint(board, ref, pads, x, y, angle)` | Footprint built from scratch with rectangular SMD pads. |
 | `add_copper(board, polys)` / `take_copper(board)` | Put a polygon set on F.Cu, or take the existing copper off for boolean edits. |
@@ -119,7 +164,9 @@ parent with `pcbnew.LoadBoard`, change it, and `save` to a new directory.
 ## Scene JSON
 
 Unset keys take the defaults at the top of `scripts/blender_scene.py`; the
-resolved values are written to the receipt.
+resolved values are written to the receipt. `--scene` may be repeated; later
+files override earlier keys, so camera, look and render settings can live in
+separate files.
 
 | Key | Meaning |
 |---|---|
@@ -129,13 +176,22 @@ resolved values are written to the receipt.
 | `lighting.rgb_dome` | AOI dome as emissive bands: `radius_mm` and per band `color`, `elevation_deg`, `width_deg`, `strength`. |
 | `assets` | `solder_fillet` entries: `pads` (`"all"` or IDs such as `"C1:2"`), `amount`, `wetting`. Later entries override earlier ones per pad; `amount: 0` omits the joint. `box` entries: `name`, `center_mm`, `size_mm`, `height_mm`, `rotation_deg` (counter-clockwise on screen), `corner_cut_mm`, `color`, `roughness`, `specular`. |
 | `materials.solder` | `color`, `roughness`. |
-| `materials.overrides` | Appearance for exported KiCad meshes by entity-ID prefix, for example `"board:board_soldermask"`: `color`, `roughness`, `metallic`, `specular`. |
+| `materials.overrides` | Appearance by entity-ID prefix, for example `"board:board_soldermask"` or `"component:C1:part0"`: `color`, `roughness`, `metallic`, `specular`. Only the keys given change; the rest stays as exported. |
+| `id_mask` | `false` skips the entity mask (reuse the one from another render of the same geometry). |
 | `pad_alignment` | `mode` `require` (default) or `report`, `tolerance_mm`. |
 
 `amount` scales fillet height against the terminal height (1.0 nominal, below
 1 starved, above 1 convex and capped at the terminal top). `wetting` scales
 how much of the pad toe the solder covers. Both are appearance parameters,
 not measured solder volume.
+
+A library model arrives as one entity per material group:
+`component:<ref>:part<n>`. For a chip part these are the terminations and the
+body; `component_parts` in the receipt gives each group's exported colour and
+bounds so you can tell which is which. A prefix such as `component:C1` matches
+every group and paints them alike, so name the part. KiCad exports model
+materials without a metallic value, which glTF reads as fully metallic: set
+`metallic` yourself for ceramic or plastic bodies.
 
 Colours are linear RGB. With `view_transform: "Standard"`, a white world of
 strength 1 and `specular: 0`, a flat surface renders at about its own colour,
@@ -149,10 +205,12 @@ reference. It prints numbers, never pixels.
 | Command | Use |
 |---|---|
 | `stats` | Size, value distribution, whether the image is two-level. |
-| `segments` | Colour clusters with size, position, orientation and mean colour of their largest regions. |
+| `segments` | Colour clusters with size, position, orientation and mean colour of their largest regions; `--crop` limits it to a window. |
+| `profile` | Ordered colour runs along one axis of a window, each with its extent across the axis: where one material ends and the next begins. |
 | `layout` | Trace a two-level bare-board image into pixel-exact copper rectangles. State which level is copper and the scale, each with its basis. |
 | `compare` | Copper mask of a render against the reference mask: IoU, mismatches, registration shift. |
-| `region` | One rendered entity against a thresholded reference region: IoU, centroid, size, axis, mean colour, SSIM. |
+| `region` | Rendered entities against a reference region chosen by gray range or by colour cluster: IoU, centroid, size, axis, mean colour, SSIM. |
+| `rois` | Appearance inside the render's own entity regions, reference against render: mean colour, 5/50/95 gray percentiles, contrast, highlight share, and one loss. |
 | `diff` | Change between two renders, tested against ground-truth boxes. |
 
 Render at the reference's native pixel size; nothing here resizes for scoring.
@@ -165,15 +223,53 @@ was understood. A thresholded region is a segmentation, not labelled truth.
 Polarity, scale, height and material stay assumptions until something
 independent fixes them.
 
+## Appearance search
+
+Fit materials and lighting only on geometry and a camera you have stopped
+changing. `scripts/appearance_search.py` runs a bounded search from a plan
+written beforehand:
+
+```bash
+python3 scripts/appearance_search.py --plan plan.json --run RUN --search-dir NEW_DIR
+```
+
+The plan fixes the seed, the evaluation budget, the stages with each
+parameter's bounds, and the stop rule; see the script header for its keys.
+It may only vary keys under `materials/`, `lighting/` and `render/exposure`;
+anything else, or a base look that carries a camera, is refused. Once the
+search has started the plan is final: if a stop rule ends it early, report
+that, and do not start a second search to use up the rest of the budget.
+`lhs` stages sample inside the bounds; `ratio` stages rescale a base colour by
+the reference/render colour of its region. Each evaluation is a recorded
+render and a recorded `rois` score, so the receipt replays the search. The
+search directory keeps a look file per evaluation, `history.json` with every
+result, `initial.json` and `best.json`.
+
+Tune parts separately (board, body, terminations, solder, light) and keep
+metals metallic and dielectrics specular: a scene with every reflection
+removed can match mean colours and still look wrong. Never texture the scene
+with the reference or blur or warp the reference. The loss compares regional
+statistics; it is not a likeness score, and regions with content you did not
+model (text, neighbouring parts) set a floor on it.
+
 ## Judging a run
 
 - `finish` reports `complete` only when every step succeeded.
 - `replay` passes when boards and metadata match, entity-ID arrays are equal
   in dtype, shape and values, and each PNG is within the stated pixel
   tolerance. `.blend` and `.glb` bytes embed non-semantic data and are
-  reported but do not gate.
+  reported but do not gate. Paths inside the run directory are read as
+  `{run}`. An input from outside the run (a reference, a scene file) whose
+  hash changed fails the replay; a changed skill script is reported. A score
+  that names the hash of a reference rendered in the same run is accepted
+  only through a pair that already matched pixel for pixel.
+- `kicad_light.py recompare` repeats the comparison of an existing replay
+  without running anything and writes the result to a separate file.
 - Pad alignment checks the XY centre of each CAD pad against the exported
   copper. It does not prove solder contact, stack-up height or optical realism.
+- `model_check` fails the render when the export holds fewer or more models
+  than the CAD metadata resolved; kicad-cli itself drops a model it cannot
+  load and still exits 0.
 - A render that looks plausible is not a reconstruction result. Compare
   against the reference with fixed regions and metrics, and report failed
   attempts with the best one.
@@ -194,10 +290,17 @@ has handled private data, run `scripts/privacy_guard.py` (see
 - Solder fillets are supported for two-terminal chip parts whose body outline
   is on F.Fab. Other packages report `unsupported` and need a custom asset.
 - `layout` handles two-level images only. Photographs need a measured
-  description (`segments`) and your own SDK script.
-- There is no automatic image understanding or appearance fitting. Without a
-  person or an offline vision model describing a photograph, a reconstruction
-  from cluster statistics is a first candidate to be reviewed, not a result.
+  description (`segments`, `profile`) and your own SDK script.
+- Colour clustering starts from randomly drawn pixels with a fixed seed. An
+  image with a few flat colours can lose a small cluster; raise `--k`.
+- Choosing a footprint from a photograph is not automatic. The offline reader
+  and the measurements narrow the family and proportions; without a known
+  dimension the case size stays an assumption, and the reader contradicts
+  itself on fine detail.
+- The appearance search matches regional statistics within its bounds. It
+  does not recover measured material properties or the real light positions.
+- Library models carry nominal dimensions and heights, not those of the part
+  in the picture.
 - Top-side components only; bottom views are untested.
 - CPU Cycles only. GPU rendering, optical fitting, consumer masks and dataset
   export are out of scope for this version.

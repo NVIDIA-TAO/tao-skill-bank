@@ -229,19 +229,42 @@ def pixels(path):
         return np.asarray(image.convert("RGBA"), dtype=np.int16)
 
 
-def compare(name, old, new):
-    """Return (verdict, gating, detail) for one replayed artifact."""
+def compare(name, old, new, roots=None, proven=None):
+    """Return (verdict, gating, detail) for one replayed artifact.
+
+    `roots` is (original run directory, replay directory): text artifacts may
+    name files inside their own run, so each root is read as `{run}` first.
+    `proven` maps the SHA-256 of an original in-run artifact to the SHA-256 of
+    its replayed counterpart, only for pairs that already passed comparison. A
+    JSON artifact that embeds such a hash (a score naming a reference rendered
+    in the same run) is read through that mapping; any other hash must match.
+    """
     suffix = Path(name).suffix
     if not new.is_file():
         return "missing", True, None
     if sha(old) == sha(new):
         return "identical", True, None
+
+    translated = []
+
+    def text(path, root):
+        data = path.read_bytes()
+        if path == old:
+            for before, after in (proven or {}).items():
+                if before.encode() in data:
+                    data = data.replace(before.encode(), after.encode())
+                    translated.append(before)
+        return data.replace(str(root).encode(), b"{run}") if root else data
+    old_root, new_root = roots or (None, None)
     if suffix in TEXT_UUID:
-        same = UUID_RE.sub(b"(uuid)", old.read_bytes()) == UUID_RE.sub(b"(uuid)", new.read_bytes())
-        return ("equal_modulo_uuid" if same else "differs"), True, None
+        same = UUID_RE.sub(b"(uuid)", text(old, old_root)) == UUID_RE.sub(b"(uuid)", text(new, new_root))
+        return ("equal_modulo_uuid" if same else "differs"), True, "run directory read as {run}" if roots else None
     if suffix == ".json":
-        same = strip_volatile(json.loads(old.read_text())) == strip_volatile(json.loads(new.read_text()))
-        return ("equal_modulo_volatile" if same else "differs"), True, "ignored keys: " + ",".join(sorted(VOLATILE_KEYS))
+        same = strip_volatile(json.loads(text(old, old_root))) == strip_volatile(json.loads(text(new, new_root)))
+        note = "ignored keys: " + ",".join(sorted(VOLATILE_KEYS))
+        if translated:
+            note += f"; {len(translated)} hash(es) of in-run artifacts read through the proven original->replay pairs"
+        return ("equal_modulo_volatile" if same else "differs"), True, note
     if suffix == ".png":
         a, b = pixels(old), pixels(new)
         if a is None:
@@ -270,6 +293,54 @@ def compare(name, old, new):
     return "bytes_differ_not_gating", False, "open the replayed file to inspect; gating artifacts cover its content"
 
 
+def compare_runs(original, old_dir, run_dir):
+    """Compare every recorded output of the original run with its replayed file, in step order."""
+    rows, passed, proven = [], True, {}
+    for step in original["steps"]:
+        for name in sorted(step["outputs_sha256"]):
+            verdict, gating, detail = compare(name, old_dir / name, run_dir / name, (old_dir, run_dir), proven)
+            good = verdict in PASSING or not gating
+            passed = passed and good
+            if gating and good and verdict != "identical":  # same content under different bytes
+                proven[step["outputs_sha256"][name]] = sha(run_dir / name)
+            rows.append({"artifact": name, "step": step["name"], "verdict": verdict, "gating": gating,
+                         "pass": good, "detail": detail})
+    return rows, passed
+
+
+def input_changes(original, replayed):
+    """Inputs from outside the run whose hash differs between two receipts; skill files are listed apart."""
+    external, skill = [], []
+    done = {step["name"]: step.get("inputs_sha256", {}) for step in replayed["steps"]}
+    for step in original["steps"]:
+        for raw, digest in step.get("inputs_sha256", {}).items():
+            if "{run}" in raw or done.get(step["name"], {}).get(raw) == digest:
+                continue  # files inside the run are compared as outputs of the step that wrote them
+            (skill if raw.startswith("{skill}") else external).append({"step": step["name"], "input": raw})
+    return external, skill
+
+
+def cmd_recompare(args):
+    """Compare an existing replay directory with its original again, without running anything."""
+    source = Path(args.receipt).expanduser().resolve()
+    original = json.loads(source.read_text())
+    run_dir = Path(args.replay_dir).expanduser().resolve()
+    rows, passed = compare_runs(original, source.parent, run_dir)
+    external, skill = input_changes(original, json.loads((run_dir / "receipt.json").read_text()))
+    passed = passed and not external
+    result = {"recompare_of": {"receipt": str(source), "receipt_sha256": sha(source), "replay_dir": str(run_dir),
+                               "replay_receipt_sha256": sha(run_dir / "receipt.json")},
+              "note": "comparison only; no step was executed and neither directory was changed",
+              "pass": passed, "artifacts": rows, "input_drift": external, "skill_files_changed": skill}
+    Path(args.out_json).write_text(json.dumps(result, indent=2) + "\n")
+    summary = {}
+    for row in rows:
+        summary[row["verdict"]] = summary.get(row["verdict"], 0) + 1
+    print(json.dumps({"recompare_pass": passed, "verdicts": summary, "input_drift": external,
+                      "failed": [r for r in rows if not r["pass"]]}, indent=2))
+    sys.exit(0 if passed else 1)
+
+
 def cmd_replay(args):
     appdir, blender = runtime(args)
     source = Path(args.receipt).expanduser().resolve()
@@ -289,20 +360,20 @@ def cmd_replay(args):
             receipt["status"] = "replay_step_failed"
             save_receipt(run_dir, receipt)
             raise SystemExit(f"Replay step failed: {step['name']}: {done['error']}")
-    rows, passed = [], True
-    for step in original["steps"]:
-        for name in sorted(step["outputs_sha256"]):
-            verdict, gating, detail = compare(name, old_dir / name, run_dir / name)
-            good = verdict in PASSING or not gating
-            passed = passed and good
-            rows.append({"artifact": name, "step": step["name"], "verdict": verdict, "gating": gating,
-                         "pass": good, "detail": detail})
+    rows, passed = compare_runs(original, old_dir, run_dir)
+    input_drift, skill_changed = input_changes(original, receipt)
+    passed = passed and not input_drift  # an input from outside the run changed or is gone
     drift = {k: (original["runtime"][k], receipt["runtime"][k]) for k in ("kicad", "blender")
              if strip_volatile(original["runtime"][k]) != strip_volatile(receipt["runtime"][k])}
     receipt["comparison"] = {"pass": passed, "artifacts": rows, "runtime_drift": drift,
-                             "policy": "sha256, else UUID-stripped KiCad text, volatile-key-stripped JSON, "
+                             "input_drift": input_drift, "skill_files_changed": skill_changed,
+                             "policy": "sha256, else UUID-stripped KiCad text, volatile-key-stripped JSON (both with "
+                                       "the run directory read as {run}; a hash of an in-run artifact inside "
+                                       "JSON is read through the pairs that already passed), "
                                        f"decoded PNG pixels within {PNG_TOLERANCE}, .npy arrays equal in "
-                                       "dtype/shape/values; .blend/.glb bytes reported but not gating"}
+                                       "dtype/shape/values; .blend/.glb bytes reported but not gating; an input from "
+                                       "outside the run whose hash changed fails the replay, a changed skill "
+                                       "file is reported"}
     receipt["status"] = "complete" if passed else "replay_mismatch"
     receipt["artifacts_sha256"] = snapshot(run_dir)
     receipt["updated_utc"] = utc()
@@ -311,6 +382,7 @@ def cmd_replay(args):
     for row in rows:
         summary[row["verdict"]] = summary.get(row["verdict"], 0) + 1
     print(json.dumps({"replay_pass": passed, "verdicts": summary, "runtime_drift": bool(drift),
+                      "input_drift": input_drift, "skill_files_changed": len(skill_changed),
                       "failed": [r for r in rows if not r["pass"]]}, indent=2))
     sys.exit(0 if passed else 1)
 
@@ -338,6 +410,11 @@ def main():
     replay.add_argument("--threads", type=int, default=8)
     replay.add_argument("--timeout", type=int, default=1800)
     replay.set_defaults(func=cmd_replay)
+    recompare = sub.add_parser("recompare", help="compare an existing replay with its original again; runs nothing")
+    recompare.add_argument("--receipt", required=True)
+    recompare.add_argument("--replay-dir", required=True)
+    recompare.add_argument("--out-json", required=True, help="where to write the result; neither run is modified")
+    recompare.set_defaults(func=cmd_recompare)
     args = parser.parse_args()
     args.func(args)
 

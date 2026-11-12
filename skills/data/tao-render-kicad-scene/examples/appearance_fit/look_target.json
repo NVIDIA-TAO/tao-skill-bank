@@ -1,0 +1,13 @@
+{
+  "lighting": {"world_strength": 0.35, "world_color": [1, 1, 1],
+               "area": [{"name": "overhead_soft", "position_mm": [1.0, 0.5, 18.0], "power_w": 0.0012, "size_mm": 14.0}]},
+  "assets": [{"type": "solder_fillet", "pads": "all", "amount": 1.0, "wetting": 1.0}],
+  "materials": {
+    "solder": {"color": [0.8, 0.8, 0.82], "roughness": 0.42},
+    "overrides": {
+      "component:C1:part1": {"color": [0.45, 0.3, 0.12], "metallic": 0.0, "roughness": 0.6},
+      "component:C2:part1": {"color": [0.45, 0.3, 0.12], "metallic": 0.0, "roughness": 0.6},
+      "board:board_soldermask": {"color": [0.02, 0.1, 0.3], "roughness": 0.7}
+    }
+  }
+}

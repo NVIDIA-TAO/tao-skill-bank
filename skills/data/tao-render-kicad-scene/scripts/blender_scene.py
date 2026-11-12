@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import sys
 import time
 
@@ -22,7 +23,7 @@ import bmesh
 import numpy as np
 from mathutils import Matrix, Vector
 
-SCHEMA = "tao.kicad_light.render.v1"
+SCHEMA = "tao.kicad_light.render.v2"
 MM = 0.001
 DEFAULTS = {
     "render": {"resolution": [640, 480], "samples": 64, "seed": 17, "view_transform": "AgX", "exposure": 0.0},
@@ -79,6 +80,65 @@ def islands(obj):
         xyz = np.array([list(obj.matrix_world @ obj.data.vertices[i].co) for i in indices])
         out.append({"min": xyz.min(axis=0), "max": xyz.max(axis=0)})
     return out
+
+
+def component_parts(scene, cad):
+    """Tag imported library models: one entity per footprint, model and material group.
+
+    KiCad exports each model of a footprint under a node named after the
+    reference designator; a model keeps its own material groups (for a chip
+    part: body and terminations). Each group becomes `component:<ref>:part<n>`
+    so it can be measured and given an appearance on its own. Raises when the
+    export does not contain exactly the models the CAD metadata resolved.
+    """
+    refs = {f["refdes"] for f in cad["footprints"]}
+    by_ref = {}
+    for obj in sorted((o for o in scene.objects if o.type == "MESH"), key=lambda o: o.name):
+        ref = re.sub(r"\.\d{3}$", "", obj.parent.name) if obj.parent else None  # Blender renames repeated nodes
+        if ref in refs:
+            by_ref.setdefault(ref, {}).setdefault(obj.parent.name, []).append(obj)
+        else:
+            obj["entity_id"] = "board:" + obj.data.name
+    bodies, parts, check = {}, [], []
+    for footprint in cad["footprints"]:
+        ref = footprint["refdes"]
+        expected = sum(1 for m in footprint["models"] if m.get("visible", True) and not m.get("problem"))
+        found = by_ref.get(ref, {})
+        check.append({"refdes": ref, "models_resolved": expected, "models_in_export": len(found)})
+        if expected != len(found):
+            raise RuntimeError(f"{ref}: CAD metadata resolves {expected} 3D model(s) but the export holds "
+                               f"{len(found)}; the exporter drops a model it cannot load without failing")
+        index = 0
+        for model_index, node in enumerate(sorted(found)):
+            for obj in found[node]:
+                pieces = [obj]
+                if len(obj.data.materials) > 1:
+                    bpy.ops.object.select_all(action="DESELECT")
+                    obj.select_set(True)
+                    bpy.context.view_layer.objects.active = obj
+                    bpy.ops.mesh.separate(type="MATERIAL")
+                    pieces = sorted(bpy.context.selected_objects, key=lambda o: (o.data.materials[0].name, o.name))
+                for piece in pieces:
+                    piece["entity_id"] = f"component:{ref}:part{index}"
+                    low, high = bounds(piece)
+                    material = piece.data.materials[0] if piece.data.materials else None
+                    bsdf = material.node_tree.nodes.get("Principled BSDF") if material and material.use_nodes else None
+                    parts.append({
+                        "entity_id": piece["entity_id"], "refdes": ref, "model_index": model_index,
+                        "source_mesh": obj.data.name.split(".")[0], "source_material": material.name if material else None,
+                        "source_color": [round(c, 4) for c in bsdf.inputs["Base Color"].default_value[:3]] if bsdf else None,
+                        "source_metallic": round(bsdf.inputs["Metallic"].default_value, 4) if bsdf else None,
+                        "source_roughness": round(bsdf.inputs["Roughness"].default_value, 4) if bsdf else None,
+                        "bounds_kicad_mm": {"x": [round(low.x / MM, 4), round(high.x / MM, 4)],
+                                            "y": [round(-high.y / MM, 4), round(-low.y / MM, 4)],
+                                            "z": [round(low.z / MM, 4), round(high.z / MM, 4)]},
+                        "faces": len(piece.data.polygons)})
+                    if ref in bodies:
+                        low = Vector((min(a, b) for a, b in zip(low, bodies[ref][0])))
+                        high = Vector((max(a, b) for a, b in zip(high, bodies[ref][1])))
+                    bodies[ref] = (low, high)
+                    index += 1
+    return bodies, parts, check
 
 
 def check_pads(scene, cad, policy):
@@ -312,26 +372,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--glb", type=Path, required=True)
     parser.add_argument("--cad", type=Path, required=True, help="cad_metadata.json written by kicad_sdk.save")
-    parser.add_argument("--scene", type=Path, required=True)
+    parser.add_argument("--scene", type=Path, action="append", required=True,
+                        help="scene JSON; repeat to layer files, later ones override earlier keys")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
     args.output.mkdir(parents=True, exist_ok=True)
     if (args.output / "scene.blend").exists():
         raise RuntimeError("Refusing to overwrite an existing scene; use a new output directory")
     cad = json.loads(args.cad.read_text())
-    spec = merged(DEFAULTS, json.loads(args.scene.read_text()))
+    spec = DEFAULTS
+    for layer in args.scene:
+        spec = merged(spec, json.loads(layer.read_text()))
     started = time.perf_counter()
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=str(args.glb.resolve()))
     scene = bpy.context.scene
-    refs = {f["refdes"] for f in cad["footprints"]}
-    bodies = {}
-    for obj in [o for o in scene.objects if o.type == "MESH"]:
-        if obj.parent and obj.parent.name in refs:
-            obj["entity_id"] = "component:" + obj.parent.name
-            bodies[obj.parent.name] = bounds(obj)
-        else:
-            obj["entity_id"] = "board:" + obj.data.name
+    bodies, parts, model_check = component_parts(scene, cad)
     alignment = check_pads(scene, cad, spec["pad_alignment"])
     pad_top = {r["id"]: r["top_z_mm"] * MM for r in alignment["pads"]}
     board_top = max(pad_top.values()) if pad_top else max(
@@ -363,14 +419,25 @@ def main():
         assets.append(box_asset(scene, entry, board_top)[1])
     # Appearance overrides for exported KiCad meshes, keyed by entity-ID prefix.
     overrides = []
+    inputs = {"color": "Base Color", "roughness": "Roughness", "metallic": "Metallic", "specular": "Specular IOR Level"}
     for prefix, look in sorted(spec["materials"].get("overrides", {}).items()):
-        mat = surface("override:" + prefix, look["color"], look.get("roughness", 0.6), look.get("metallic", 0.0),
-                      look.get("specular", 0.5))
+        unknown = sorted(set(look) - set(inputs))
+        if unknown:
+            raise RuntimeError(f"Unknown override keys for {prefix}: {unknown}")
         hits = [o for o in scene.objects if o.type == "MESH" and str(o.get("entity_id", "")).startswith(prefix)]
-        for obj in hits:
-            obj.data.materials.clear()
-            obj.data.materials.append(mat)
-        overrides.append({"prefix": prefix, "objects": len(hits), **look})
+        for obj in hits:  # copy what the model came with and change only the keys given
+            for slot, native in enumerate(obj.data.materials):
+                mat = native.copy() if native else surface("override:" + prefix, [0.5, 0.5, 0.5], 0.6)
+                mat.name = "override:" + obj["entity_id"]
+                bsdf = mat.node_tree.nodes["Principled BSDF"]
+                for key, value in look.items():
+                    socket = bsdf.inputs[inputs[key]]
+                    for link in list(socket.links):
+                        mat.node_tree.links.remove(link)
+                    socket.default_value = (*value, 1) if key == "color" else value
+                obj.data.materials[slot] = mat
+        overrides.append({"prefix": prefix, "objects": len(hits),
+                          "entities": sorted({o["entity_id"] for o in hits}), **look})
 
     render, cam = spec["render"], spec["camera"]
     width, height = render["resolution"]
@@ -445,6 +512,7 @@ def main():
         "transform_world_from_kicad_mm": [[MM, 0, 0, 0], [0, -MM, 0, 0], [0, 0, MM, 0], [0, 0, 0, 1]],
         "camera_world": {"location_m": list(camera.location), "rotation_euler_rad": list(camera.rotation_euler)},
         "board_top_z_mm": board_top / MM, "pad_alignment": alignment, "assets": assets,
+        "model_check": model_check, "component_parts": parts,
         "material_overrides": overrides, "dome_objects": dome,
         "entity_ids": mask, "outputs": ["rgb.png", "scene.blend"] + (["entity_ids.npy"] if mask else []),
         "timing_seconds": {"import_and_build": round(setup_seconds, 3), "cycles_render": round(render_seconds, 3),

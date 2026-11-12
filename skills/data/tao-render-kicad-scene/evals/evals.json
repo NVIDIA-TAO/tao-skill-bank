@@ -28,5 +28,23 @@
       "Run the privacy guard before committing"
     ],
     "expected_script": "scripts/privacy_guard.py"
+  },
+  {
+    "id": "kicad-scene-library-first",
+    "question": "Rebuild the component in this private inspection photo on the host. Last time the result was a plain box with flat colours; use KiCad's own footprints and 3D models this time, then match materials and lighting. Do not execute anything yet.",
+    "expected_skill": "tao-render-kicad-scene",
+    "ground_truth": "Describe the photo with the offline reader and separate body, terminations and pads with profile measurements, treating reader answers as provisional. Search the KiCad library by pad count and body proportions, render at most three candidates whose declared models resolve, and compare them by region. Adjust board-specific lands with pcbnew and record the deviations. Freeze geometry and camera, write an appearance plan with seed, budget, bounds and stop rule, run appearance_search.py, and keep initial, best and history. State that case size and heights remain assumptions.",
+    "expected_behavior": [
+      "Select tao-render-kicad-scene",
+      "Keep private pixels on the host: offline_describe.py with a local model and no network, numbers and text only",
+      "Cross-check reader statements against measurements and list rejected ones",
+      "Run library_search.py and choose at most three candidates with reasons for and against each",
+      "Use place/bind_models so declared models are resolved; treat a missing model as an error, not a reason to draw a box",
+      "Check model_check and component_parts in render_receipt.json and address body and terminations as separate parts",
+      "Freeze geometry and camera before appearance_search.py; write the plan first and keep history.json",
+      "Do not texture the scene with the photo or remove reflections to match mean colour",
+      "Report unresolved scale, heights and reader contradictions"
+    ],
+    "expected_script": "scripts/appearance_search.py"
   }
 ]

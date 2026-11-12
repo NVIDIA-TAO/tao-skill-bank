@@ -1,0 +1,4 @@
+{
+  "render": {"resolution": [320, 240], "samples": 16, "seed": 17, "view_transform": "Standard"},
+  "camera": {"type": "ORTHO", "target_mm": [1.0, 0.5], "ortho_scale_mm": 5.0, "elevation_deg": 90.0}
+}

@@ -193,9 +193,11 @@ def region_facts(mask, rank=0, parts=None):
 def cmd_segments(args):
     with Image.open(args.image) as image:
         native = image.size
-        if args.max_side and max(native) > args.max_side:  # measure on a reduced copy held in memory only
-            ratio = args.max_side / max(native)
-            image = image.convert("RGB").resize((round(native[0] * ratio), round(native[1] * ratio)), Image.BOX)
+        if args.crop:  # window in native pixels; reported boxes are relative to its corner
+            image = image.convert("RGB").crop(tuple(args.crop))
+        if args.max_side and max(image.size) > args.max_side:  # measure on a reduced copy held in memory only
+            ratio = args.max_side / max(image.size)
+            image = image.convert("RGB").resize((round(image.size[0] * ratio), round(image.size[1] * ratio)), Image.BOX)
         rgb = np.asarray(image.convert("RGB"), dtype=np.float64)
     height, width = rgb.shape[:2]
     flat = rgb.reshape(-1, 3)
@@ -216,8 +218,59 @@ def cmd_segments(args):
                      "largest_region": region_facts(mask, 0, parts),
                      "next_regions": [region_facts(mask, rank, parts) for rank in range(1, min(args.top, len(parts)))]})
     emit(args, {"sha256": sha(args.image), "native_size_px": list(native), "size_px": [width, height],
-                "k": args.k, "clusters": rows,
+                "crop_px": args.crop, "k": args.k, "clusters": rows,
                 "note": "k-means colour clusters; aggregated statistics only"})
+
+
+def cmd_profile(args):
+    """Ordered colour segments along one axis of a window, each with its extent across the axis."""
+    x0, y0, x1, y1 = args.window
+    with Image.open(args.image) as image:
+        rgb = np.asarray(image.convert("RGB").crop((x0, y0, x1, y1)), dtype=np.float64)
+    if args.axis == "y":
+        rgb, (x0, y0) = rgb.transpose(1, 0, 2), (y0, x0)  # work along the first image axis as "x"
+    height, width = rgb.shape[:2]
+    flat = rgb.reshape(-1, 3)
+    centers = kmeans(flat[np.random.default_rng(0).choice(len(flat), min(len(flat), 40000), replace=False)], args.k)
+    labels = np.concatenate([((chunk[:, None, :] - centers[None]) ** 2).sum(axis=2).argmin(axis=1)
+                             for chunk in np.array_split(flat, max(1, len(flat) // 200000))]).reshape(height, width)
+    b0, b1 = (args.band[0] - y0, args.band[1] - y0) if args.band else (height // 2 - height // 16, height // 2 + height // 16)
+    band = labels[b0:b1]
+    dominant = np.array([np.bincount(band[:, x], minlength=args.k).argmax() for x in range(width)])
+    spans, start = [], 0
+    for x in range(1, width + 1):
+        if x == width or dominant[x] != dominant[start]:
+            spans.append([start, x, int(dominant[start])])
+            start = x
+    merged_spans = []
+    for span in spans:  # fold runs shorter than --min-run into the run before them
+        if merged_spans and (span[1] - span[0] < args.min_run or span[2] == merged_spans[-1][2]):
+            merged_spans[-1][1] = span[1]
+        else:
+            merged_spans.append(span)
+    gray_values = rgb.mean(axis=2)
+    rows = []
+    for a, b, cluster in merged_spans:
+        occupancy = (labels[:, a:b] == cluster).mean(axis=1) >= 0.5
+        lo = hi = (b0 + b1) // 2
+        while lo > 0 and occupancy[lo - 1]:
+            lo -= 1
+        while hi < height and occupancy[hi]:
+            hi += 1
+        inside = rgb[b0:b1, a:b].reshape(-1, 3)
+        rows.append({"along_px": [a + x0, b + x0], "length_px": b - a, "cluster": cluster,
+                     "across_px": [lo + y0, hi + y0] if occupancy[(b0 + b1) // 2] else None,
+                     "across_length_px": hi - lo if occupancy[(b0 + b1) // 2] else None,
+                     "band_mean_rgb": [round(float(c), 1) for c in inside.mean(axis=0)],
+                     "band_gray_std": round(float(gray_values[b0:b1, a:b].std()), 1),
+                     "band_fraction_above_240": round(float((gray_values[b0:b1, a:b] > 240).mean()), 4)})
+    emit(args, {"sha256": sha(args.image), "window_px": args.window, "axis": args.axis,
+                "band_px": [b0 + y0, b1 + y0], "k": args.k,
+                "clusters": [{"cluster": i, "mean_rgb": [round(float(c), 1) for c in centers[i]],
+                              "fraction": round(float((labels == i).mean()), 4)} for i in range(args.k)],
+                "segments": rows,
+                "note": "dominant k-means colour cluster per position inside the band; `across_px` is where that "
+                        "cluster fills at least half of the segment. Colour runs, not labelled parts."})
 
 
 def box_mean(values, size):
@@ -257,14 +310,26 @@ def mean_rgb(reference_path, render_path, reference, candidate):
 
 
 def cmd_region(args):
-    """Score one rendered entity against the largest reference region in a gray range."""
+    """Score one rendered entity against a reference region chosen by gray range or colour cluster."""
     values, _, _ = gray(args.image)
-    wanted = (values >= args.gray_min) & (values <= args.gray_max)
-    if args.within:
-        x0, y0, x1, y1 = args.within
-        keep = np.zeros_like(wanted)
-        keep[y0:y1, x0:x1] = True
-        wanted &= keep
+    x0, y0, x1, y1 = args.within or (0, 0, values.shape[1], values.shape[0])
+    if (args.gray_min is None) == (not args.cluster_rgb):
+        raise SystemExit("Give either --gray-min or --cluster-rgb")
+    wanted = np.zeros(values.shape, dtype=bool)
+    if args.cluster_rgb:  # k-means inside the window; keep the clusters nearest the given colours
+        with Image.open(args.image) as image:
+            rgb = np.asarray(image.convert("RGB").crop((x0, y0, x1, y1)), dtype=np.float64)
+        flat = rgb.reshape(-1, 3)
+        centers = kmeans(flat[np.random.default_rng(0).choice(len(flat), min(len(flat), 40000), replace=False)], args.k)
+        labels = np.concatenate([((chunk[:, None, :] - centers[None]) ** 2).sum(axis=2).argmin(axis=1)
+                                 for chunk in np.array_split(flat, max(1, len(flat) // 200000))]).reshape(rgb.shape[:2])
+        chosen = sorted({int(((centers - np.array(c)) ** 2).sum(axis=1).argmin()) for c in args.cluster_rgb})
+        wanted[y0:y1, x0:x1] = np.isin(labels, chosen)
+        definition = {"cluster_rgb": args.cluster_rgb, "k": args.k,
+                      "cluster_centres_used": [[round(float(v), 1) for v in centers[i]] for i in chosen]}
+    else:
+        wanted[y0:y1, x0:x1] = ((values >= args.gray_min) & (values <= args.gray_max))[y0:y1, x0:x1]
+        definition = {"gray_min": args.gray_min, "gray_max": args.gray_max}
     reference = wanted if args.all_parts else largest_part(wanted)
     candidate = render_mask(args.render, args.entity_prefix)
     if reference.shape != candidate.shape:
@@ -285,12 +350,77 @@ def cmd_region(args):
                    "render_outside": round(float(rendered[~candidate].mean()), 1)},
         mean_rgb=mean_rgb(args.image, Path(args.render) / "rgb.png", reference, candidate),
         ssim_gray_full_frame=round(ssim(values, rendered), 4),
-        reference_definition={"gray_min": args.gray_min, "gray_max": args.gray_max, "within": args.within,
-                              "rule": "every pixel in the gray range" if args.all_parts
-                              else "largest 4-connected region in the gray range"},
+        reference_definition={**definition, "within": args.within,
+                              "rule": "every selected pixel" if args.all_parts
+                              else "largest 4-connected region of the selected pixels"},
         reference_sha256=sha(args.image), entity_prefixes=args.entity_prefix,
-        caveat="the reference region is a threshold segmentation, not human-labelled truth")
+        caveat="the reference region is a threshold or colour-cluster segmentation, not human-labelled truth")
     emit(args, result)
+
+
+def erode(mask, steps):
+    for _ in range(steps):
+        inner = mask.copy()
+        inner[1:, :] &= mask[:-1, :]
+        inner[:-1, :] &= mask[1:, :]
+        inner[:, 1:] &= mask[:, :-1]
+        inner[:, :-1] &= mask[:, 1:]
+        mask = inner
+    return mask
+
+
+def look(rgb, mask):
+    """Appearance statistics of one region: colour, tonal range, contrast and highlight share."""
+    pixels = rgb[mask]
+    tone = pixels.mean(axis=1)
+    return {"mean_rgb": [round(float(c), 1) for c in pixels.mean(axis=0)],
+            "gray_p5_p50_p95": [round(float(np.percentile(tone, q)), 1) for q in (5, 50, 95)],
+            "gray_std": round(float(tone.std()), 1), "fraction_above_240": round(float((tone > 240).mean()), 4)}
+
+
+def cmd_rois(args):
+    """Compare appearance inside regions taken from the render's own entity mask.
+
+    The regions come from the rendered geometry, so they are only meaningful
+    once that geometry is registered to the reference; they are not labels of
+    the photograph. Each region is eroded to keep boundary pixels out.
+    """
+    render_dir = Path(args.render)
+    with Image.open(args.image) as image:
+        reference = np.asarray(image.convert("RGB"), dtype=np.float64)
+    with Image.open(render_dir / "rgb.png") as image:
+        rendered = np.asarray(image.convert("RGB"), dtype=np.float64)
+    if reference.shape != rendered.shape:
+        raise SystemExit(f"Shape mismatch: reference {reference.shape} vs render {rendered.shape}")
+    rows, total, weight_sum = [], 0.0, 0.0
+    for item in args.roi:
+        name, _, rest = item.partition("=")
+        prefixes, _, weight = rest.partition("@")
+        mask = erode(render_mask(args.mask_render or render_dir, prefixes.split(",")), args.erode)
+        if args.within:
+            x0, y0, x1, y1 = args.within
+            keep = np.zeros_like(mask)
+            keep[y0:y1, x0:x1] = True
+            mask &= keep
+        if mask.sum() < args.min_pixels:
+            rows.append({"roi": name, "prefixes": prefixes.split(","), "pixels": int(mask.sum()), "status": "too small"})
+            continue
+        ref, got = look(reference, mask), look(rendered, mask)
+        colour = float(np.sqrt(np.mean((np.array(ref["mean_rgb"]) - np.array(got["mean_rgb"])) ** 2))) / 255
+        tone = float(np.mean(np.abs(np.array(ref["gray_p5_p50_p95"]) - np.array(got["gray_p5_p50_p95"])))) / 255
+        contrast = abs(ref["gray_std"] - got["gray_std"]) / 255
+        loss = colour + tone + contrast
+        weight = float(weight) if weight else 1.0
+        total, weight_sum = total + weight * loss, weight_sum + weight
+        rows.append({"roi": name, "prefixes": prefixes.split(","), "pixels": int(mask.sum()), "weight": weight,
+                     "reference": ref, "render": got, "colour_term": round(colour, 4), "tone_term": round(tone, 4),
+                     "contrast_term": round(contrast, 4), "loss": round(loss, 4)})
+    emit(args, {"reference_sha256": sha(args.image), "erode_px": args.erode, "within": args.within,
+                "mask_from": "another render of the same geometry" if args.mask_render else "this render", "rois": rows,
+                "loss": round(total / weight_sum, 5) if weight_sum else None,
+                "loss_definition": "weighted mean over regions of: RMS mean-RGB difference + mean absolute difference "
+                                   "of the 5th/50th/95th gray percentiles + gray standard-deviation difference, each / 255",
+                "caveat": "regions are the render's entity mask, not labels of the reference; statistics, not likeness"})
 
 
 def cmd_layout(args):
@@ -375,8 +505,19 @@ def main():
     segments.add_argument("--k", type=int, default=4)
     segments.add_argument("--max-side", type=int, help="measure on a copy reduced to this longest side")
     segments.add_argument("--top", type=int, default=1, help="regions to describe per cluster")
+    segments.add_argument("--crop", type=int, nargs=4, help="x0 y0 x1 y1 window in native pixels")
     segments.add_argument("--out-json", help="also save the printed numbers here")
     segments.set_defaults(func=cmd_segments)
+    profile = sub.add_parser("profile")
+    profile.add_argument("image")
+    profile.add_argument("--window", type=int, nargs=4, required=True, help="x0 y0 x1 y1 in pixels")
+    profile.add_argument("--axis", choices=("x", "y"), default="x", help="direction the segments are ordered along")
+    profile.add_argument("--band", type=int, nargs=2, help="range across the axis that decides each segment")
+    profile.add_argument("--k", type=int, default=5)
+    profile.add_argument("--min-run", type=int, default=6)
+    profile.add_argument("--out-json", help="also save the printed numbers here")
+    profile.set_defaults(func=cmd_profile)
+
     layout = sub.add_parser("layout")
     layout.add_argument("image")
     layout.add_argument("--out", required=True)
@@ -397,12 +538,27 @@ def main():
     region.add_argument("image")
     region.add_argument("--render", required=True)
     region.add_argument("--entity-prefix", action="append", required=True)
-    region.add_argument("--gray-min", type=float, required=True)
+    region.add_argument("--gray-min", type=float)
+    region.add_argument("--cluster-rgb", type=float, nargs=3, action="append", metavar=("R", "G", "B"),
+                        help="instead of a gray range: the k-means cluster nearest this colour (repeatable)")
+    region.add_argument("--k", type=int, default=6)
     region.add_argument("--gray-max", type=float, default=255.0)
     region.add_argument("--within", type=int, nargs=4, help="x0 y0 x1 y1 window in pixels")
     region.add_argument("--all-parts", action="store_true", help="use every pixel in range, not the largest region")
     region.add_argument("--out-json", help="also save the printed numbers here")
     region.set_defaults(func=cmd_region)
+    rois = sub.add_parser("rois")
+    rois.add_argument("image")
+    rois.add_argument("--render", required=True)
+    rois.add_argument("--roi", action="append", required=True, metavar="NAME=PREFIX[,PREFIX][@WEIGHT]")
+    rois.add_argument("--mask-render", help="take entity_ids.npy from this render directory instead "
+                                            "(same geometry and camera, rendered once)")
+    rois.add_argument("--erode", type=int, default=3, help="pixels removed from each region boundary")
+    rois.add_argument("--min-pixels", type=int, default=50)
+    rois.add_argument("--within", type=int, nargs=4, help="x0 y0 x1 y1 window in pixels")
+    rois.add_argument("--out-json", help="also save the printed numbers here")
+    rois.set_defaults(func=cmd_rois)
+
     diff = sub.add_parser("diff")
     diff.add_argument("--render-a", required=True)
     diff.add_argument("--render-b", required=True)

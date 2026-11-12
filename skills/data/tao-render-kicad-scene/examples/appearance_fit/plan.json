@@ -1,0 +1,25 @@
+{
+  "seed": 7, "budget": 12, "stop": {"min_stage_gain": 0.0},
+  "frozen": "board, solder geometry and camera.json; only the lighting and material keys below change",
+  "base_look": "look_start.json",
+  "render": ["--python", "{skill}/scripts/blender_scene.py", "--", "--glb", "{run}/01_create/board.glb",
+             "--cad", "{run}/01_create/cad_metadata.json", "--scene", "{skill}/examples/appearance_fit/camera.json",
+             "--scene", "{look}", "--output", "{out}"],
+  "score": ["{skill}/scripts/offline_image.py", "rois", "{run}/02_reference/rgb.png", "--render", "{out}",
+            "--mask-render", "{run}/02_reference", "--erode", "1", "--min-pixels", "20",
+            "--roi", "body=component:C1:part1,component:C2:part1", "--roi", "termination=component:C1:part0,component:C2:part0",
+            "--roi", "solder=solder:", "--roi", "board=board:board_soldermask", "--out-json", "{out}/rois.json"],
+  "stages": [
+    {"name": "light", "method": "lhs", "evals": 3,
+     "then_ratio": [{"roi": "body", "path": "materials/overrides/component:C1:part1/color"},
+                    {"roi": "body", "path": "materials/overrides/component:C2:part1/color"},
+                    {"roi": "board", "path": "materials/overrides/board:board_soldermask/color"}],
+     "params": [{"path": "lighting/world_strength", "range": [0.2, 0.6]},
+                {"path": "lighting/area/0/power_w", "range": [0.0005, 0.002]}]},
+    {"name": "metal", "method": "lhs", "evals": 3, "params": [{"path": "materials/solder/roughness", "range": [0.2, 0.6]}]},
+    {"name": "diffuse", "method": "ratio", "evals": 2, "tolerance": 0.01,
+     "targets": [{"roi": "body", "path": "materials/overrides/component:C1:part1/color"},
+                 {"roi": "body", "path": "materials/overrides/component:C2:part1/color"},
+                 {"roi": "board", "path": "materials/overrides/board:board_soldermask/color"}]}
+  ]
+}

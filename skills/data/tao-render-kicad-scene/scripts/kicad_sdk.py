@@ -13,8 +13,12 @@ from pathlib import Path
 
 import pcbnew
 
-SCHEMA = "tao.kicad_light.cad.v1"
+import model_refs
+
+SCHEMA = "tao.kicad_light.cad.v2"
 _REMOVED = []  # wrappers of items taken off a board; see take_copper
+_DECLARED = {}  # footprint UUID -> per kept model, in order: (resolved path, declared reference, how it resolved)
+_DROPPED = {}  # footprint UUID -> model references removed on request, with the reason
 
 
 def mm(value):
@@ -57,23 +61,89 @@ def new_board(outline_mm, thickness_mm=1.6):
     return board
 
 
-def place(board, library, name, ref, x, y, angle_deg=0.0, model=True):
-    """Load a standard-library footprint, bind its STEP model by absolute path, place it."""
-    lib = appdir() / "share/kicad/footprints" / (library + ".pretty")
+def model_dir():
+    return appdir() / "share/kicad/3dmodels"
+
+
+def footprint_models(fp, project_dir=None, variables=None):
+    """What the footprint itself declares: every model with its transform, resolved or with a problem."""
+    rows = []
+    for model in fp.Models():
+        row = model_refs.resolve(model.m_Filename, model_dir(), project_dir, variables)
+        row.update({"offset_mm": [model.m_Offset.x, model.m_Offset.y, model.m_Offset.z],
+                    "rotation_deg": [model.m_Rotation.x, model.m_Rotation.y, model.m_Rotation.z],
+                    "scale": [model.m_Scale.x, model.m_Scale.y, model.m_Scale.z],
+                    "visible": bool(model.m_Show), "opacity": float(model.m_Opacity)})
+        rows.append(row)
+    return rows
+
+
+def bind_models(fp, project_dir=None, variables=None, missing="error"):
+    """Point each declared model at the file it resolves to, keeping offset, rotation and scale.
+
+    The board then names exactly the files that were checked and hashed, whatever
+    environment the exporter runs in. A model that cannot be resolved raises;
+    `missing="drop"` removes it instead and records that in the metadata. Nothing
+    is substituted. Returns the rows from `footprint_models`.
+    """
+    if missing not in ("error", "drop"):
+        raise ValueError("missing must be 'error' or 'drop'")
+    rows = footprint_models(fp, project_dir, variables)
+    ref, uuid = fp.GetReference(), fp.m_Uuid.AsString()  # refdes repeats across boards; the UUID does not
+    bad = [r for r in rows if r["problem"]]
+    if bad and missing == "error":
+        raise RuntimeError(f"Unresolved 3D model for {ref} ({fp.GetFPID().GetUniStringLibItemName()}): "
+                           + "; ".join(f"{r['declared']} -> {r['problem']}" for r in bad))
+    kept, provenance = [], []
+    for model, row in zip(list(fp.Models()), rows):  # copies: edit them, then rebuild the list
+        if row["problem"]:
+            _DROPPED.setdefault(uuid, []).append({"declared": row["declared"], "reason": row["problem"]})
+            row["dropped"] = True
+            continue
+        model.m_Filename = row["resolved_path"]
+        kept.append(model)
+        provenance.append((row["resolved_path"], row["declared"], row["via"]))
+    fp.Models().clear()  # assigning through the list returned by Models() does not persist
+    for model in kept:
+        fp.Add3DModel(model)
+    _DECLARED[uuid] = provenance  # per model entry: two entries may share one file under different references
+    return rows
+
+
+def add_model(fp, reference, offset_mm=(0, 0, 0), rotation_deg=(0, 0, 0), scale=(1, 1, 1)):
+    """Declare one more model on a footprint, as a library footprint would; bind_models resolves it."""
+    model = pcbnew.FP_3DMODEL()
+    model.m_Filename = str(reference)
+    for target, values in ((model.m_Offset, offset_mm), (model.m_Rotation, rotation_deg), (model.m_Scale, scale)):
+        target.x, target.y, target.z = (float(v) for v in values)
+    fp.Add3DModel(model)
+    return model
+
+
+def place(board, library, name, ref, x, y, angle_deg=0.0, model=True, project_dir=None, variables=None,
+          missing="error"):
+    """Load a footprint, resolve the 3D models it declares, and place it.
+
+    `library` is a standard library name or the path of a `.pretty` directory.
+    `model=False` places the footprint without models and records that.
+    """
+    lib = Path(library) if Path(library).is_dir() else appdir() / "share/kicad/footprints" / (library + ".pretty")
     fp = pcbnew.FootprintLoad(str(lib), name)
     if fp is None:
-        raise RuntimeError(f"Footprint not found: {library}:{name}")
+        raise RuntimeError(f"Footprint not found: {lib}:{name}")
     fp.SetReference(ref)
     fp.SetPosition(point(x, y))
     fp.SetOrientationDegrees(angle_deg)
     fp.Reference().SetVisible(False)
     fp.Value().SetVisible(False)
     if model:
-        step = appdir() / "share/kicad/3dmodels" / (library + ".3dshapes") / (name + ".step")
-        models = list(fp.Models())
-        if not step.is_file() or len(models) != 1:
-            raise RuntimeError(f"No single standard 3D model for {library}:{name}; build a custom asset instead")
-        models[0].m_Filename = str(step)
+        if not len(fp.Models()):
+            raise RuntimeError(f"{lib.name}:{name} declares no 3D model; pass model=False and add your own asset")
+        bind_models(fp, project_dir, variables, missing)
+    else:
+        _DROPPED.setdefault(fp.m_Uuid.AsString(), []).extend(
+            {"declared": m.m_Filename, "reason": "model=False"} for m in fp.Models())
+        fp.Models().clear()
     board.Add(fp)
     return fp
 
@@ -192,20 +262,24 @@ def _body_bbox(fp):
     return [round(min(xs), 6), round(min(ys), 6), round(max(xs), 6), round(max(ys), 6)]
 
 
-def describe(board):
+def describe(board, project_dir=None):
     """Read back what the SDK actually stored: the facts later steps align against."""
     footprints, pads, tracks = [], [], []
     for fp in board.GetFootprints():
         ref = fp.GetReference()
         body = _body_bbox(fp)
-        models = [m.m_Filename for m in fp.Models()]
+        models = footprint_models(fp, project_dir)
+        uuid = fp.m_Uuid.AsString()
+        for row, known in zip(models, _DECLARED.get(uuid, [])):
+            if known[0] == row["resolved_path"]:  # same entry as bound in this process
+                row["declared"], row["via"] = known[1], known[2]
         footprints.append({
             "refdes": ref, "footprint": str(fp.GetFPID().GetUniStringLibItemName()),
             "position_mm": [pcbnew.ToMM(fp.GetPosition().x), pcbnew.ToMM(fp.GetPosition().y)],
             "angle_deg": fp.GetOrientationDegrees(), "side": "bottom" if fp.IsFlipped() else "top",
             "body_bbox_local_mm": body, "body_source": "F.Fab straight graphics" if body else None,
-            "models": [{"path": m, "sha256": sha(m) if Path(m).is_file() else None} for m in models],
-            "uuid": fp.m_Uuid.AsString()})
+            "models": models, "models_dropped": _DROPPED.get(uuid, []),
+            "uuid": uuid})
         for pad in fp.Pads():
             cx, cy = pcbnew.ToMM(pad.GetPosition().x), pcbnew.ToMM(pad.GetPosition().y)
             lx, ly = _local(fp, pad.GetPosition())
@@ -248,14 +322,23 @@ def describe(board):
 
 
 def save(board, out_dir, name="board", extra=None):
-    """Write the editable board, reload it, and store the read-back metadata beside it."""
+    """Write the editable board, reload it, and store the read-back metadata beside it.
+
+    Fails if any footprint still names a 3D model that does not resolve.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / (name + ".kicad_pcb")
     if path.exists():
         raise RuntimeError(f"Refusing to overwrite {path}; write each revision to a new directory")
     pcbnew.SaveBoard(str(path), board)
-    meta = describe(pcbnew.LoadBoard(str(path)))
+    meta = describe(pcbnew.LoadBoard(str(path)), out_dir)
+    unresolved = [f"{f['refdes']}: {m['declared']} -> {m['problem']}"
+                  for f in meta["footprints"] for m in f["models"] if m["problem"]]
+    if unresolved:  # the exporter would drop these silently and still exit 0
+        path.unlink()
+        raise RuntimeError("Board references 3D models that do not resolve; bind_models(fp, missing='drop') "
+                           "removes one on purpose: " + "; ".join(unresolved))
     meta["board_file"] = path.name
     meta["board_sha256"] = sha(path)
     meta.update(extra or {})

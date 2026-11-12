@@ -45,9 +45,47 @@ Two behaviours of the 10.0.5 bindings that the helpers work around:
   rest of the process. `kicad_sdk.take_copper` keeps the wrappers alive; do
   the same if you remove items yourself.
 
-`kicad_sdk.py` binds a footprint's STEP model by absolute path into the
-AppDir, so a board file is tied to that install location. `cad_metadata.json`
-records the model path and hash.
+## 3D model references
+
+Measured with `kicad-cli pcb export glb` of the pinned build:
+
+| Reference in the footprint | Exporter | Helper |
+|---|---|---|
+| `${KICAD10_3DMODEL_DIR}/...` | Loads (AppRun defines the variable). | Resolved against the AppDir library. |
+| `${KICAD6_3DMODEL_DIR}/...` and other old names | Loads. | Resolved as an alias of the current library. |
+| `${KIPRJMOD}/...`, relative path | Loads, relative to the board file. | Resolved against `project_dir`, then the library. |
+| Absolute path | Loads. | Used as is. |
+| Your own `${VARIABLE}` | Loads only if set in the exporter's environment. | Resolved from `variables` or the environment. |
+| `.step`, `.stp`, `.wrl` | Load. VRML comes in units of 2.54 mm and as a mesh. | Accepted. |
+| Other formats (`.stpz`, `.igs`, `.glb`, ...) | Not checked. | Refused until checked. |
+| Missing file, undefined variable | Dropped with a log line; exit code 0. | Error before anything is saved. |
+
+About half of the model files the standard footprints name are not shipped
+in this AppDir (7,329 of 14,848 references), so the missing case is common.
+1,065 footprints name a model that differs from the footprint, 921 model
+files are shared, and a few footprints declare several models.
+
+`bind_models` writes the resolved absolute path into the board, with each
+model's offset, rotation and scale unchanged, so the exporter loads exactly
+the files that were hashed; `cad_metadata.json` keeps the declared reference,
+how it resolved, the path and SHA-256 per model entry. Because of the absolute
+paths a board file is tied to the install and project location; replay reads
+its own run directory as `{run}` when comparing. Changing a model through
+`list(fp.Models())` does not persist in these bindings: rebuild the list with
+`fp.Models().clear()` and `fp.Add3DModel(...)`, as the helper does.
+
+The render step counts the models that reached the GLB per footprint and
+fails on a mismatch. A model's offset is in millimetres with +Y up the screen
+(KiCad board -Y) and +Z away from the board.
+
+## Offline reader
+
+`scripts/offline_describe.py` needs torch and transformers and a model
+directory already on the host. It sets the hub to offline mode and loads
+with `local_files_only`; run it in an environment without network access,
+for example an existing container image started with `--network none`, the
+model and image mounted read-only. It writes answers and timings, never
+pixels. Take the shared GPU lock of the host, if there is one, for the run.
 
 ## Coordinates and units
 
