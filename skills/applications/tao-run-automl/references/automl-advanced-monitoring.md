@@ -327,11 +327,15 @@ Before either fresh or resumed `runner.run(...)`, call the bundled
 shown in `SKILL.md`. Missing identities fail before the wheel can apply its
 random default; resumed identities must resolve to an existing controller.
 
-This is a skill-boundary safeguard. The currently packaged
-`nvidia-tao-automl` wheel still permits `resume=True` without a matching
-`session_id` and may silently create a fresh controller for callers outside
-this skill. NVBug 6662913 tracks that upstream fail-loud behavior; until the
-wheel changes, non-skill callers must apply the same explicit identity gate.
+This remains a skill-boundary safeguard: the sealed settings carry an explicit
+identity for both fresh and resumed runs. The `nvidia-tao-automl` 7.3.1rc91 wheel
+already fails closed on resume, addressing the behavior tracked by NVBug
+6662913. Outside this skill, callers may omit `session_id` only when the full
+run workspace contains exactly one controller; the wheel resolves that identity
+instead of creating a new one. Missing or ambiguous controllers, invalid
+identities, and missing, unreadable, or malformed selected controller state
+raise an error before workspace creation or backend recovery. Callers using
+older wheels that lack this validation must apply the explicit identity gate.
 
 Behaviour on resume:
 1. **Brain state** is reloaded from `<workspace>/.automl/*` for the explicit
