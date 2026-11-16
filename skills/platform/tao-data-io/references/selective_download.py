@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+import numpy as np
 import pandas as pd
 
 _FORMAT_BY_SUFFIX = {
@@ -103,7 +104,8 @@ def extract_keys(
     acc: list[str] = []
     for key in keys:
         for value in df[key].tolist():
-            if isinstance(value, (list, tuple)):
+            # pandas decodes Parquet list cells as NumPy arrays.
+            if isinstance(value, (list, tuple, np.ndarray)):
                 for item in value:
                     if item is None:
                         continue

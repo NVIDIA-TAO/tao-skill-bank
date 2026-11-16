@@ -94,10 +94,35 @@ def test_extract_keys_multiple_columns_in_key_order(tmp_path):
     assert sd.extract_keys(p, ["image", "mask"]) == ["i1.png", "i2.png", "m1.png", "m2.png"]
 
 
-def test_extract_keys_list_valued_cells_flatten(tmp_path):
-    recs = [{"frames": ["f1.jpg", "f2.jpg"]}, {"frames": ["f2.jpg", "f3.jpg"]}]
-    p = _write(tmp_path, recs, "jsonl")
-    assert sd.extract_keys(p, ["frames"]) == ["f1.jpg", "f2.jpg", "f3.jpg"]
+@pytest.mark.parametrize("fmt", ["parquet", "jsonl", "json"])
+@pytest.mark.parametrize(
+    "cells, expected",
+    [
+        ([["f1.jpg"]], ["f1.jpg"]),
+        ([["f1.jpg", "f2.jpg"], ["f2.jpg", "f3.jpg"]],
+         ["f1.jpg", "f2.jpg", "f3.jpg"]),
+        ([[], None, [None]], []),
+        ([[None, "f2.jpg"], [], None, ["f1.jpg", None, "f2.jpg"]],
+         ["f2.jpg", "f1.jpg"]),
+    ],
+    ids=["single", "multiple-deduplicated", "empty-and-null", "mixed-null-and-order"],
+)
+def test_extract_keys_list_valued_cells_flatten(tmp_path, fmt, cells, expected):
+    p = _write(tmp_path, [{"frames": cell} for cell in cells], fmt)
+    assert sd.extract_keys(p, ["frames"]) == expected
+
+
+@pytest.mark.parametrize("fmt", ["parquet", "jsonl"])
+def test_extract_keys_list_columns_preserve_key_order(tmp_path, fmt):
+    recs = [
+        {"image": ["z.png", "shared.png"], "mask": ["shared.png", "mask/m2.png"]},
+        {"image": [], "mask": None},
+        {"image": None, "mask": ["mask/m1.png", "mask/m2.png"]},
+    ]
+    p = _write(tmp_path, recs, fmt)
+    assert sd.extract_keys(p, ["image", "mask"]) == [
+        "z.png", "shared.png", "mask/m2.png", "mask/m1.png",
+    ]
 
 
 def test_extract_keys_missing_column_raises_with_available(tmp_path, records):
@@ -182,3 +207,29 @@ def test_extract_then_download_end_to_end(tmp_path, records):
     # exactly the 2 unique, non-null referenced files staged
     assert len(out) == 2
     assert (dest / "clips/a.mp4").exists() and (dest / "clips/b.mp4").exists()
+
+
+@pytest.mark.parametrize("fmt", ["parquet", "jsonl"])
+def test_extract_list_cells_then_stage_exact_bytes(tmp_path, fmt):
+    recs = [
+        {"frames": ["clips/a.mp4", None, "clips/b.mp4"]},
+        {"frames": []},
+        {"frames": None},
+        {"frames": ["clips/a.mp4"]},
+    ]
+    ann = _write(tmp_path, recs, fmt)
+    dest = tmp_path / "stage"
+    s3 = FakeS3({
+        "data/clips/a.mp4": b"video-a",
+        "data/clips/b.mp4": b"video-b",
+        "data/clips/unreferenced.mp4": b"not-requested",
+    })
+
+    rel = sd.extract_keys(ann, ["frames"])
+    out = sd.download_selective(s3, "bkt", "data", rel, dest)
+
+    assert s3.downloaded == ["data/clips/a.mp4", "data/clips/b.mp4"]
+    assert out == [str(dest / "clips/a.mp4"), str(dest / "clips/b.mp4")]
+    assert (dest / "clips/a.mp4").read_bytes() == b"video-a"
+    assert (dest / "clips/b.mp4").read_bytes() == b"video-b"
+    assert not (dest / "clips/unreferenced.mp4").exists()
