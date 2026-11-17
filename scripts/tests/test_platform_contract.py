@@ -166,9 +166,9 @@ def test_slurm_enroot_conversion_uses_job_unique_node_local_temp():
 
 
 def test_slurm_sqsh_conversion_uses_validated_cpu_long_resource_profile():
-    """Keep image conversion under the CS-OCI QOS memory ceiling.
+    """Keep image conversion under the cluster's QOS memory ceiling.
 
-    SLURM job 32370651 established this profile. Inheriting an eight-GPU
+    A validated conversion run established this profile. Inheriting an eight-GPU
     training job's CPU request multiplies the site's implicit per-CPU memory
     and leaves conversion pending under ``QOSGrpMemLimit``.
     """

@@ -2,7 +2,7 @@
 
 ## Maintenance Validation — 2026-10-07, Skill 0.2.0
 
-Review fixes restore the AutoML section contract, specify lazy-index folder staging and teacher-cache filenames, and move schema exclusions into the model's `skill_info.yaml`. Sparse4D-specific version keys pin compatible TAO 7.3 images on `main` to match the release branch without changing other models' image selections.
+This revision restores the AutoML section contract, specifies lazy-index folder staging and teacher-cache filenames, and moves schema exclusions into the model's `skill_info.yaml`. Sparse4D-specific version keys pin compatible TAO 7.3 images on `main` to match the release branch without changing other models' image selections.
 
 - 51 CPU tests pass with no skips: the previous 46 contract/source tests plus five shared-generator exclusion cases. Regeneration produces the same six packaged schemas and templates; the generic filter preserves unrelated fields and validates malformed exclusion metadata.
 - The skill-bank validator, version-stamp check, repository hooks, and whitespace checks pass.

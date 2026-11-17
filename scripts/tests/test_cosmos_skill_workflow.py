@@ -429,7 +429,7 @@ def test_node_exclusions_are_live_filtered_and_rendered_without_hand_patch(
     assert plan["slurm_node_exclusions"]["retired_or_missing"] == ["retired-node-99999"]
 
     args.platform = "slurm"
-    args.partition = "polar3,polar4"
+    args.partition = "gpu-a,gpu-b"
     args.account = "account"
     args.container_mount = [f"{tmp_path}:{tmp_path}"]
     args.stdout_path = str(tmp_path / "%x-%j.out")
@@ -562,7 +562,7 @@ def test_retry_helper_reuses_sealed_inspection_and_refreshes_job_identity(
     render_request.update(
         {
             "platform": "slurm",
-            "partition": "polar3,polar4",
+            "partition": "gpu-a,gpu-b",
             "account": "account",
             "container_mount": [f"{tmp_path}:{tmp_path}"],
             "timeout": "03:48:00",
@@ -2425,7 +2425,7 @@ def test_clean_build_plan_requires_new_sqsh_and_provenance(tmp_path):
 def test_existing_sqsh_is_runtime_authority_without_source_build_intake(tmp_path):
     args = args_for(tmp_path, backend="cosmos-rl")
     args.platform = "slurm"
-    args.partition = "polar3,polar4"
+    args.partition = "gpu-a,gpu-b"
     args.account = "account"
     args.slurm_user = "user"
     args.slurm_host = ["login"]
@@ -2472,7 +2472,7 @@ def test_existing_sqsh_is_runtime_authority_without_source_build_intake(tmp_path
 def test_omitted_sqsh_uses_packaged_backend_image_and_derived_cache_path(tmp_path):
     args = args_for(tmp_path, backend="cosmos-framework")
     args.platform = "slurm"
-    args.partition = "polar3,polar4"
+    args.partition = "gpu-a,gpu-b"
     args.account = "account"
     args.slurm_user = "user"
     args.slurm_host = ["login"]
@@ -2523,7 +2523,7 @@ def test_slurm_preflight_refreshes_sqsh_existence_without_replanning(
     args = args_for(tmp_path, backend="cosmos-rl")
     plan = workflow.build_plan(args)
     args.platform = "slurm"
-    args.partition = "polar3,polar4"
+    args.partition = "gpu-a,gpu-b"
     args.account = "account"
     args.slurm_user = "user"
     args.slurm_host = ["login"]
@@ -2774,7 +2774,7 @@ def test_sealed_plan_artifact_is_reused_without_reinspection(
 def test_sealed_plan_render_rebinds_new_job_record_id(tmp_path):
     args = args_for(tmp_path / "request", backend="cosmos-rl")
     args.platform = "slurm"
-    args.partition = "polar3,polar4"
+    args.partition = "gpu-a,gpu-b"
     args.account = "account"
     args.slurm_user = "user"
     args.slurm_host = ["login.example"]

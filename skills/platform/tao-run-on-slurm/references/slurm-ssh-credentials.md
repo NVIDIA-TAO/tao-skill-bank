@@ -147,7 +147,7 @@ platform. Supported backend details from the microservices schema:
 ```json
 {
   "backend_type": "slurm",
-  "partition": "polar,polar3,polar4,grizzly",
+  "partition": "<partition-list>",
   "cluster_name": "optional-name"
 }
 ```

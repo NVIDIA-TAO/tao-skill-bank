@@ -240,7 +240,7 @@ needed, both scoped to the NemoClaw bridge (`172.19.0.0/16`, not the default
 `172.17.0.0/16`): the gateway port (8080) and this server's port (9901). Setup
 preflights and prints the exact rule; it deliberately never runs `sudo`.
 
-Internal NVIDIA inference endpoints resolve to RFC1918 addresses, which
+Inference endpoints on a private network resolve to RFC1918 addresses, which
 NemoClaw's SSRF guard rejects by default. Onboarding such an endpoint needs
 `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS=<host>`.
 

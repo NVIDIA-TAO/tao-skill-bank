@@ -13,7 +13,7 @@ all-reduce, and prints NCCL_PROBE_OK. Launchers that invoke this probe under
 ``torchrun`` must preserve the TAO values in ``TAO_NODE_COUNT``,
 ``TAO_GPUS_PER_NODE``, and ``TAO_NODE_RANK`` because torchrun overwrites the
 standard ``WORLD_SIZE`` environment variable with the global process count.
-If NCCL is misconfigured (e.g. the CS-OCI-ORD
+If NCCL is misconfigured (e.g. a cluster-specific
 intra-node P2P hang) it HANGS on all_reduce — the orchestrating skill wraps this
 with a timeout and, on timeout, sets the cluster's NCCL knob (NCCL_P2P_DISABLE=1,
 NCCL_SOCKET_IFNAME, ...) and re-probes, caching the working env per cluster.

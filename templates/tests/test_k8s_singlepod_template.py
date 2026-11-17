@@ -100,7 +100,7 @@ def test_ttl_present_so_outputs_must_be_bound_before_deletion():
 
 
 def test_no_cross_node_rendezvous_singlenode():
-    # single-pod must not carry the multi-node rendezvous env / Service (that is M7)
+    # single-pod must not carry the multi-node rendezvous env / Service (that belongs to the Indexed Job template)
     text = render()
     assert "MASTER_ADDR" not in text and "Indexed" not in text and "subdomain" not in text
 

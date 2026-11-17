@@ -984,7 +984,7 @@ def _remote_sqsh_missing_entries(
         and MODEL_PREPARATION_RUNTIME_ENTRY not in missing_entries
     ):
         # squashfs-tools before 4.5 does not provide ``unsquashfs -cat``.
-        # CS-OCI-ORD still carries such a release on some login nodes, so use
+        # Some clusters still carry such a release on their login nodes, so use
         # targeted extraction as a compatibility fallback instead of
         # misclassifying a valid attestation as absent.  The extraction stays
         # node-local, contains only this one fixed member, and is removed on

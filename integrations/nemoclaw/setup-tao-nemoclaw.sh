@@ -46,9 +46,9 @@ SERVER="$(cd "$(dirname "$0")" && pwd)/server.py"
 # so the source determines which TAO images every skill runs.
 #
 # Default (published): public GitHub distribution on `main`.
-# Internal SQA / pre-release — release/7.x branches live on the internal GitLab
-# repo (GitHub has only main + tags), so set BOTH:
-#   export SKILL_REPO="ssh://git@gitlab-master.nvidia.com:12051/nvidia-tao-toolkit/tao-skill-bank.git"
+# To install a release branch or tag instead of `main`, set SKILL_REF (alias
+# TAO_RELEASE); to install from a fork or mirror, also set SKILL_REPO:
+#   export SKILL_REPO="https://github.com/<org>/tao-skill-bank"
 #   export SKILL_REF="release/7.1.0"          # or TAO_RELEASE=release/7.1.0
 # …or skip the network entirely and use a local checkout directly:
 #   export SKILL_LOCAL="$HOME/tao-skill-bank"
