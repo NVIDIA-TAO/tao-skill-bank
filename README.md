@@ -313,7 +313,7 @@ tao-skill-bank/
 ├── docs/
 │   ├── skill-requirements.md         # must-follow rules: naming + signing gates (read first)
 │   ├── authoring.md                  # guide for adding new skills
-│   └── maintenance.md                # RC bump procedure for versions.yaml
+│   └── maintenance.md                # version bump procedure for versions.yaml
 ├── templates/skill-skeleton/         # copy-paste starting points (minimal + per-layer)
 ├── scripts/
 │   ├── validate-skills.sh            # CI validator

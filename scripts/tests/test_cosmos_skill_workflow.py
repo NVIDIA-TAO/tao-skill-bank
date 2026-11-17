@@ -3200,7 +3200,7 @@ def test_rl_spec_preserves_top_level_and_dataloader_seed_contract() -> None:
     assert "dataloader_prefetch_factor" not in spec["train"]["train_policy"]
 
 
-def test_nvbug_comma_joined_lora_modules_are_normalized():
+def test_comma_joined_lora_modules_are_normalized():
     args = workflow.parse_args([
         "resolve", "--model", "nvidia/Cosmos3-Nano",
         "--lora-target-modules", "q_proj,k_proj",
@@ -3210,7 +3210,7 @@ def test_nvbug_comma_joined_lora_modules_are_normalized():
     assert args.lora_modules_to_save == ["lm_head", "embed_tokens"]
 
 
-def test_nvbug_conversion_command_has_nonroot_identity_env(tmp_path):
+def test_conversion_command_has_nonroot_identity_env(tmp_path):
     args = SimpleNamespace(
         base_model_path_or_uri="nvidia/Cosmos3-Nano", base_model_revision="a" * 40,
         vlm_architecture_model_path_or_uri="Qwen/Qwen3-VL-8B-Instruct",
@@ -3225,7 +3225,7 @@ def test_nvbug_conversion_command_has_nonroot_identity_env(tmp_path):
     assert "TORCHINDUCTOR_CACHE_DIR=/tao-local-cache/torchinductor" in joined
 
 
-def test_nvbug_task_aware_alias_media_key_fails_closed(tmp_path):
+def test_task_aware_alias_media_key_fails_closed(tmp_path):
     media = tmp_path / "media"
     media.mkdir()
     (media / "x.mp4").write_bytes(b"x")
@@ -3238,14 +3238,14 @@ def test_nvbug_task_aware_alias_media_key_fails_closed(tmp_path):
         common.inspect_dataset(dataset_family="auto", annotations=[str(annotation)], media_roots=[str(media)])
 
 
-def test_nvbug_framework_edge_dimensions_reach_environment(tmp_path):
+def test_framework_edge_dimensions_reach_environment(tmp_path):
     args = args_for(tmp_path, dataset_family="task_aware_video_reasoning", model_name="nvidia/Cosmos3-Edge")
     plan = workflow.build_plan(args)
     assert plan["environment"]["TAO_VIDEO_FRAME_WIDTH"] == "1280"
     assert plan["environment"]["TAO_VIDEO_FRAME_HEIGHT"] == "720"
 
 
-def test_nvbug_local_preflight_rejects_undecodable_media(monkeypatch, tmp_path):
+def test_local_preflight_rejects_undecodable_media(monkeypatch, tmp_path):
     args = args_for(tmp_path)
     plan = workflow.build_plan(args)
     def fail(path):
@@ -3256,7 +3256,7 @@ def test_nvbug_local_preflight_rejects_undecodable_media(monkeypatch, tmp_path):
     assert any("cannot decode" in error for error in result["errors"])
 
 
-def test_nvbug_framework_checkpoint_action_normalizes_hf_model_uri(tmp_path):
+def test_framework_checkpoint_action_normalizes_hf_model_uri(tmp_path):
     checkpoint, config, base_model = make_framework_dcp(tmp_path)
     args = framework_action_args(checkpoint, config, base_model)
     args.base_model_path_or_uri = "hf_model://nvidia/Cosmos3-Nano"
@@ -3264,7 +3264,7 @@ def test_nvbug_framework_checkpoint_action_normalizes_hf_model_uri(tmp_path):
     assert argv[argv.index("--base-model-path-or-uri") + 1] == "nvidia/Cosmos3-Nano"
 
 
-def test_nvbug_terminal_success_average_does_not_displace_weighted_event():
+def test_terminal_success_average_does_not_displace_weighted_event():
     records = [
         {"status": "RUNNING", "phase": "training_complete", "kpi": {
             "train/avg_loss": .5, "train/loss_numerator": 5, "train/valid_label_count": 10}},
@@ -3276,13 +3276,13 @@ def test_nvbug_terminal_success_average_does_not_displace_weighted_event():
     assert result["average_training_loss"]["numerator"] == 5
 
 
-def test_nvbug_brev_contract_is_retry_safe():
+def test_brev_contract_is_retry_safe():
     brev = (ROOT / "skills" / "platform" / "tao-run-on-brev" / "SKILL.md").read_text()
     assert "grep -qx ok" in brev
     assert "docker inspect '$JOB_ID'" in brev
 
 
-def test_nvbug_framework_export_rejects_tensor_key_drift(tmp_path):
+def test_framework_export_rejects_tensor_key_drift(tmp_path):
     checkpoint, config, base_model = make_framework_dcp(tmp_path)
     export = tmp_path / "exports" / "epoch_1"
     write_framework_export(export, checkpoint, config, base_model)
@@ -3305,7 +3305,7 @@ def test_nvbug_framework_export_rejects_tensor_key_drift(tmp_path):
         )
 
 
-def test_nvbug_framework_export_rejects_single_file_tensor_key_drift(tmp_path):
+def test_framework_export_rejects_single_file_tensor_key_drift(tmp_path):
     checkpoint, config, base_model = make_framework_dcp(tmp_path)
     export = tmp_path / "exports" / "epoch_1"
     write_framework_export(export, checkpoint, config, base_model)
@@ -3325,7 +3325,7 @@ def test_nvbug_framework_export_rejects_single_file_tensor_key_drift(tmp_path):
         )
 
 
-def test_nvbug_render_docker_has_identity_and_idempotency_guard(tmp_path):
+def test_render_docker_has_identity_and_idempotency_guard(tmp_path):
     args = SimpleNamespace(
         tao_job_id="job-123", results_dir=str(tmp_path),
         container_results_dir="/results", container_mount=[f"{tmp_path}:/results"],
@@ -3349,12 +3349,12 @@ def test_nvbug_render_docker_has_identity_and_idempotency_guard(tmp_path):
     assert "--gpus device=2,3" in rendered
 
 
-def test_nvbug_docker_gpu_count_is_not_hardcoded():
+def test_docker_gpu_count_is_not_hardcoded():
     args = workflow.parse_args(["resolve", "--model", "nvidia/Cosmos3-Nano"])
     assert args.gpus_per_node == 0
 
 
-def test_nvbug_docker_gpu_derivation_respects_cuda_visible_devices(
+def test_docker_gpu_derivation_respects_cuda_visible_devices(
     monkeypatch, tmp_path
 ):
     inventory = "\n".join(
@@ -3380,7 +3380,7 @@ def test_nvbug_docker_gpu_derivation_respects_cuda_visible_devices(
     assert "--gpus device=1,3" in plan["preflight"]["container_runtime"]
 
 
-def test_nvbug_docker_gpu_derivation_rejects_ineligible_visible_subset(
+def test_docker_gpu_derivation_rejects_ineligible_visible_subset(
     monkeypatch, tmp_path
 ):
     command = [

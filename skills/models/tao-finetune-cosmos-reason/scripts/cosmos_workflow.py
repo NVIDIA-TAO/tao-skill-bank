@@ -78,7 +78,7 @@ _PLAN_ARTIFACT_TRANSIENT_ARGS = {"verb", "format", "plan_artifact", "render_outp
 DEFAULT_NANO_VLM_ARCHITECTURE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 # Cosmos Framework implements HFModel._configure_validation_video_feature_cache
 # for these runtime model types only; every other family raises at model
-# construction. Keep this allowlist authoritative for the planner. NVBUG 6669758.
+# construction. Keep this allowlist authoritative for the planner.
 FRAMEWORK_VALIDATION_FEATURE_CACHE_MODEL_TYPES = frozenset({"qwen3_vl"})
 
 

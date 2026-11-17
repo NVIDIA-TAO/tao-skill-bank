@@ -12,7 +12,7 @@
 - Related: Python wheel install matrix
 
 
-All TAO container image tags **and** Python wheel pins live in **one file**: [`versions.yaml`](../versions.yaml) at the repo root. RC bumps and upgrades are a one-line edit there for both.
+All TAO container image tags **and** Python wheel pins live in **one file**: [`versions.yaml`](../versions.yaml) at the repo root. Version bumps and upgrades are a one-line edit there for both.
 
 Container images live under `images:`, Python wheels under `wheels:`. Skills carry the resolved value as a **stamped literal** annotated with its dotted key (`# versions-key: images.<key>` / `# versions-key: wheels.<key>`); `scripts/stamp_versions.py` fans a `versions.yaml` edit out to every stamped pin and `stamp_versions.py --check` verifies nothing is stale in CI. See "Bumping the AutoML wheel" below.
 
@@ -67,7 +67,7 @@ symmetric with images:
 # versions.yaml
 wheels:
 -   tao_automl_brev:     nvidia-tao-automl[brev]==7.0.0
-+   tao_automl_brev:     nvidia-tao-automl[brev]==7.1.0rc1
++   tao_automl_brev:     nvidia-tao-automl[brev]==7.1.0
 ```
 
 Skill Preflights carry the pin as a stamped literal (annotated `# versions-key: wheels.<key>`), so after re-stamping the new pin propagates automatically — no per-skill grep, no hardcoded URLs.
@@ -75,15 +75,6 @@ Skill Preflights carry the pin as a stamped literal (annotated `# versions-key: 
 The AutoML wheel pulls `nvidia-tao-sdk` transitively; the `wheels.tao_sdk_*`
 entries are retained only to document that transitive dependency (the bank no
 longer installs the SDK directly) — they are not a user install path.
-
-### Internal RC versions
-
-To stage an RC internally before the public release:
-
-1. Publish the RC wheel to the index pip is pointed at — an internal PyPI mirror, or `--extra-index-url` / `--index-url` supplied via pip config or `PIP_*` env. Index selection is an environment concern; the skill bank never bakes in a registry.
-2. Pin the **exact** RC version in `versions.yaml` (e.g. `==7.1.0rc1`). pip installs an exact pre-release pin without `--pre`; a non-exact specifier like `>=7.1.0` would skip pre-releases unless `--pre` is passed.
-
-That's the whole change: one line in `versions.yaml`, exactly like a container RC bump.
 
 ## Adding a new image
 
@@ -115,7 +106,7 @@ Promote to a key (`versions.yaml` entry) when:
 
 - The image is shared by **two or more skills**.
 - The image will be **bumped on a release cadence**.
-- You want to track it in changelogs / RC notes.
+- You want to track it in changelogs / release notes.
 
 ## Bumping the documented release pin
 

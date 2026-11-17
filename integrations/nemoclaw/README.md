@@ -169,7 +169,7 @@ This table records what was *verified*, not what is *enforced*. Nothing here
 pins anything on our side — the versions an operator actually gets come from
 whichever NemoClaw release they installed.
 
-That distinction has already cost us one P0 (NVBug 6682592). OpenShell v0.0.88
+That distinction has already caused one breakage. OpenShell v0.0.88
 renamed sandbox containers from `openshell-<name>-<id>` to
 `openshell-<workspace>--<name>-<id>`, and NemoClaw's exact pin jumped 0.0.85 →
 0.0.99 on 2026-08-07, straight over it. Both setup and uninstall were matching
