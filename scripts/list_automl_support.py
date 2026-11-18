@@ -20,7 +20,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skill-bank",
         type=Path,
-        default=Path(os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")),
+        # Default to the bank this script ships in; $TAO_SKILL_BANK_PATH overrides it.
+        default=Path(
+            os.environ.get("TAO_SKILL_BANK_PATH") or Path(__file__).resolve().parents[1]
+        ),
         help="Path to the packaged TAO skill bank.",
     )
     parser.add_argument(
