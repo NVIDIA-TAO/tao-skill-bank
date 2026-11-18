@@ -328,9 +328,9 @@ shown in `SKILL.md`. Missing identities fail before the wheel can apply its
 random default; resumed identities must resolve to an existing controller.
 
 This remains a skill-boundary safeguard: the sealed settings carry an explicit
-identity for both fresh and resumed runs. The `nvidia-tao-automl` 7.3.1rc91 wheel
-already fails closed on resume, addressing the behavior tracked by NVBug
-6662913. Outside this skill, callers may omit `session_id` only when the full
+identity for both fresh and resumed runs. The `nvidia-tao-automl` 7.3.1 wheel
+already fails closed on resume.
+Outside this skill, callers may omit `session_id` only when the full
 run workspace contains exactly one controller; the wheel resolves that identity
 instead of creating a new one. Missing or ambiguous controllers, invalid
 identities, and missing, unreadable, or malformed selected controller state

@@ -24,7 +24,7 @@ SCRIPT = (
 
 
 def test_presence_report_never_emits_credential_values():
-    sentinel = "must-not-appear-6871079"
+    sentinel = "must-not-appear-sentinel"
     environment = {
         **os.environ,
         "NGC_KEY": sentinel,

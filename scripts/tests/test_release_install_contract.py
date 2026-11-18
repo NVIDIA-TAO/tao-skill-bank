@@ -72,7 +72,7 @@ def test_codex_manifest_skills_root_covers_every_skill_on_disk():
     Codex loads only what sits under the single ``skills`` root in
     ``.codex-plugin/plugin.json`` — it recurses, so one root is enough, but that
     root has to contain every ``SKILL.md`` in the bank. Pointing it at
-    ``./skills/core/`` exposed 4 skills of 76 (NVBug 6777460).
+    ``./skills/core/`` exposed 4 skills of 76.
     """
     codex_manifest = json.loads(
         (REPO_ROOT / ".codex-plugin/plugin.json").read_text()
@@ -95,8 +95,7 @@ def test_documented_claude_plugin_lists_every_skill_on_disk():
 
     Claude Code loads exactly the paths a marketplace entry lists. ``tao-skills``
     listed the 77 layer skills and omitted ``skills/core/``, so the documented
-    Claude install and the fixed Codex install disagreed by five skills
-    (NVBug 6777460 review).
+    Claude install and the fixed Codex install disagreed by five skills.
     """
     marketplace = json.loads(
         (REPO_ROOT / ".claude-plugin/marketplace.json").read_text()
@@ -111,7 +110,7 @@ def test_documented_claude_plugin_lists_every_skill_on_disk():
 
 
 def test_readme_does_not_hardcode_stale_skill_counts():
-    """README once said skills/core/ held 2 skills while it held 4 (NVBug 6777460).
+    """README once said skills/core/ held 2 skills while it held 4.
 
     The repository-structure tree listed a count per layer; every one of them
     had drifted. Counts are not maintained, so the tree must not carry them.
