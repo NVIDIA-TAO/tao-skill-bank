@@ -52,7 +52,7 @@ there is also accepted); the driver aborts at startup if it is missing. Inspect 
 
 ## Version pin and known drift
 
-- Originally authored against the `tao-run-deft-aoi` skill at MR-123; rebased
+- Originally authored against an earlier revision of the `tao-run-deft-aoi` skill; rebased
   onto the post-#107 state contract: `deft_state.json` (snapshot + embedded
   `events`) is the only state file, `deft_context.py` decides the next stage,
   and `finalize_run.py` owns `loop_stop`. Scripts used: `commit_stage.py`,

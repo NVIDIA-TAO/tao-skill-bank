@@ -247,7 +247,7 @@ def test_workflow_contract_check_accepts_image_with_ds_59(monkeypatch, tmp_path)
     ({"exit_code": None}, "does not exit 143"),
 ])
 def test_workflow_contract_check_rejects_older_images(monkeypatch, tmp_path, image, message):
-    """DS release/7.3.0 at rc-90 predates #59: it accepts the placeholder and exits 0 after cancel."""
+    """An older DS build predates #59: it accepts the placeholder and exits 0 after cancel."""
     monkeypatch.setattr(handoff.importlib, "import_module", installed_workflow(tmp_path, **image))
     with pytest.raises(RuntimeError, match=message):
         handoff.workflow_contract_check()

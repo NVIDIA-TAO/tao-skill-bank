@@ -27,7 +27,7 @@ BASE = {
     "NUM_GPUS": "1",
     "CPUS_PER_TASK": "16",
     "TIME": "04:00:00",
-    "LOG_DIR": "/lustre/fsw/portfolios/edgeai/users/me/results/dino-train-a1b2c3/slurm-logs",
+    "LOG_DIR": "/lustre/users/me/results/dino-train-a1b2c3/slurm-logs",
     "SBATCH_EXTRA": "#SBATCH --account=edgeai\n#SBATCH --partition=polar,polar3",
     "ENV_FILE": "",
     "EXTRA_ENV": "",
@@ -76,7 +76,7 @@ def test_load_bearing_directives_present():
 
 
 def test_no_cross_node_rendezvous_in_singlenode():
-    # single-node must NOT set the multi-node rendezvous env (that is M7)
+    # single-node must NOT set the multi-node rendezvous env (that belongs to the multi-node template)
     rendered = render()
     assert "MASTER_ADDR" not in rendered
     assert "WORLD_SIZE" not in rendered

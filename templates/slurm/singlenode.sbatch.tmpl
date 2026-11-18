@@ -6,7 +6,7 @@
 # nothing is fetched inside the GPU allocation, which would burn it under the
 # scheduler-idle timeout). tao-run-on-slurm renders this by substituting every
 # @@<NAME>@@ placeholder; $SLURM_* and the sidecar env stay literal. Multi-node
-# (M7) is a strict superset: the same skeleton plus a rank/master rendezvous
+# is a strict superset: the same skeleton plus a rank/master rendezvous
 # block and the NCCL probe's env.
 #SBATCH --job-name=@@JOB_NAME@@
 #SBATCH --nodes=1
@@ -34,9 +34,9 @@ if [ -n "@@ENV_FILE@@" ]; then
   set +a
 fi
 
-# Cluster-specific env (e.g. NCCL_P2P_DISABLE=1 for CS-OCI-ORD multi-GPU nodes,
+# Cluster-specific env (e.g. NCCL_P2P_DISABLE=1 on clusters whose multi-GPU nodes need it,
 # or NCCL_IB_HCA). Empty by default on a single-GPU run; the multi-node NCCL
-# probe (M7) populates this automatically per cluster context.
+# probe populates this automatically per cluster context.
 @@EXTRA_ENV@@
 
 # Single node: the TAO container reads its GPU count from the spec; no cross-node
