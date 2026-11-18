@@ -117,6 +117,75 @@ Promote to a key (`versions.yaml` entry) when:
 - The image will be **bumped on a release cadence**.
 - You want to track it in changelogs / RC notes.
 
+## Plugin manifests
+
+The repository root is one plugin, `nvidia-tao`, packaged for three harnesses.
+The three `plugin.json` manifests carry the same name, version, description,
+license, and keywords; the marketplaces carry the same plugin name and, where
+they have one, the same version:
+
+| File | Read by | Carries skill paths |
+|---|---|---|
+| [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) | Claude Code, NVIDIA's plugin evaluation | No, on purpose |
+| [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json) | Claude Code | Yes: `nvidia-tao` and the `tao-skills` alias |
+| [`.codex-plugin/plugin.json`](../.codex-plugin/plugin.json) | Codex | One root, `./skills/` (Codex recurses) |
+| [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json) | Codex | No |
+| [`.cursor-plugin/plugin.json`](../.cursor-plugin/plugin.json) | Cursor | Yes: every skill directory |
+| [`.cursor-plugin/marketplace.json`](../.cursor-plugin/marketplace.json) | Cursor | No |
+
+Rules that are easy to break and that
+`scripts/tests/test_release_install_contract.py` enforces:
+
+- **Bump the version on every release that changes shipped content.** The
+  version is Claude Code's install cache key. With an unchanged version,
+  `claude plugin update` reports "already at the latest version" and delivers
+  nothing. It is the plugin's own version, not the TAO release number, and all
+  five versioned files must agree (`scripts/validate-skills.sh` check 1d).
+- **No `skills` key in `.claude-plugin/plugin.json`.** Claude Code scans
+  `skills/` one level deep, so the layer directories would have to be listed
+  there for the manifest alone to load the nested skills. NVIDIA's plugin
+  evaluation accepts only the plugin's own `./skills` there and rejects
+  anything else as an unsupported custom skill selector, so the paths live in
+  the marketplace entry instead.
+- **No root `plugin.json` while skills are nested.** A root `plugin.json` that
+  declares the Agent Plugins schema makes Codex discover skills as
+  `skills/<skill>/` only. The `skills` path in `.codex-plugin/plugin.json` no
+  longer applies, and Codex loads zero skills without an error. The file can
+  be added only together with a flat `skills/<skill>/` tree.
+- **No symlinks.** Codex drops them when it copies a plugin into its cache, and
+  checkouts without symlink support turn them into text files. Releases through
+  `7.3.0` pointed the Codex marketplace at a `plugins/tao-skill-bank` symlink
+  to the repository root. The marketplace now names the root itself (`"./"`),
+  which needs **Codex CLI 0.142.0 or newer**; older CLIs register the
+  marketplace and then find no plugin in it.
+- **Renames are append-only.** Removing a Claude marketplace entry breaks every
+  install that used it unless `renames` maps the old name to a current one.
+  `renames` moves installs that already exist. It does not make the old name
+  installable again: a fresh `claude plugin install <old-name>` fails.
+
+`tao-skills` is an alias of `nvidia-tao` for installs made from `7.3.0` and
+earlier. Remove it one release after the release that first ships `nvidia-tao`,
+in this order:
+
+1. Change the Claude Code plugin in every `skills/**/eval.config` that installs
+   `tao-skills@tao-skill-bank` to `nvidia-tao@tao-skill-bank`. A fresh install
+   of a renamed entry fails, and an evaluation that cannot install the plugin
+   runs without it.
+2. Drop the `tao-skills` entry and add `"tao-skills": "nvidia-tao"` to
+   `renames`.
+3. Update the places that name the alias: the "Plugin name" note in
+   `README.md`, step 7 of [`authoring.md`](authoring.md), and the two tests in
+   `scripts/tests/test_release_install_contract.py` that expect the entry.
+
+The Cursor manifests are provided so the plugin loads in Cursor; the install
+instructions in `README.md` cover Claude Code and Codex only.
+
+The SessionStart hook runs as two commands (`identity`, `context`) because
+Claude Code replaces hook output longer than 10,000 characters with a short
+preview, and `AGENTS.md` alone is longer than that.
+`scripts/tests/test_session_start_hook.py` keeps each part under the limit; if
+`AGENTS.md` grows enough to break it, shorten the file or add a third part.
+
 ## Bumping the documented release pin
 
 The install instructions point users at the **latest release build**, not at
@@ -126,6 +195,7 @@ new release is published. After tagging release `X.Y.Z` on GitHub, update:
 | File | What to change |
 |---|---|
 | [`README.md`](../README.md) | the tag in the Install section prose, the Claude Code `/plugin marketplace add NVIDIA-TAO/tao-skill-bank@X.Y.Z` block, and the manual `codex plugin marketplace add` block |
+| [`README.md`](../README.md) | the plugin names, when the new tag ships different names than the old one — see "First pin after `7.3.0`" below |
 | [`scripts/install-codex-agents.sh`](../scripts/install-codex-agents.sh) | `DEFAULT_MARKETPLACE_REF="X.Y.Z"` |
 | [`skills/core/tao-setup/scripts/install-codex-agents.sh`](../skills/core/tao-setup/scripts/install-codex-agents.sh) | packaged copy — must stay **byte-identical**, so `cp` the top-level file over it |
 
@@ -136,7 +206,7 @@ tags cut before this pin existed).
 
 ```bash
 # find every pin to bump (the packaged installer copy is easy to miss)
-grep -rn "7\.2\.0" README.md scripts/install-codex-agents.sh \
+grep -rn "7\.3\.0" README.md scripts/install-codex-agents.sh \
   skills/core/tao-setup/scripts/install-codex-agents.sh
 ```
 
@@ -144,6 +214,35 @@ grep -rn "7\.2\.0" README.md scripts/install-codex-agents.sh \
 packaged copy must match the top-level one byte for byte, and the tag in
 `DEFAULT_MARKETPLACE_REF` must appear in the README install commands. Run
 `pytest scripts/tests/test_install_codex_agents.py` after the bump.
+
+### First pin after `7.3.0`
+
+`7.3.0` is the last tag that ships the plugin as `tao-skills` (Claude Code) and
+`tao-skill-bank@tao-local-plugins` (Codex). The first pin bump after it has to
+change the names along with the tag, or the README hands users commands that
+fail against the new release. In `README.md`:
+
+- Claude Code block: `/plugin install nvidia-tao@tao-skill-bank`.
+- Codex manual block: `codex plugin add nvidia-tao@tao-skill-bank`, with the
+  inline comment turned around to
+  `# tao-skill-bank@tao-local-plugins for 7.3.0 and earlier`.
+- Codex manual step 1: the plugin UI entry is **NVIDIA TAO**, not
+  **TAO Skill Bank**.
+- "Plugin name" note: relabel the table rows "`X.Y.Z` and later" and "`7.3.0`
+  and earlier".
+- Local zip or clone block: turn the inline comment around the same way.
+
+Leave the `PLUGIN_NAMES` and `MARKETPLACE_NAMES` arrays in the installer and
+the "7.3.0 and earlier" comments in the "Updating" section as they are: they
+serve users who are still on an older release.
+
+```bash
+# every place that still names what 7.3.0 shipped
+grep -n -E 'tao-skills@|tao-local-plugins|TAO Skill Bank\*\*' README.md
+```
+
+`scripts/tests/test_release_install_contract.py` fails when the pinned tag is
+past `7.3.0` and the two install commands still use the old names.
 
 Verify against the published tag before merging — a pin to a tag that does not
 exist yet fails at `marketplace add` time, not in CI:
