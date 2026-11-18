@@ -2,7 +2,7 @@
 
 ## Maintenance Validation — 2026-10-07, Skill 0.2.0
 
-Review fixes restore the AutoML section contract, specify lazy-index folder staging and teacher-cache filenames, and move schema exclusions into the model's `skill_info.yaml`. Sparse4D-specific version keys pin compatible TAO 7.3 images on `main` to match the release branch without changing other models' image selections.
+This revision restores the AutoML section contract, specifies lazy-index folder staging and teacher-cache filenames, and moves schema exclusions into the model's `skill_info.yaml`. Sparse4D-specific version keys pin compatible TAO 7.3 images on `main` to match the release branch without changing other models' image selections.
 
 - 51 CPU tests pass with no skips: the previous 46 contract/source tests plus five shared-generator exclusion cases. Regeneration produces the same six packaged schemas and templates; the generic filter preserves unrelated fields and validates malformed exclusion metadata.
 - The skill-bank validator, version-stamp check, repository hooks, and whitespace checks pass.
@@ -18,7 +18,7 @@ Bounded local execution on one RTX PRO 6000 Blackwell GPU passed:
 - ResNet-50 completed four FP32 training steps. Inference from the new checkpoint produced finite predictions on two held-out frames; ONNX export and structural checking passed with image input `[batch_size, num_cams, 3, 540, 960]`.
 - Both new checkpoints contain finite saved model and optimizer tensors and the expected step counters, 4 and 8. The tests preserve the selected backbone, taxonomy, preprocessing, anchors, and temporal dimensions.
 
-**The rc-75 annotation-free conversion blocker is resolved by the rc-80 test and fresh downstream handoff above.** These small tests establish execution and artifact compatibility, not convergence, production accuracy, distributed behavior, TensorRT execution, quantization, or numerical parity. BF16 and resume results below belong to the earlier rc-78 validation; they were not rerun on rc-83. Fresh managed NVSkills evaluation/signing remains required.
+**The earlier annotation-free conversion blocker is resolved by the conversion test and fresh downstream handoff above.** These small tests establish execution and artifact compatibility, not convergence, production accuracy, distributed behavior, TensorRT execution, quantization, or numerical parity. BF16 and resume results below belong to the earlier validation; they were not rerun on the newer images. Fresh managed NVSkills evaluation/signing remains required.
 
 ## Prior Maintenance Validation — 2026-10-06, Skill 0.2.0
 
@@ -46,7 +46,7 @@ Passed execution and artifact checks:
 - Standalone evaluation and inference use `dataset.test_dataset.ann_file` while the train/validation paths are deliberately unavailable. Both backbone tests preserve their paired seven-class taxonomy, preprocessing, anchors, and temporal dimensions; the two baseline metric configurations differ and their scores are not compared.
 - ResNet-50 ONNX export from the new checkpoint, followed by ONNX structural validation. The actual graph image input is `[batch_size, num_cams, 3, 540, 960]`; setting `export.input_height: 544` did not change that signature in the tested exporter. The fresh mixed-training checkpoint also passes finite model/optimizer checks.
 
-**Historical failure, resolved above:** annotation-free conversion failed in Data Services rc-75 because its installed `AICityConfig` lacked `load_annotations` and `fps`, and it contained SDU 1.0.0. The October 7 rc-80 test uses SDU 2.0.2, passes raw conversion, and feeds the newly generated data into training. The older rc-78 model tests below used existing compatible PKLs and do not independently establish that raw-data handoff.
+**Historical failure, resolved above:** annotation-free conversion failed in the Data Services image used for this validation because its installed `AICityConfig` lacked `load_annotations` and `fps`, and it contained SDU 1.0.0. The October 7 test uses SDU 2.0.2, passes raw conversion, and feeds the newly generated data into training. The older model tests below used existing compatible PKLs and do not independently establish that raw-data handoff.
 
 These are small wiring tests using four labeled training frames, four real-scene frames, and two held-out evaluation frames. They establish local execution, not convergence, production accuracy, multi-GPU behavior, quantization support, TensorRT execution, or numerical parity. Continuation with an extended step budget is not a claim of equivalence to an uninterrupted training schedule. Fresh managed NVSkills evaluation/signing remains required.
 

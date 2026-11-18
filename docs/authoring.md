@@ -299,7 +299,7 @@ images:
     # ← add new entries here
 ```
 
-To bump an RC, change one line — that's the entire diff.
+To bump a version, change one line — that's the entire diff.
 
 For a multi-backend model, add one `versions.yaml` key per backend and stamp it
 onto `backend_contracts.<backend>.container_image` in the model skill's

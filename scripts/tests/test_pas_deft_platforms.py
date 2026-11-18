@@ -567,7 +567,7 @@ def test_finalize_binds_native_job_record_and_fresh_output(tmp_path, platform):
 def test_pyt_digest_identity_survives_prepare_finalize_and_commit(
     tmp_path, platform, finetuning_method
 ):
-    """NVBug 6902540: container platforms commit the attested PyT digest."""
+    """Container platforms commit the attested PyT digest."""
     _, results, _, _, _ = _write_fixture(tmp_path, platform)
     state_path = results / "deft_state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))

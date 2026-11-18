@@ -40,7 +40,7 @@ Two-line summary of the transformation. Inputs → outputs.
 docker run --gpus all --rm \
   -v /path/to/input:/input \
   -v /path/to/output:/output \
-  nvcr.io/nvidian/iva/<image>:<tag> \
+  nvcr.io/nvidia/tao/tao-toolkit:<tag> \
   <command> --input /input --output /output
 ```
 

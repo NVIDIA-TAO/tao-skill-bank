@@ -354,7 +354,7 @@ tao-skill-bank/
 ├── docs/
 │   ├── skill-requirements.md         # must-follow rules: naming + signing gates (read first)
 │   ├── authoring.md                  # guide for adding new skills
-│   └── maintenance.md                # RC bump procedure for versions.yaml
+│   └── maintenance.md                # version bump procedure for versions.yaml
 ├── templates/skill-skeleton/         # copy-paste starting points (minimal + per-layer)
 ├── scripts/
 │   ├── validate-skills.sh            # CI validator
@@ -374,7 +374,7 @@ tao-skill-bank/
 The repo runs three CI suites in parallel:
 
 - **NV-ACES skill evaluation** (`.skill-eval.yml`) — Tier 1/2 quality scoring, security scan.
-- **Skill execution eval** (`.gitlab-ci.yml`) — runs each skill's `eval.config` on a real GPU runner.
+- **Skill execution eval** — runs each skill's `eval.config` on a real GPU runner.
 - **`validate-skills`** (`scripts/validate-skills.sh`) — marketplace path resolution, no `skills/core/` mirrors, frontmatter, body has runnable info, no SDK leaks, hook references resolve.
 
 PRs must pass all three before merge.

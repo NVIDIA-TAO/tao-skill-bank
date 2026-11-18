@@ -164,7 +164,7 @@ Same four verbs, with three additions at submit:
    `TAO_NODE_RANK=$SLURM_PROCID`; torchrun overwrites its standard
    `WORLD_SIZE` with the global process count. `NCCL_PROBE_OK` → proceed.
    **Timed out** (the collective hung)
-   → set the cluster's NCCL knob in `EXTRA_ENV` and re-probe — on CS-OCI-ORD that
+   → set the cluster's NCCL knob in `EXTRA_ENV` and re-probe — on some clusters that
    is `export NCCL_P2P_DISABLE=1` (the intra-node P2P hang), often with
    `NCCL_SOCKET_IFNAME=eth0` / `NCCL_IB_DISABLE=1`. **Cache the working env per
    cluster** so later jobs skip the probe. Gate on **`gpus_per_node > 1` too** —
@@ -247,9 +247,9 @@ srun --container-image=<sqsh> ...
 The same rule governs data: stage it to Lustre before submit (tier A) rather
 than fetching inside the allocation.
 
-CS-OCI-ORD conversion uses `cpu_long`, 4 CPUs, 7200M memory, no exclusive node,
-node-local Enroot temp paths, and at least 120 minutes. The execution reference
-records the evidence and `QOSGrpMemLimit` recovery contract.
+The packaged SQSH conversion profile uses `cpu_long`, 4 CPUs, 7200M memory, no
+exclusive node, node-local Enroot temp paths, and at least 120 minutes. The
+execution reference records the evidence and `QOSGrpMemLimit` recovery contract.
 
 Partial conversions are self-detecting: the SQSH is validated by `hsqs` magic,
 so a truncated file is rejected rather than silently used. Conversion runs once

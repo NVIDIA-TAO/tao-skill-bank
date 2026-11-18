@@ -82,7 +82,7 @@ Before running AutoML:
 
 3. **Dataset**: Training data accessible from the compute backend. URI format depends on the SDK's platform:
    - Brev / cloud: `s3://bucket/path` (S3-compatible; do not generate `aws://...`)
-   - Slurm / internal shared storage: an absolute shared filesystem path visible to the Slurm job, e.g. `/lustre/fsw/tao_datasets/<model>/train` and `/lustre/fsw/tao_datasets/<model>/eval`
+   - Slurm / shared storage: an absolute shared filesystem path visible to the Slurm job, e.g. `/lustre/<project>/datasets/<model>/train` and `/lustre/<project>/datasets/<model>/eval`
    - Azure: `azure://container/path`
    - Local / Docker: local filesystem path
    Accept either dataset roots or exact spec-key paths. For exact spec paths,

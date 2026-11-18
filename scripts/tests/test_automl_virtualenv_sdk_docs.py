@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""NVBUG 6662975: no skill documented VirtualEnvSDK construction.
+"""Regression guard: the skills must document VirtualEnvSDK construction.
 
 Three skills forward-referenced each other and the loop never closed, so
 users constructed the SDK without ``work_dir=`` and every trial's checkpoints
