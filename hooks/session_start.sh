@@ -7,6 +7,16 @@
 # Stdout is loaded into the agent's context as additionalContext at session
 # start. Keep it tight — every line lands in context for every session.
 #
+# Usage: session_start.sh [identity|context|all]   (default: all)
+#
+# Claude Code caps each hook command's output at 10,000 characters and replaces
+# anything longer with a short preview, so hooks/hooks.json registers this
+# script twice and each run prints one part:
+#   identity  AGENTS.md up to the split heading (identity + discovery flow)
+#   context   the rest of AGENTS.md, then credentials, card packs, docker check
+# `all` prints both parts in order, for anything that runs the script directly.
+# scripts/tests/test_session_start_hook.py keeps each part under the cap.
+#
 # Responsibilities:
 #   1. Emit TAO orchestration guidance (the agent's identity + discovery flow).
 #   2. Report which credential env vars are present in the session (names only).
@@ -20,32 +30,64 @@
 
 set -u
 
-# Idempotency guard: both `tao-skills` and `deft-aoi-loop-plugin` share the
-# same source dir, so hook auto-discovery fires this script once per enabled
-# plugin. Emit the guidance only on the first invocation per session.
-if [[ -n "${TAO_SESSION_INIT_DONE:-}" ]]; then
-  exit 0
+TAO_PART="${1:-all}"
+case "$TAO_PART" in
+  identity|context|all) ;;
+  *) echo "usage: session_start.sh [identity|context|all]" >&2; exit 2 ;;
+esac
+
+# Plugin root. Claude Code sets CLAUDE_PLUGIN_ROOT; other harnesses that run this
+# hook may set their own variable or none, so fall back to this script's parent.
+TAO_ROOT="${CLAUDE_PLUGIN_ROOT:-${CURSOR_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}"
+if [[ -z "$TAO_ROOT" || ! -f "$TAO_ROOT/AGENTS.md" ]]; then
+  TAO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
-if [[ -n "${CLAUDE_ENV_FILE:-}" ]]; then
-  echo "export TAO_SESSION_INIT_DONE=1" >> "$CLAUDE_ENV_FILE"
-fi
+
+# Line number of the level-2 heading where AGENTS.md is split between the two
+# parts: the first "## " heading at or past the midpoint, outside fenced code
+# (a "## " line inside a fence is a comment, not a heading). 0 = do not split.
+tao_split_line() {
+  awk -v total="$(wc -c < "$1")" '
+    { if (/^```/) fence = !fence
+      if (!found && !fence && /^## / && off >= total / 2) { print NR; found = 1 }
+      off += length($0) + 1 }
+    END { if (!found) print 0 }' "$1"
+}
 
 # ─── 1. Agent guidance ────────────────────────────────────────────────────
 # Single source of truth: AGENTS.md at the plugin root (cross-runtime spec —
 # https://agents.md/). Edit there to update Claude + Codex + any future
 # runtime in one place. Do not duplicate the prompt inline here or in other
 # hooks.
-if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -f "${CLAUDE_PLUGIN_ROOT}/AGENTS.md" ]]; then
-  cat "${CLAUDE_PLUGIN_ROOT}/AGENTS.md"
-  echo
+if [[ -f "${TAO_ROOT}/AGENTS.md" ]]; then
+  _tao_split="$(tao_split_line "${TAO_ROOT}/AGENTS.md")"
+  if [[ "$TAO_PART" == "all" || "$_tao_split" -le 1 ]]; then
+    # No split point: the identity part carries the whole file.
+    [[ "$TAO_PART" != "context" ]] && { cat "${TAO_ROOT}/AGENTS.md"; echo; }
+  elif [[ "$TAO_PART" == "identity" ]]; then
+    head -n "$((_tao_split - 1))" "${TAO_ROOT}/AGENTS.md"
+  else
+    echo "<!-- TAO agent guidance, part 2 of 2 (part 1: identity and discovery flow) -->"
+    tail -n "+${_tao_split}" "${TAO_ROOT}/AGENTS.md"
+    echo
+  fi
 fi
+[[ "$TAO_PART" == "identity" ]] && exit 0
 
 # ─── 1b. Make versions.yaml + skill bank discoverable to the helper scripts ──
 # The bank's scripts (resolve_tao_image.py, tao_job_record.py) and templates/
-# read $TAO_SKILL_BANK_PATH to find versions.yaml. Plugin-installed users need
-# this set to resolve container_image keys like `tao_toolkit.pyt`.
-if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -n "${CLAUDE_ENV_FILE:-}" ]]; then
-  echo "export TAO_SKILL_BANK_PATH=\"${CLAUDE_PLUGIN_ROOT}\"" >> "$CLAUDE_ENV_FILE"
+# read $TAO_SKILL_BANK_PATH to find versions.yaml. Claude Code persists it for
+# the session's shell commands through CLAUDE_ENV_FILE; harnesses without that
+# file get the path spelled out instead, and the helper scripts fall back to
+# the bank they ship in.
+if [[ -n "${CLAUDE_ENV_FILE:-}" ]]; then
+  _tao_export="export TAO_SKILL_BANK_PATH=\"${TAO_ROOT}\""
+  grep -qxF "$_tao_export" "$CLAUDE_ENV_FILE" 2>/dev/null \
+    || echo "$_tao_export" >> "$CLAUDE_ENV_FILE"
+else
+  echo "TAO skill bank root: \`${TAO_ROOT}\`. Helper scripts and skills read it from"
+  echo "\`TAO_SKILL_BANK_PATH\`; export that variable before running them from another directory."
+  echo
 fi
 
 # ─── 2. Credentials ───────────────────────────────────────────────────────
@@ -83,9 +125,9 @@ echo
 # Card packs run application workflows as fresh per-stage sessions (74-91%
 # cheaper than in-conversation execution). This block injects the routing
 # rule so every session sees it before executing a covered workflow.
-if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+if [[ -d "${TAO_ROOT}/skills/applications" ]]; then
   _tao_packs=""
-  for _p in "${CLAUDE_PLUGIN_ROOT}"/skills/applications/*/cards; do
+  for _p in "${TAO_ROOT}"/skills/applications/*/cards; do
     [[ -d "$_p" ]] && _tao_packs="${_tao_packs} $(basename "$(dirname "$_p")")"
   done
   if [[ -n "${_tao_packs// /}" ]]; then
