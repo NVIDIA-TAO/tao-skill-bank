@@ -147,7 +147,7 @@ def test_installer_installs_the_current_plugin_name_first(tmp_path):
     result, calls = _run_installer(tmp_path)
 
     assert result.returncode == 0, result.stderr
-    assert "plugin add nvidia-tao@tao-skill-bank" in calls
+    assert "plugin add nvidia-tao-toolkit@tao-skill-bank" in calls
     assert "plugin add tao-skill-bank@tao-local-plugins" not in calls
 
 
@@ -158,11 +158,11 @@ def test_installer_falls_back_to_the_name_older_releases_ship(tmp_path):
     named ``tao-local-plugins``, so the current name is not found there.
     """
     result, calls = _run_installer(
-        tmp_path, failing_adds=("nvidia-tao@tao-skill-bank",)
+        tmp_path, failing_adds=("nvidia-tao-toolkit@tao-skill-bank",)
     )
 
     assert result.returncode == 0, result.stderr
-    assert calls.index("plugin add nvidia-tao@tao-skill-bank") < calls.index(
+    assert calls.index("plugin add nvidia-tao-toolkit@tao-skill-bank") < calls.index(
         "plugin add tao-skill-bank@tao-local-plugins"
     )
     assert "Installed plugin tao-skill-bank@tao-local-plugins" in result.stdout
@@ -171,11 +171,11 @@ def test_installer_falls_back_to_the_name_older_releases_ship(tmp_path):
 def test_installer_reports_both_failures_when_no_name_installs(tmp_path):
     result, _ = _run_installer(
         tmp_path,
-        failing_adds=("nvidia-tao@tao-skill-bank", "tao-skill-bank@tao-local-plugins"),
+        failing_adds=("nvidia-tao-toolkit@tao-skill-bank", "tao-skill-bank@tao-local-plugins"),
     )
 
     assert result.returncode == 1
-    assert "nvidia-tao@tao-skill-bank: plugin not found" in result.stderr
+    assert "nvidia-tao-toolkit@tao-skill-bank: plugin not found" in result.stderr
     assert "tao-skill-bank@tao-local-plugins: plugin not found" in result.stderr
     assert "Upgrade Codex" not in result.stderr
 
@@ -188,7 +188,7 @@ def test_installer_points_an_old_codex_cli_at_the_upgrade(tmp_path):
     """
     result, _ = _run_installer(
         tmp_path,
-        failing_adds=("nvidia-tao@tao-skill-bank", "tao-skill-bank@tao-local-plugins"),
+        failing_adds=("nvidia-tao-toolkit@tao-skill-bank", "tao-skill-bank@tao-local-plugins"),
         version="0.141.0",
     )
 
@@ -209,7 +209,7 @@ def test_installer_clears_both_generations_before_installing(tmp_path):
     add_marketplace = next(i for i, c in enumerate(calls) if c.startswith("plugin marketplace add "))
     for removal in (
         "plugin remove tao-skill-bank@tao-local-plugins",
-        "plugin remove nvidia-tao@tao-skill-bank",
+        "plugin remove nvidia-tao-toolkit@tao-skill-bank",
         "plugin marketplace remove tao-local-plugins",
     ):
         assert removal in calls and calls.index(removal) < add_marketplace, removal

@@ -13,7 +13,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PLUGIN_NAME = "nvidia-tao"
+PLUGIN_NAME = "nvidia-tao-toolkit"
 # Every file that carries the plugin version; they must always agree.
 VERSIONED_MANIFESTS = (
     ".claude-plugin/plugin.json",
@@ -79,11 +79,11 @@ def test_default_marketplace_exposes_the_canonical_codex_plugin_name():
 
 
 def test_one_plugin_name_across_every_harness():
-    """The plugin is ``nvidia-tao`` in each manifest and each marketplace.
+    """The plugin is ``nvidia-tao-toolkit`` in each manifest and each marketplace.
 
     Codex refuses to install a plugin whose manifest name differs from its
     marketplace entry, and a user should be able to type the same
-    ``nvidia-tao@tao-skill-bank`` in every client.
+    ``nvidia-tao-toolkit@tao-skill-bank`` in every client.
     """
     for path in (
         ".claude-plugin/plugin.json",
@@ -250,7 +250,7 @@ def test_documented_claude_plugin_lists_every_skill_on_disk():
     Claude Code scans ``skills/`` one level deep, so it loads exactly the paths a
     marketplace entry lists. ``tao-skills`` listed the 77 layer skills and omitted
     ``skills/core/``, so the documented Claude install and the fixed Codex install
-    disagreed by five skills. ``nvidia-tao`` is the plugin; ``tao-skills`` is its
+    disagreed by five skills. ``nvidia-tao-toolkit`` is the plugin; ``tao-skills`` is its
     alias for existing installs and must stay identical.
     """
     marketplace = _load(".claude-plugin/marketplace.json")

@@ -9,7 +9,7 @@
   },
   "plugins": [
     {
-      "name": "nvidia-tao",
+      "name": "nvidia-tao-toolkit",
       "source": "./",
       "description": "Full NVIDIA TAO skill bank: every model, data, platform, application, and core helper skill in one plugin."
     }

@@ -19,7 +19,7 @@ allowed-tools: Read Bash
 
 Short summary of the platform's execution model. Instance-based or job-based? API-first or docker-first? Single-node or multi-node? Managed or self-hosted?
 
-For generic docker conventions, defer to `nvidia-tao:tao-run-on-docker`. This skill covers the platform-specific layering on top.
+For generic docker conventions, defer to `nvidia-tao-toolkit:tao-run-on-docker`. This skill covers the platform-specific layering on top.
 
 ## External dependencies
 
@@ -68,8 +68,8 @@ which <cli-name> || echo "MISSING: install from <url>"
 
 A platform skill is a **consumer**: it runs a model/data skill's spec-bundle by
 implementing `submit`/`status`/`logs`/`cancel` over the native CLI, mutating only
-the job-record. No SDK. See `nvidia-tao:tao-launch-workflow` for the shared
-contract and `nvidia-tao:tao-run-on-docker` for a worked example.
+the job-record. No SDK. See `nvidia-tao-toolkit:tao-launch-workflow` for the shared
+contract and `nvidia-tao-toolkit:tao-run-on-docker` for a worked example.
 
 - **submit** — stage inputs via `tao-data-io`, lint the command with
   `redact_secrets.py`, then `tao_job_record.py open` (mints the id + binds

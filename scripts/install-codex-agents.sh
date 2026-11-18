@@ -6,7 +6,7 @@
 #
 # What it does:
 #   1. Registers the tao-skill-bank marketplace with the Codex CLI.
-#   2. Installs the `nvidia-tao` plugin (skills surface). Releases through 7.3.0
+#   2. Installs the `nvidia-tao-toolkit` plugin (skills surface). Releases through 7.3.0
 #      ship it as `tao-skill-bank`; the script installs whichever name the
 #      chosen release offers and removes the other one if it is installed.
 #      Releases after 7.3.0 need Codex CLI 0.142.0 or newer.
@@ -34,10 +34,10 @@ MARKETPLACE_REF="${TAO_SKILL_BANK_REF-$DEFAULT_MARKETPLACE_REF}"
 
 # Plugin and marketplace names, newest first. This script is fetched from `main`
 # but installs a release tag, so it cannot assume which names that tag ships:
-#   after 7.3.0      nvidia-tao      in marketplace tao-skill-bank
-#   through 7.3.0    tao-skill-bank  in marketplace tao-local-plugins
+#   after 7.3.0      nvidia-tao-toolkit  in marketplace tao-skill-bank
+#   through 7.3.0    tao-skill-bank      in marketplace tao-local-plugins
 # (`name` in .codex-plugin/plugin.json and .agents/plugins/marketplace.json.)
-PLUGIN_NAMES=("nvidia-tao" "tao-skill-bank")
+PLUGIN_NAMES=("nvidia-tao-toolkit" "tao-skill-bank")
 MARKETPLACE_NAMES=("tao-skill-bank" "tao-local-plugins")
 
 # Releases after 7.3.0 use the repository root as the plugin source. Codex CLIs

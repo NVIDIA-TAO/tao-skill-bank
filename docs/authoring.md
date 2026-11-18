@@ -475,11 +475,11 @@ Rename the directory to your skill's kebab-case name. Fill in the placeholders.
 
 ## 7. Add to the plugin manifests
 
-The bank ships as one plugin, `nvidia-tao`. Skills sit one level below a layer
+The bank ships as one plugin, `nvidia-tao-toolkit`. Skills sit one level below a layer
 directory (`skills/<layer>/<skill>/`), and Claude Code and Cursor only scan
 `skills/` one level deep, so each new skill is listed explicitly in two files:
 
-1. [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json): add the path to **both** the `nvidia-tao` entry and its `tao-skills` alias (kept for existing installs).
+1. [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json): add the path to **both** the `nvidia-tao-toolkit` entry and its `tao-skills` alias (kept for existing installs).
 2. [`.cursor-plugin/plugin.json`](../.cursor-plugin/plugin.json): add the path to `skills`.
 
 ```json
@@ -487,7 +487,7 @@ directory (`skills/<layer>/<skill>/`), and Claude Code and Cursor only scan
   "name": "tao-skill-bank",
   "plugins": [
     {
-      "name": "nvidia-tao",
+      "name": "nvidia-tao-toolkit",
       "skills": [
         "./skills/models/my-new-network",
         ...
@@ -503,7 +503,7 @@ see [Plugin manifests](maintenance.md#plugin-manifests) for why.
 `scripts/tests/test_release_install_contract.py` fails if a skill on disk is
 missing from any of the lists.
 
-Users install with `/plugin install nvidia-tao@tao-skill-bank`. The plugin name (`nvidia-tao`) is what they type; the marketplace name (`tao-skill-bank`) is the source.
+Users install with `/plugin install nvidia-tao-toolkit@tao-skill-bank`. The plugin name (`nvidia-tao-toolkit`) is what they type; the marketplace name (`tao-skill-bank`) is the source.
 
 Do not also add the skill under `skills/core/`. That directory is only for helper/router skills — capability answers, launch intake, artifact handling — that ship to every runtime alongside the layer skills. Mirroring model, data, platform, or application skills under both places gives agents duplicate trigger surfaces and increases the chance of stale or hallucinated routing.
 
@@ -572,7 +572,7 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 
 **Abstract description.** "Visual Changenet model" is bad. "Fine-tune Visual ChangeNet for PCB defect detection. Use when the user asks to 'train ChangeNet', 'PCB defect detection', or mentions 'siamese classification'." is good.
 
-**Duplicating docker boilerplate.** If your skill explains `--gpus`, NGC login, or nvidia-container-toolkit, delete it and link to `nvidia-tao:tao-run-on-docker`.
+**Duplicating docker boilerplate.** If your skill explains `--gpus`, NGC login, or nvidia-container-toolkit, delete it and link to `nvidia-tao-toolkit:tao-run-on-docker`.
 
 **Mirroring skills under `skills/core/`.** Keep one canonical skill location under `skills/models/`, `skills/data/`, `skills/platform/`, or `skills/applications/`. The `skills/core/` directory holds helper/router skills, not a flat copy of the bank.
 

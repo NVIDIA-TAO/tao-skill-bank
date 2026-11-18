@@ -1,11 +1,11 @@
 {
   "name": "tao-skill-bank",
   "interface": {
-    "displayName": "NVIDIA TAO"
+    "displayName": "NVIDIA TAO Toolkit"
   },
   "plugins": [
     {
-      "name": "nvidia-tao",
+      "name": "nvidia-tao-toolkit",
       "source": {
         "source": "local",
         "path": "./"

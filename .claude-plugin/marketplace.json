@@ -9,7 +9,7 @@
   },
   "plugins": [
     {
-      "name": "nvidia-tao",
+      "name": "nvidia-tao-toolkit",
       "description": "Full NVIDIA TAO skill bank: every model, data, platform, application, and core helper skill in one plugin.",
       "source": "./",
       "strict": true,
@@ -100,7 +100,7 @@
     },
     {
       "name": "tao-skills",
-      "description": "Deprecated alias of nvidia-tao, kept for one release so existing installs keep working. Same content; new installs should use nvidia-tao.",
+      "description": "Deprecated alias of nvidia-tao-toolkit, kept for one release so existing installs keep working. Same content; new installs should use nvidia-tao-toolkit.",
       "source": "./",
       "strict": true,
       "skills": [
@@ -190,7 +190,7 @@
     }
   ],
   "renames": {
-    "tao-skill-bank": "nvidia-tao",
-    "tao-daft-process": "nvidia-tao"
+    "tao-skill-bank": "nvidia-tao-toolkit",
+    "tao-daft-process": "nvidia-tao-toolkit"
   }
 }

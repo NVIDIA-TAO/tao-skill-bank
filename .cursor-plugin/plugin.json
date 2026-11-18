@@ -1,6 +1,6 @@
 {
-  "name": "nvidia-tao",
-  "displayName": "NVIDIA TAO",
+  "name": "nvidia-tao-toolkit",
+  "displayName": "NVIDIA TAO Toolkit",
   "version": "0.1.17",
   "description": "NVIDIA TAO skill bank with generated capability discovery for model training, data processing, application workflows, AutoML, and platform execution.",
   "author": {

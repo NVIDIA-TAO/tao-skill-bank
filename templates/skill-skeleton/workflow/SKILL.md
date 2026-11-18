@@ -31,9 +31,9 @@ Plus everything the sub-skills require — see "Related skills" below.
 
 This workflow invokes:
 
-- `nvidia-tao:<skill-1>` — <one-line purpose>
-- `nvidia-tao:<skill-2>` — <one-line purpose>
-- `nvidia-tao:<platform>` — platform execution
+- `nvidia-tao-toolkit:<skill-1>` — <one-line purpose>
+- `nvidia-tao-toolkit:<skill-2>` — <one-line purpose>
+- `nvidia-tao-toolkit:<platform>` — platform execution
 
 ## Quick start
 
@@ -70,7 +70,7 @@ State persists in `<storage_root>/<state_file>.json` — orchestrator reads on s
 
 ### Stage 1: <name>
 
-- **Skill**: `nvidia-tao:<skill>`
+- **Skill**: `nvidia-tao-toolkit:<skill>`
 - **Input**: <from user or prior stage>
 - **Output**: <what produced>
 - **Condition**: when this stage runs (always / conditional)

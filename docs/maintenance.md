@@ -119,7 +119,7 @@ Promote to a key (`versions.yaml` entry) when:
 
 ## Plugin manifests
 
-The repository root is one plugin, `nvidia-tao`, packaged for three harnesses.
+The repository root is one plugin, `nvidia-tao-toolkit`, packaged for three harnesses.
 The three `plugin.json` manifests carry the same name, version, description,
 license, and keywords; the marketplaces carry the same plugin name and, where
 they have one, the same version:
@@ -127,7 +127,7 @@ they have one, the same version:
 | File | Read by | Carries skill paths |
 |---|---|---|
 | [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) | Claude Code, NVIDIA's plugin evaluation | No, on purpose |
-| [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json) | Claude Code | Yes: `nvidia-tao` and the `tao-skills` alias |
+| [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json) | Claude Code | Yes: `nvidia-tao-toolkit` and the `tao-skills` alias |
 | [`.codex-plugin/plugin.json`](../.codex-plugin/plugin.json) | Codex | One root, `./skills/` (Codex recurses) |
 | [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json) | Codex | No |
 | [`.cursor-plugin/plugin.json`](../.cursor-plugin/plugin.json) | Cursor | Yes: every skill directory |
@@ -163,15 +163,15 @@ Rules that are easy to break and that
   `renames` moves installs that already exist. It does not make the old name
   installable again: a fresh `claude plugin install <old-name>` fails.
 
-`tao-skills` is an alias of `nvidia-tao` for installs made from `7.3.0` and
-earlier. Remove it one release after the release that first ships `nvidia-tao`,
+`tao-skills` is an alias of `nvidia-tao-toolkit` for installs made from `7.3.0` and
+earlier. Remove it one release after the release that first ships `nvidia-tao-toolkit`,
 in this order:
 
 1. Change the Claude Code plugin in every `skills/**/eval.config` that installs
-   `tao-skills@tao-skill-bank` to `nvidia-tao@tao-skill-bank`. A fresh install
+   `tao-skills@tao-skill-bank` to `nvidia-tao-toolkit@tao-skill-bank`. A fresh install
    of a renamed entry fails, and an evaluation that cannot install the plugin
    runs without it.
-2. Drop the `tao-skills` entry and add `"tao-skills": "nvidia-tao"` to
+2. Drop the `tao-skills` entry and add `"tao-skills": "nvidia-tao-toolkit"` to
    `renames`.
 3. Update the places that name the alias: the "Plugin name" note in
    `README.md`, step 7 of [`authoring.md`](authoring.md), and the two tests in
@@ -222,11 +222,11 @@ packaged copy must match the top-level one byte for byte, and the tag in
 change the names along with the tag, or the README hands users commands that
 fail against the new release. In `README.md`:
 
-- Claude Code block: `/plugin install nvidia-tao@tao-skill-bank`.
-- Codex manual block: `codex plugin add nvidia-tao@tao-skill-bank`, with the
+- Claude Code block: `/plugin install nvidia-tao-toolkit@tao-skill-bank`.
+- Codex manual block: `codex plugin add nvidia-tao-toolkit@tao-skill-bank`, with the
   inline comment turned around to
   `# tao-skill-bank@tao-local-plugins for 7.3.0 and earlier`.
-- Codex manual step 1: the plugin UI entry is **NVIDIA TAO**, not
+- Codex manual step 1: the plugin UI entry is **NVIDIA TAO Toolkit**, not
   **TAO Skill Bank**.
 - "Plugin name" note: relabel the table rows "`X.Y.Z` and later" and "`7.3.0`
   and earlier".

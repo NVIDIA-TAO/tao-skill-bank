@@ -29,7 +29,7 @@ Two-line summary of the model. What it is, what it produces.
 
 ## Train Action Policy
 
-This model is AutoML-enabled at the model layer. Before handling any train-stage request, read `references/skill_info.yaml` and resolve the run override from either an explicit `automl_policy` value or the user's workflow request. Use `automl_policy: on` by default and only expose `on` / `off` in new launch prompts. Treat phrases like "turn off AutoML", "disable AutoML", "no HPO", or "plain training" as `automl_policy: off` for this run only. When `automl_policy: on`, `automl_enabled: true`, and both `schemas/train.schema.json` and `references/spec_template_train.yaml` are packaged, route the train action through `nvidia-tao:tao-run-automl` by default with this model's `skill_dir`. Preserve workflow/application overrides for datasets, specs, output directories, GPU/platform settings, parent checkpoints, and `automl_policy`. Use direct model training only when `automl_policy: off` or the packaged train schema/template is missing; in the missing-schema case, report that AutoML is enabled but not runnable for this model until schemas are generated.
+This model is AutoML-enabled at the model layer. Before handling any train-stage request, read `references/skill_info.yaml` and resolve the run override from either an explicit `automl_policy` value or the user's workflow request. Use `automl_policy: on` by default and only expose `on` / `off` in new launch prompts. Treat phrases like "turn off AutoML", "disable AutoML", "no HPO", or "plain training" as `automl_policy: off` for this run only. When `automl_policy: on`, `automl_enabled: true`, and both `schemas/train.schema.json` and `references/spec_template_train.yaml` are packaged, route the train action through `nvidia-tao-toolkit:tao-run-automl` by default with this model's `skill_dir`. Preserve workflow/application overrides for datasets, specs, output directories, GPU/platform settings, parent checkpoints, and `automl_policy`. Use direct model training only when `automl_policy: off` or the packaged train schema/template is missing; in the missing-schema case, report that AutoML is enabled but not runnable for this model until schemas are generated.
 
 Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows stay in this model skill. The per-run `automl_policy` override does not change model metadata.
 
@@ -72,7 +72,7 @@ docker run --gpus all --rm \
   <entrypoint-cmd> inference -e /spec.yaml
 ```
 
-Container image and per-action command are in `references/skill_info.yaml`. See `nvidia-tao:tao-run-on-docker` for `docker run` conventions.
+Container image and per-action command are in `references/skill_info.yaml`. See `nvidia-tao-toolkit:tao-run-on-docker` for `docker run` conventions.
 
 ## CLI Reference
 
@@ -142,4 +142,4 @@ job tracking, S3 staging, or on a remote/multi-node cluster, hand the spec to a
 **platform skill** — `tao-run-on-docker`, `-slurm`, `-kubernetes`, `-brev`,
 `-virtualenv`, or any installed external platform skill —
 which executes it through the four-verb contract (`submit`/`status`/`logs`/
-`cancel`) with no SDK. See `nvidia-tao:tao-launch-workflow`.
+`cancel`) with no SDK. See `nvidia-tao-toolkit:tao-launch-workflow`.
