@@ -130,10 +130,10 @@ dies while the container keeps running — name the container, redirect to the l
 wait on the log with `await_stage.py`:
 
 ```bash
-docker run -d --name "deft_${PHASE}_kpi" ... > /dev/null
+docker run -d --name "deft_${DEFT_RUN_TAG}_${PHASE}_kpi" ... > /dev/null
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
   --artifact "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" --timeout-sec 5400
-docker logs "deft_${PHASE}_kpi" > "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" 2>&1
+docker logs "deft_${DEFT_RUN_TAG}_${PHASE}_kpi" > "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" 2>&1
 ```
 
 Pass `--gpus all` even though the scoring itself is CPU-bound: the TAO launcher calls
@@ -144,7 +144,7 @@ Pass `--gpus all` even though the scoring itself is CPU-bound: the TAO launcher 
 <skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-analyze-detection-kpi/scripts/verify_kpi_analyze_spec.py \
   --spec "$KPI_SPEC"
 
-docker run -d --name "deft_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+docker run -d --name "deft_${DEFT_RUN_TAG}_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   analytics kpi_analyze -e "$KPI_SPEC" 2>&1
@@ -152,9 +152,9 @@ docker run -d --name "deft_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):
 # it on exit discards the number. Wait on the artifact, then capture the log, then
 # remove the container yourself:
 #   await_stage.py --artifact "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" --timeout-sec 5400
-#   docker logs "deft_${PHASE}_kpi" > "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" 2>&1
-#   docker inspect -f '{{.State.ExitCode}}' "deft_${PHASE}_kpi"   # check before trusting it
-#   docker rm "deft_${PHASE}_kpi"
+#   docker logs "deft_${DEFT_RUN_TAG}_${PHASE}_kpi" > "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" 2>&1
+#   docker inspect -f '{{.State.ExitCode}}' "deft_${DEFT_RUN_TAG}_${PHASE}_kpi"   # check before trusting it
+#   docker rm "deft_${DEFT_RUN_TAG}_${PHASE}_kpi"
 ```
 
 The aggregate **mAP is printed to stdout only** — nothing writes it into `kpi_calc.csv`,

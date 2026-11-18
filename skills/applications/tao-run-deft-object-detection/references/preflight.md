@@ -345,6 +345,27 @@ so **every** `docker run` in this skill must add a `-v "$m:$m"` for each entry, 
 addition to the workspace mount. KPI images, ground truth and checkpoints commonly
 sit outside the workspace, and a container cannot read what is not mounted.
 
+## Container names
+
+Every stage container is named `deft_${DEFT_RUN_TAG}_<phase>_<stage>`. Docker names are
+host-wide, so a name without the tag — `deft_baseline_infer` — collides as soon as a
+second run on the same host reaches the same stage, and Docker refuses the second launch.
+The tag is derived from the results directory, so it is stable for the life of the run,
+the same after a resume in a fresh shell, and different for every other run:
+
+```bash
+DEFT_RUN_TAG=$(<skill_root>/scripts/deft_python.sh -c 'import hashlib,os,sys
+print(hashlib.sha1(os.path.realpath(sys.argv[1]).encode()).hexdigest()[:8])' "$RESULTS_DIR") || exit 1
+export DEFT_RUN_TAG
+echo "DEFT_RUN_TAG=$DEFT_RUN_TAG"
+```
+
+List this run's containers with `docker ps -a --filter "name=deft_${DEFT_RUN_TAG}_"`.
+A running `deft_*` container with any other tag belongs to another run: leave it alone.
+If Docker reports a name conflict on one of *this* run's names, a container from an
+earlier attempt at the same stage is still there — check `docker ps -a` for its state
+before removing it, since a running one is still doing that stage's work.
+
 ## Pre-Flight Summary
 
 Print this and **STOP — wait for explicit approval.** This is the only user gate.
@@ -406,7 +427,7 @@ export ZERO_SHOT_CHECKPOINT TRAIN_SPEC_TEMPLATE
 export SOURCE_POOL_EMBEDDINGS SOURCE_POOL_ANNOTATIONS
 export EMBEDDING_MODEL EMBEDDING_MODEL_PATH
 export KPI_IMAGES_DIR GROUND_TRUTH_LABELS_DIR CLASS_MAPPING
-export TAO_PYT_IMAGE TAO_DS_IMAGE EXTRA_MOUNTS DOCKER_IDENTITY
+export TAO_PYT_IMAGE TAO_DS_IMAGE EXTRA_MOUNTS DOCKER_IDENTITY DEFT_RUN_TAG
 
 # Prep runs only
 export POOL_IMAGES CODETR_CHECKPOINT CODETR_CLASSMAP CLASSES_YAML
