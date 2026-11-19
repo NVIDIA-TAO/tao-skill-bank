@@ -73,16 +73,8 @@ wheels:
   # nvidia-tao-automl pulls nvidia-tao-sdk as a transitive dep. One entry per
   # platform extra; append `,llm` or `,wandb` to an extra at install time for
   # the agentic-search or experiment-tracking deps.
-<<<<<<< HEAD
-  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.3.1rc102
-  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.3.1rc102
-  tao_automl_docker:     nvidia-tao-automl[docker]==7.3.1rc102
-  tao_automl_brev:       nvidia-tao-automl[brev]==7.3.1rc102
-  tao_automl_all:        nvidia-tao-automl[all]==7.3.1rc102
-=======
   tao_automl_slurm:      nvidia-tao-automl[slurm]==7.3.1
   tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.3.1
   tao_automl_docker:     nvidia-tao-automl[docker]==7.3.1
   tao_automl_brev:       nvidia-tao-automl[brev]==7.3.1
   tao_automl_all:        nvidia-tao-automl[all]==7.3.1
->>>>>>> 24f3fa7b ([TAO-0000][Chore] Pin SDK and AutoML wheels to 7.3.1 and point the default install at the 7.3.1 tag (#378))
