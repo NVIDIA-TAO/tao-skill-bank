@@ -1,10 +1,51 @@
-# Simple harness: native grid and bounded tools
+# Historical Simple harness: native grid and bounded tools
+
+For a standalone installation on user data, start with
+[simple-harness-siglip-v1](packaged-simple-harness.md). It ships its own runtime
+and uses the existing TAO SigLIP embedding skill. This document covers only
+the older, externally pinned C-RADIO/THT reproduction profiles.
 
 Use `simple_harness.py` through the application's `simple_harness.py` in a
 platform job. The user separately supplies the authorized internal checkout
 and frozen assets. No Maxwell source, dataset, cache or report is vendored in
 this skill. Model resolution remains model-owned. The adapter accepts a
 configured local checkpoint, while recording the native declared model path.
+
+## External dependency and supported setup
+
+This route is **not a self-contained Simple harness installation**. The commit
+`1711959a40f89cbf4072ea343de318a204903dfd` belongs to the separate internal
+[Maxwell AOI harness repository](https://gitlab-master.nvidia.com/maxwellt/aoi_harness),
+not a `tao-skill-bank` branch or tag. Its `aoi_harness` Python package is required
+by both preparation and inference. NVIDIA GitLab access is required; if the
+repository is unavailable to the user, stop and report the missing dependency.
+There is no bundled substitute for this native multi-turn profile.
+
+To obtain the upstream source in a separate, trusted preparation workspace:
+
+```bash
+git clone https://gitlab-master.nvidia.com/maxwellt/aoi_harness.git aoi-harness-upstream
+git -C aoi-harness-upstream checkout --detach 1711959a40f89cbf4072ea343de318a204903dfd
+git -C aoi-harness-upstream rev-parse HEAD
+```
+
+Obtaining that checkout is only the first prerequisite. Do not mount the full
+repository into the classifier: it also contains historical reports and
+experiment records. Prepare the code/prompt-only source view and inventory
+specified below, and point `native.checkout` at that view inside the job.
+The adapter adds that directory to Python's import path; installing an unrelated
+PyPI package named `aoi_harness` is not a supported replacement.
+
+This native profile also requires the original frozen THT atlas/selection,
+eight THT labels, original Mining manifest and matching C-RADIO caches. The
+adapter checks their identities/hashes; arbitrary user images cannot replace
+them under the same profile. Request the authorized experiment input bundle
+from its owner for exact reproduction. Code access alone does not supply these
+assets, and no dataset or cache download is included here.
+
+For a new AOI dataset, use the packaged `simple-harness-siglip-v1` multi-turn
+profile. The existing `siglip-retrieval-v1` contract remains a separate
+single-call retrieval path. Neither inherits the historical profile's scores.
 
 Profiles:
 

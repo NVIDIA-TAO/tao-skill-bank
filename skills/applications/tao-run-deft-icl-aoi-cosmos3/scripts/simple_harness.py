@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Application entry for Maxwell's Cosmos-driven, bounded THT tool loop.
+"""Application entry for packaged or historical Cosmos-driven tool loops.
 
 Preflight prepares native inputs without a model. Run is an in-container
 worker, dispatched by the existing platform skill after its job record opens.
@@ -15,10 +15,14 @@ import subprocess
 import sys
 
 DATA_SKILL = Path(__file__).resolve().parents[3] / 'data/tao-in-context-learning'
+if not DATA_SKILL.is_dir():
+    DATA_SKILL = Path(__file__).resolve().parents[2] / 'tao-in-context-learning'
 ADAPTER = DATA_SKILL / 'scripts/simple_harness.py'
+PACKAGED = DATA_SKILL / 'scripts/simple_harness_runtime.py'
+PACKAGED_PROFILE = 'simple-harness-siglip-v1'
 PROFILES = ('simple-harness-grid32-tools-guidance-native4096',
             'simple-harness-grid32-tools-guidance-cap128',
-            'simple-harness-grid32-explore-cap128-v1')
+            'simple-harness-grid32-explore-cap128-v1', PACKAGED_PROFILE)
 
 
 def read(path):
@@ -50,31 +54,37 @@ def config(path):
 
 
 def adapter(action, path):
-    subprocess.run([sys.executable, str(ADAPTER), action, '--config', str(path)], check=True)
+    runner = PACKAGED if config(path)['profile'] == PACKAGED_PROFILE else ADAPTER
+    subprocess.run([sys.executable, str(runner), action, '--config', str(path)], check=True)
 
 
 def preflight(config_path, output):
     path = Path(config_path).resolve(strict=True)
     value = config(path)
+    packaged = value['profile'] == PACKAGED_PROFILE
+    runner = PACKAGED if packaged else ADAPTER
     adapter('prepare', path)
     prepared_path = Path(value['output']) / 'prepared.json'
     prepared = read(prepared_path)
-    if prepared['tool_round_limit'] != 10 or prepared['decision_owner'] != 'CosmosBackend':
+    rounds = prepared['tool_round_limit']
+    if (not 1 <= rounds <= 10 or (not packaged and rounds != 10)
+            or prepared['decision_owner'] != 'CosmosBackend'):
         raise ValueError('native preparation differs from the Cosmos tool-loop contract')
     receipt = {
         'schema': 'tao-cosmos-simple-harness-preflight/1',
         'status': 'READY_FOR_REVIEW', 'config': str(path), 'config_sha256': sha(path),
         'prepared': str(prepared_path), 'prepared_sha256': sha(prepared_path),
-        'entrypoint_sha256': sha(__file__), 'adapter_sha256': sha(ADAPTER),
+        'entrypoint_sha256': sha(__file__), 'adapter_sha256': sha(runner),
         'profile': value['profile'], 'query_split': value['query_split'],
         'query_count': prepared['query_count'], 'decision_owner': 'Cosmos',
         'tools': ['get_class_examples', 'search_similar_examples'],
         'tool_policy': 'optional; chosen by Cosmos; one call per turn',
-        'max_tool_rounds': 10, 'max_model_turns': 11,
+        'max_tool_rounds': rounds, 'max_model_turns': rounds + 1,
         'generation': {'do_sample': False, 'max_new_tokens': prepared['max_new_tokens'], 'seed': 0},
         'format_retries': 0, 'generation_deviation': prepared['generation_deviation'],
         'prompt_deviation': prepared.get('prompt_deviation'),
         'gpu_smoke': 'not performed by preflight',
+        'reference_isolation': prepared.get('isolation', 'native pinned THT exclusions'),
         'platform': 'docker; narrow mounts and record-before-launch are platform-owned',
     }
     seal(output, receipt)
@@ -91,10 +101,11 @@ def run(preflight_path, approval_path, job_id):
         raise ValueError('approval must bind the exact preflight; never manufacture approval')
     if not job_id or not job_id.strip():
         raise ValueError('platform job-record ID is required before worker execution')
+    runner = PACKAGED if frozen['profile'] == PACKAGED_PROFILE else ADAPTER
     for path, expected in [(frozen['config'], frozen['config_sha256']),
                            (frozen['prepared'], frozen['prepared_sha256']),
                            (__file__, frozen['entrypoint_sha256']),
-                           (ADAPTER, frozen['adapter_sha256'])]:
+                           (runner, frozen['adapter_sha256'])]:
         if sha(path) != expected:
             raise ValueError('frozen input or implementation changed')
     value = config(frozen['config'])

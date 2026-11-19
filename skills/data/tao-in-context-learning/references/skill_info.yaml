@@ -1,6 +1,23 @@
 name: tao-in-context-learning
 description: Adaptive Proxy-selected image ICL with extensible toolsets.
+version: 0.3.0
 toolsets:
+  simple-harness-siglip-v1:
+    version: 1
+    script: scripts/simple_harness_runtime.py
+    backend_script: scripts/simple_harness_backend.py
+    output_type: packaged_multiturn_trace
+    decision_owner: cosmos
+    embedding_skill: tao-generate-image-embeddings
+    encoder: SigLIP
+    classes: user_configured
+    tools: [get_class_examples, search_similar_examples]
+    default_tool_rounds: 10
+    default_max_new_tokens: 4096
+    format_retries: 0
+    external_source_required: false
+    contract: references/packaged-simple-harness.md
+    deviation: Separate generic SigLIP protocol; not the historical C-RADIO reproduction.
   simple-harness-grid32-explore-cap128-v1:
     version: 1
     script: scripts/simple_harness.py

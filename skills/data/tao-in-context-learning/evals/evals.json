@@ -1,0 +1,29 @@
+[
+  {
+    "id": "packaged-simple-harness-user-data",
+    "question": "Run a Cosmos multi-turn Simple harness on my four-class dataset. I cannot access Maxwell's private source. Use the TAO embedding skill and do not start training.",
+    "expected_skill": "tao-in-context-learning",
+    "expected_script": "scripts/simple_harness_runtime.py",
+    "ground_truth": "Use simple-harness-siglip-v1. Stage label-free reference/query parquet inputs; run the existing tao-generate-image-embeddings with one pinned SigLIP snapshot; use the application approval and platform launch route. Cosmos chooses optional example/search tools and receives images over multiple turns. No private Maxwell package, hardcoded THT asset, training, or inherited score.",
+    "expected_behavior": [
+      "Uses packaged simple-harness-siglip-v1 with user classes",
+      "Uses existing TAO SigLIP embedding skill",
+      "No Maxwell source or frozen THT assets required",
+      "Cosmos owns optional multi-turn tool decisions",
+      "Uses application preflight and approved platform launch"
+    ]
+  },
+  {
+    "id": "packaged-simple-harness-exploration",
+    "question": "Cosmos called search twice. Does that mean it recomputed the image embedding and became more accurate?",
+    "expected_skill": "tao-in-context-learning",
+    "expected_script": "scripts/simple_harness_runtime.py",
+    "ground_truth": "No. Pages use the same frozen query embedding to expose different candidate-class pairs. Inspect successful distinct pages and new reference IDs; duplicate calls and tool errors are not exploration. Accuracy requires the independent scorer, and no Benchmark score guides development.",
+    "expected_behavior": [
+      "Separates repeated retrieval from encoder computation",
+      "Distinguishes new successful pages from duplicate/error calls",
+      "Does not infer accuracy from tool counts",
+      "Keeps Benchmark feedback out of development"
+    ]
+  }
+]

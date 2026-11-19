@@ -2,8 +2,10 @@
 name: tao-in-context-learning
 description: Select, evaluate and freeze in-context learning policies from Proxy evidence, or run an explicitly requested Simple harness with a fixed class grid and Cosmos-driven example/search tool calls. Use for image reference retrieval, ICL search, repeated search, progressive exploration and bounded multi-turn visual evidence gathering.
 license: Apache-2.0
+compatibility: Linux, Python 3.11 or later; TAO data-services for SigLIP embeddings; CUDA and a prepared local Cosmos3-Nano Qwen3-VL checkpoint for the tool loop.
+tags: [computer-vision, in-context-learning, retrieval, siglip, cosmos]
 metadata:
-  version: "0.2.1"
+  version: "0.3.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash Write
 ---
@@ -17,17 +19,22 @@ a rationale, run its complete Proxy evaluation, then reconsider. Do not plan
 a grid or preselect all candidates. Never use Benchmark feedback to choose a
 policy. An exhausted budget with no completed candidate is incomplete.
 
-For an explicit **Simple harness** request, use the separately versioned
-[Simple harness contract](references/simple-harness.md) and
-`scripts/simple_harness.py`. The application selects this route without
-starting DEFT or the adaptive policy search. A fixed 8-class × 4-example
-grid initializes the context; Cosmos chooses optional `get_class_examples`
-and `search_similar_examples` calls, sees their returned images, and decides
-again. No Astra agent chooses the tools on Cosmos's behalf. The runner uses
-the pinned, externally supplied Maxwell source; it does not vendor that code.
-Keep this path distinct from the one-call SigLIP toolset below.
+For an explicit **Simple harness** request on user data, use
+`simple-harness-siglip-v1` and the [packaged quick start](references/packaged-simple-harness.md).
+`scripts/simple_harness_runtime.py` ships the grid, example/search tools and
+bounded dialogue. It consumes embeddings from `tao-generate-image-embeddings`;
+no Maxwell checkout or frozen THT assets are required. Classes, reference pool,
+task and model are supplied by the user. Cosmos chooses optional tools,
+receives their actual images in later turns, and chooses when to answer.
+The application routes this without DEFT, SFT, AnomalyGen or Astra tool selection.
+This SigLIP profile is a new protocol, not the historical C-RADIO reproduction
+and not the one-call SigLIP toolset below. Do not assign it an old score.
 
-For requested repeated search or progressive exploration, opt into
+For explicitly requested historical THT reproduction, retain
+`scripts/simple_harness.py` and the [native contract](references/simple-harness.md).
+Only those legacy profiles require the separate pinned source and THT assets.
+
+For historical-profile repeated search or progressive exploration, opt into
 `simple-harness-grid32-explore-cap128-v1`. This is a TAO prompt extension,
 not a change to the native reproduction defaults. Cosmos decides whether
 ambiguity warrants another search page or more class examples. Run

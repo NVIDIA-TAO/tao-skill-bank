@@ -7,7 +7,7 @@ tags: [computer-vision, aoi, deft, in-context-learning, anomaly-generation]
 allowed-tools: Read, Bash, Write
 metadata:
   author: NVIDIA Corporation
-  version: "0.2.1"
+  version: "0.3.0"
 ---
 
 # Cosmos3 AOI with ICL
@@ -22,12 +22,18 @@ and the Docker platform skill before execution.
 ## Route the task explicitly
 
 - Simple harness / Cosmos agentic classification: select the explicit
-  inference-only `simple-harness-grid32-tools-guidance-native4096` profile.
+  inference-only `simple-harness-siglip-v1` profile for user data. It uses
+  the packaged runtime and TAO SigLIP embeddings, with configurable classes
+  and references; no private source checkout or frozen THT asset is required.
   Read [Simple harness](references/simple-harness.md) and use
   `scripts/simple_harness.py`. Cosmos owns every per-query tool decision;
   the runner executes its requests and returns images into the same dialogue.
   This route skips DEFT, SFT and AnomalyGen. It is a separate experiment, not
   a replacement for frozen C/E/H or their existing scores.
+- Historical THT reproduction: explicitly select
+  `simple-harness-grid32-tools-guidance-native4096` and supply its external
+  pinned source and assets. Do not substitute SigLIP under that profile name
+  or present a previous C-RADIO score as a new packaged-runtime result.
 - Progressive exploration / repeated search: explicitly select
   `simple-harness-grid32-explore-cap128-v1`. It appends evidence-gathering
   guidance while retaining Cosmos as the decision maker, the native tools,

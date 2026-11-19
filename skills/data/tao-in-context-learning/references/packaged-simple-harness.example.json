@@ -1,0 +1,21 @@
+{
+  "schema": "tao-simple-harness/1",
+  "profile": "simple-harness-siglip-v1",
+  "classes": ["Normal", "Scratch", "Missing component", "Bridge"],
+  "task": "Classify the visible manufacturing defect in the query image.",
+  "image_root": "/work/input/images",
+  "references": "/work/input/references.jsonl",
+  "queries": "/work/input/queries.jsonl",
+  "query_split": "validation",
+  "model": {"path": "/models/Cosmos3-Nano-VLM"},
+  "siglip_model": "/models/siglip-base-patch16-224",
+  "staging": "/work/staging/simple-harness",
+  "output": "/work/results/simple-harness",
+  "protocol": {
+    "examples_per_class": 4,
+    "tool_examples_per_class": 4,
+    "max_tool_rounds": 10,
+    "max_new_tokens": 4096,
+    "seed": 0
+  }
+}

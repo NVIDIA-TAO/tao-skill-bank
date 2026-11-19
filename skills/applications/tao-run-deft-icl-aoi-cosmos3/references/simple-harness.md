@@ -3,8 +3,28 @@
 Use this route when the user asks for multi-turn Cosmos tool use, the
 grid + tools + guidance flow, or an inference-only experiment without DEFT.
 It does not call `suite.py`, training, generation or an Astra policy agent.
-Resolve the model as usual; the native local backend loads the configured
+Resolve the model as usual; the local backend loads the configured
 Cosmos3-Nano checkpoint with `Qwen3VLForConditionalGeneration`.
+
+## Installation scope
+
+**For user data, use `simple-harness-siglip-v1`.** The runtime and tools ship in
+this bank. Follow the [packaged quick start](../../../data/tao-in-context-learning/references/packaged-simple-harness.md)
+to supply your classes, references, label-free queries, local model and SigLIP
+snapshot. Generate embeddings with the existing TAO embedding skill, then use
+the application preflight/run/status commands below. No Maxwell checkout or
+fixed THT assets are needed. The supplied example works with arbitrary class
+names; an eight-class task with four references per class creates a 32-image grid.
+
+The remainder of this document describes the **historical native profiles**.
+The `1711959a40f89cbf4072ea343de318a204903dfd` pin belongs to the separate
+internal [Maxwell AOI harness repository](https://gitlab-master.nvidia.com/maxwellt/aoi_harness),
+not this skill bank. This branch provides the adapter, not the `aoi_harness`
+package or the frozen THT experiment assets. Follow the
+[source acquisition and setup requirements](../../../data/tao-in-context-learning/references/simple-harness.md#external-dependency-and-supported-setup)
+before historical-profile preflight. These native profiles are not general
+installations for a new dataset; use the packaged profile instead of changing
+the atlas/labels/cache under a historical profile name.
 
 ## Division of work
 
