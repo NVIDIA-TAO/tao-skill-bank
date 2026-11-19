@@ -25,8 +25,10 @@ from typing import Any
 from tao_slurm_ssh import ssh_command
 
 
+# The bank this script ships in, so it works from a clone or any plugin install
+# without setup. $TAO_SKILL_BANK_PATH overrides it when the caller means another bank.
 DEFAULT_SKILL_BANK = Path(
-    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")
+    os.environ.get("TAO_SKILL_BANK_PATH") or Path(__file__).resolve().parents[1]
 )
 REMOTE_SCHEMES = ("s3://", "azure://", "gs://", "http://", "https://")
 DEFAULT_GPU_SMOKE_IMAGE = os.environ.get("TAO_GPU_SMOKE_IMAGE", "ubuntu:22.04")

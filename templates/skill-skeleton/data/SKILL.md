@@ -58,7 +58,7 @@ for label in bridge tombstone shift; do
 done
 ```
 
-See `tao-skill-bank:tao-run-on-docker` for docker conventions (when containerized).
+See `nvidia-tao-toolkit:tao-run-on-docker` for docker conventions (when containerized).
 
 ## Inputs
 
