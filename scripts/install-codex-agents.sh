@@ -84,10 +84,23 @@ marketplace_registered() {
 for i in "${!PLUGIN_NAMES[@]}"; do
   codex plugin remove "${PLUGIN_NAMES[$i]}@${MARKETPLACE_NAMES[$i]}" >/dev/null 2>&1 || true
 done
+#
+# A clone registered by path is listed under the name its manifest carries now,
+# but Codex removes a marketplace by the name it was registered under. A clone
+# that was updated across the rename is listed as one generation and configured
+# as the other, so try the listed name first and then the other generation.
 for name in "${MARKETPLACE_NAMES[@]}"; do
   if marketplace_registered "$name"; then
     log "Marketplace '$name' already registered — re-pointing it."
-    codex plugin marketplace remove "$name"
+    removed=""
+    for candidate in "$name" "${MARKETPLACE_NAMES[@]}"; do
+      if codex plugin marketplace remove "$candidate" 2>/dev/null; then
+        removed="$candidate"
+        break
+      fi
+    done
+    [[ -n "$removed" ]] \
+      || die "could not remove the registered marketplace '$name'. Remove it with 'codex plugin marketplace remove <name>' and run this script again."
   fi
 done
 

@@ -8,6 +8,7 @@
 - Bumping the AutoML wheel
 - Adding a new image
 - When to use absolute paths instead of keys
+- Plugin manifests
 - Bumping the documented release pin
 - Related: Python wheel install matrix
 
@@ -201,9 +202,14 @@ tags cut before this pin existed).
 
 ```bash
 # find every pin to bump (the packaged installer copy is easy to miss)
-grep -rn "7\.3\.1" README.md scripts/install-codex-agents.sh \
+grep -n -E 'tao-skill-bank@[0-9]|latest release (build|tag)[^(]*\(?`[0-9]|^DEFAULT_MARKETPLACE_REF=' \
+  README.md scripts/install-codex-agents.sh \
   skills/core/tao-setup/scripts/install-codex-agents.sh
 ```
+
+The same files also name release versions where they say which release ships
+which plugin name ("`7.3.1` and later", "`7.3.0` and earlier"). Those are not
+pins and stay as they are.
 
 `scripts/tests/test_install_codex_agents.py` enforces both halves of this: the
 packaged copy must match the top-level one byte for byte, and the tag in
