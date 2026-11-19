@@ -14,6 +14,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_NAME = "nvidia-tao-toolkit"
+# The last release tag that ships the plugin under its old names.
+LAST_TAG_WITH_OLD_NAMES = (7, 3, 1)
 # Every file that carries the plugin version; they must always agree.
 VERSIONED_MANIFESTS = (
     ".claude-plugin/plugin.json",
@@ -53,7 +55,7 @@ def test_default_branch_publishes_7_3_images_and_new_plugin_version():
     version = next(iter(versions.values()))
     assert re.fullmatch(r"\d+\.\d+\.\d+", version), version
     assert tuple(int(part) for part in version.split(".")) > (0, 1, 16), (
-        "0.1.16 shipped with TAO 7.3.0; later content needs a newer plugin version"
+        "0.1.16 shipped with TAO 7.3.0 and 7.3.1; later content needs a newer plugin version"
     )
 
 
@@ -273,7 +275,7 @@ def test_cursor_manifest_lists_every_skill_on_disk():
 def test_readme_install_commands_name_what_the_pinned_tag_ships():
     """The README install commands run against the pinned tag, not against main.
 
-    ``7.3.0`` is the last tag that ships the old plugin names. A pin bump that
+    ``7.3.1`` is the last tag that ships the old plugin names. A pin bump that
     changes only the tag leaves commands that fail against the new release.
     """
     readme = (REPO_ROOT / "README.md").read_text()
@@ -283,7 +285,8 @@ def test_readme_install_commands_name_what_the_pinned_tag_ships():
     claude_install = re.search(r"^/plugin install (\S+)$", readme, re.MULTILINE).group(1)
     codex_install = re.search(r"^codex plugin add (\S+)", readme, re.MULTILINE).group(1)
 
-    if pinned == "7.3.0":
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned), pinned
+    if tuple(int(part) for part in pinned.split(".")) <= LAST_TAG_WITH_OLD_NAMES:
         expected = ("tao-skills@tao-skill-bank", "tao-skill-bank@tao-local-plugins")
     else:
         expected = (f"{PLUGIN_NAME}@tao-skill-bank", f"{PLUGIN_NAME}@tao-skill-bank")

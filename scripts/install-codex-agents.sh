@@ -6,10 +6,10 @@
 #
 # What it does:
 #   1. Registers the tao-skill-bank marketplace with the Codex CLI.
-#   2. Installs the `nvidia-tao-toolkit` plugin (skills surface). Releases through 7.3.0
+#   2. Installs the `nvidia-tao-toolkit` plugin (skills surface). Releases through 7.3.1
 #      ship it as `tao-skill-bank`; the script installs whichever name the
 #      chosen release offers and removes the other one if it is installed.
-#      Releases after 7.3.0 need Codex CLI 0.142.0 or newer.
+#      Releases after 7.3.1 need Codex CLI 0.142.0 or newer.
 #   3. Copies AGENTS.md to ~/.codex/AGENTS.md so the TAO identity loads in
 #      every Codex session, not only when codex is launched from a clone.
 #      (Codex's AGENTS.md discovery walks the project tree from the git root —
@@ -27,20 +27,20 @@
 set -euo pipefail
 
 # Latest release tag — keep in sync with the pins in README.md on every release.
-DEFAULT_MARKETPLACE_REF="7.3.0"
+DEFAULT_MARKETPLACE_REF="7.3.1"
 
 MARKETPLACE_SOURCE="${TAO_SKILL_BANK_MARKETPLACE:-https://github.com/NVIDIA-TAO/tao-skill-bank.git}"
 MARKETPLACE_REF="${TAO_SKILL_BANK_REF-$DEFAULT_MARKETPLACE_REF}"
 
 # Plugin and marketplace names, newest first. This script is fetched from `main`
 # but installs a release tag, so it cannot assume which names that tag ships:
-#   after 7.3.0      nvidia-tao-toolkit  in marketplace tao-skill-bank
-#   through 7.3.0    tao-skill-bank      in marketplace tao-local-plugins
+#   after 7.3.1      nvidia-tao-toolkit  in marketplace tao-skill-bank
+#   through 7.3.1    tao-skill-bank      in marketplace tao-local-plugins
 # (`name` in .codex-plugin/plugin.json and .agents/plugins/marketplace.json.)
 PLUGIN_NAMES=("nvidia-tao-toolkit" "tao-skill-bank")
 MARKETPLACE_NAMES=("tao-skill-bank" "tao-local-plugins")
 
-# Releases after 7.3.0 use the repository root as the plugin source. Codex CLIs
+# Releases after 7.3.1 use the repository root as the plugin source. Codex CLIs
 # older than this register the marketplace and then report that the plugin was
 # not found in it.
 MIN_CODEX_VERSION="0.142.0"
@@ -118,7 +118,7 @@ done
 if [[ -z "$PLUGIN_NAME" ]]; then
   printf '%s' "$ADD_ERRORS" >&2
   if codex_older_than "$MIN_CODEX_VERSION"; then
-    printf '[install-codex-agents] This Codex CLI is older than %s, which releases after 7.3.0 need. Upgrade Codex and run this script again.\n' \
+    printf '[install-codex-agents] This Codex CLI is older than %s, which releases after 7.3.1 need. Upgrade Codex and run this script again.\n' \
       "$MIN_CODEX_VERSION" >&2
   fi
   die "could not install the TAO plugin from ${MARKETPLACE_SOURCE}${MARKETPLACE_REF:+ (ref: ${MARKETPLACE_REF})}"
