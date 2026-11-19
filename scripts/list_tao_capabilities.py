@@ -17,8 +17,10 @@ import yaml
 from list_tao_models import build_all_models, build_automl_support
 
 
+# The bank this script ships in, so it works from a clone or any plugin install
+# without setup. $TAO_SKILL_BANK_PATH overrides it when the caller means another bank.
 DEFAULT_SKILL_BANK = Path(
-    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")
+    os.environ.get("TAO_SKILL_BANK_PATH") or Path(__file__).resolve().parents[1]
 )
 FLOW_ACTIONS = ("train", "evaluate", "inference", "export", "gen_trt_engine")
 
