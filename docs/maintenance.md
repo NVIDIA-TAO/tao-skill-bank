@@ -127,7 +127,7 @@ tags cut before this pin existed).
 
 ```bash
 # find every pin to bump (the packaged installer copy is easy to miss)
-grep -rn "7\.2\.0" README.md scripts/install-codex-agents.sh \
+grep -rn "7\.3\.1" README.md scripts/install-codex-agents.sh \
   skills/core/tao-setup/scripts/install-codex-agents.sh
 ```
 
