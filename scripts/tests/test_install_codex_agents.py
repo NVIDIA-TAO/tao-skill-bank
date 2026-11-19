@@ -154,7 +154,7 @@ def test_installer_installs_the_current_plugin_name_first(tmp_path):
 def test_installer_falls_back_to_the_name_older_releases_ship(tmp_path):
     """The script is served from main but installs a release tag.
 
-    Tags through 7.3.1 ship the plugin as ``tao-skill-bank`` in a marketplace
+    Tags through 7.3.0 ship the plugin as ``tao-skill-bank`` in a marketplace
     named ``tao-local-plugins``, so the current name is not found there.
     """
     result, calls = _run_installer(
@@ -181,7 +181,7 @@ def test_installer_reports_both_failures_when_no_name_installs(tmp_path):
 
 
 def test_installer_points_an_old_codex_cli_at_the_upgrade(tmp_path):
-    """Releases after 7.3.1 use the repository root as the plugin source.
+    """Releases after 7.3.0 use the repository root as the plugin source.
 
     Codex CLIs before 0.142.0 register such a marketplace and then find no
     plugin in it, which reads like a broken release unless the script says why.
@@ -217,7 +217,7 @@ def test_installer_clears_both_generations_before_installing(tmp_path):
 
 
 def test_installer_re_points_a_marketplace_registered_under_the_current_name(tmp_path):
-    """Every re-run after 7.3.1 finds ``tao-skill-bank`` already registered."""
+    """Every re-run after 7.3.0 finds ``tao-skill-bank`` already registered."""
     listing = (
         "MARKETPLACE     ROOT\n"
         "tao-skill-bank  /home/user/.codex/.tmp/marketplaces/tao-skill-bank\n"
