@@ -105,6 +105,10 @@ def test_skill_info_images_are_stamped_from_versions_yaml():
         for path in ROOT.rglob("*"):
             if path in allowed_image_files or not path.is_file():
                 continue
+            # plugins/ holds the generated, signed plugin package: copies of
+            # the files checked here, which cannot be edited in place.
+            if path.relative_to(ROOT).parts[0] == "plugins":
+                continue
             if path.suffix not in {".json", ".md", ".py", ".toml", ".yaml", ".yml"}:
                 continue
             if image in path.read_text(encoding="utf-8", errors="ignore"):

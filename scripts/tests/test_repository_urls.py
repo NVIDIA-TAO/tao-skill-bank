@@ -20,6 +20,10 @@ def test_consumers_use_canonical_tao_skill_bank_name():
         ):
             continue
         relative = path.relative_to(REPO_ROOT)
+        # plugins/ holds the generated, signed plugin package: copies of the
+        # files checked here, which cannot be edited in place.
+        if relative.parts[0] == "plugins":
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):

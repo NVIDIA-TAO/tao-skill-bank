@@ -361,6 +361,7 @@ tao-skill-bank/
 │   ├── validate-skills.sh            # CI validator
 │   ├── verify-standalone.sh          # end-to-end smoke (docker-only path)
 │   ├── install-codex-agents.sh       # one-shot Codex install: marketplace + plugin + AGENTS.md
+│   ├── build_plugin_package.py       # generates plugins/nvidia-tao-toolkit/, the flat package NVIDIA's plugin verification signs
 │   └── migrate-to-version-keys.py    # one-shot: literal nvcr.io paths → versions.yaml keys
 └── skills/
     ├── applications/                 # end-to-end workflow skills
