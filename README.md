@@ -350,6 +350,7 @@ tao-skill-bank/
 │   ├── marketplace.json              # Cursor marketplace entry
 │   └── plugin.json                   # Cursor plugin manifest (lists every skill path)
 ├── versions.yaml                     # single source of truth: container images + AutoML wheel versions
+├── evals/evals.json                  # plugin-level evaluation suite (replaces the per-skill suites when the plugin is evaluated)
 ├── README.md
 ├── docs/
 │   ├── skill-requirements.md         # must-follow rules: naming + signing gates (read first)

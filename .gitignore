@@ -17,3 +17,6 @@ __pycache__/
 tao_session_state.db*
 tao_session.db*
 *.local.env
+
+# Evaluation output of the plugin at the repository root; it is never committed here
+/.eval-results/
