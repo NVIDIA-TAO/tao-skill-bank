@@ -125,10 +125,14 @@ echo
 # Card packs run application workflows as fresh per-stage sessions (74-91%
 # cheaper than in-conversation execution). This block injects the routing
 # rule so every session sees it before executing a covered workflow.
-if [[ -d "${TAO_ROOT}/skills/applications" ]]; then
+# A card pack is the cards/ folder of a skill. Skills sit two levels below
+# skills/ in the repository and one level below it in the generated plugin
+# package, so both depths are scanned and only skill folders count.
+if [[ -d "${TAO_ROOT}/skills" ]]; then
   _tao_packs=""
-  for _p in "${TAO_ROOT}"/skills/applications/*/cards; do
-    [[ -d "$_p" ]] && _tao_packs="${_tao_packs} $(basename "$(dirname "$_p")")"
+  for _p in "${TAO_ROOT}"/skills/*/cards "${TAO_ROOT}"/skills/*/*/cards; do
+    [[ -d "$_p" && -f "$(dirname "$_p")/SKILL.md" ]] \
+      && _tao_packs="${_tao_packs} $(basename "$(dirname "$_p")")"
   done
   if [[ -n "${_tao_packs// /}" ]]; then
     echo "## Token-efficient execution"

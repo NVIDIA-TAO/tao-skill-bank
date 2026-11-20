@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from list_tao_models import build_all_models, build_automl_support
+from skill_layers import layer_skill_dirs
 
 
 # The bank this script ships in, so it works from a clone or any plugin install
@@ -39,13 +40,21 @@ def _read_frontmatter(skill_md: Path) -> dict[str, Any]:
     return yaml.safe_load(parts[1]) or {}
 
 
+def _layer_skill_files(skill_bank: Path, layer: str, prefix: str = "") -> list[Path]:
+    """SKILL.md of every skill in ``layer`` whose directory name starts with ``prefix``."""
+    return [
+        path / "SKILL.md"
+        for path in layer_skill_dirs(skill_bank, layer)
+        if path.name.startswith(prefix) and (path / "SKILL.md").is_file()
+    ]
+
+
 def scan_platforms(skill_bank: Path) -> list[dict[str, Any]]:
     """Discover execution platforms by scanning installed platform skills
     (skills/platform/tao-run-on-*/SKILL.md) instead of a central manifest. Any
     platform skill present in the tree self-registers — no registration step."""
-    root = skill_bank.expanduser() / "skills" / "platform"
     platforms = []
-    for skill_md in sorted(root.glob("tao-run-on-*/SKILL.md")):
+    for skill_md in _layer_skill_files(skill_bank, "platform", prefix="tao-run-on-"):
         short = skill_md.parent.name[len("tao-run-on-"):]
         desc = str(_read_frontmatter(skill_md).get("description", "")).strip()
         desc = desc.split(". ")[0].rstrip(".") if desc else ""
@@ -191,10 +200,9 @@ def skill_capability_record(skill_bank: Path, skill_md: Path) -> dict[str, Any]:
 
 def application_capabilities(skill_bank: Path) -> list[dict[str, Any]]:
     """Read top-level application skills and turn them into capability records."""
-    application_root = skill_bank.expanduser() / "skills" / "applications"
     records: list[dict[str, Any]] = []
 
-    for skill_md in sorted(application_root.glob("*/SKILL.md")):
+    for skill_md in _layer_skill_files(skill_bank, "applications"):
         record = skill_capability_record(skill_bank, skill_md)
         record["files"] = sorted(
             item.name for item in skill_md.parent.iterdir() if item.is_file()
@@ -205,10 +213,9 @@ def application_capabilities(skill_bank: Path) -> list[dict[str, Any]]:
 
 def data_capabilities(skill_bank: Path) -> list[dict[str, Any]]:
     """Read data skills and turn them into capability records."""
-    data_root = skill_bank.expanduser() / "skills" / "data"
     records: list[dict[str, Any]] = []
 
-    for skill_md in sorted(data_root.glob("*/SKILL.md")):
+    for skill_md in _layer_skill_files(skill_bank, "data"):
         records.append(skill_capability_record(skill_bank, skill_md))
     return records
 

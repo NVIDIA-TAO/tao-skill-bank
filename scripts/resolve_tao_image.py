@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 
 from resolve_tao_model import backend_contracts, select_implementation_backend
+from skill_layers import layer_root, layer_skill_dirs, skill_dir
 
 # The bank this script ships in, so it works from a clone or any plugin install
 # without setup. $TAO_SKILL_BANK_PATH overrides it when the caller means another bank.
@@ -89,9 +90,9 @@ def load_model_metadata(
     requested_model: str,
 ) -> tuple[str, Path, dict[str, Any]]:
     """Load model metadata by skill directory or network_arch alias."""
-    models_root = skill_bank.expanduser() / "skills" / "models"
+    models_root = layer_root(skill_bank, "models")
     requested = requested_model.strip()
-    exact_path = models_root / requested / "references" / "skill_info.yaml"
+    exact_path = skill_dir(skill_bank, "models", requested) / "references" / "skill_info.yaml"
     if exact_path.exists():
         return requested, exact_path, load_yaml(exact_path)
 
@@ -100,7 +101,7 @@ def load_model_metadata(
 
     matches: list[tuple[str, Path, dict[str, Any]]] = []
     requested_casefold = requested.casefold()
-    for candidate in sorted(models_root.iterdir()):
+    for candidate in layer_skill_dirs(skill_bank, "models"):
         metadata_path = candidate / "references" / "skill_info.yaml"
         if not metadata_path.exists():
             continue
@@ -131,7 +132,7 @@ def load_model_metadata(
         )
 
     available = []
-    for candidate in sorted(models_root.iterdir()):
+    for candidate in layer_skill_dirs(skill_bank, "models"):
         metadata_path = candidate / "references" / "skill_info.yaml"
         if not metadata_path.exists():
             continue
@@ -155,10 +156,7 @@ def load_application_metadata(
     """Load one explicitly named packaged application contract."""
     application = requested_application.strip()
     metadata_path = (
-        skill_bank.expanduser()
-        / "skills"
-        / "applications"
-        / application
+        skill_dir(skill_bank, "applications", application)
         / "references"
         / "skill_info.yaml"
     )

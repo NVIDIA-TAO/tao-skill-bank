@@ -15,6 +15,8 @@ from typing import Any
 
 import yaml
 
+from skill_layers import layer_root, layer_skill_dirs
+
 
 # The bank this script ships in, so it works from a clone or any plugin install
 # without setup. $TAO_SKILL_BANK_PATH overrides it when the caller means another bank.
@@ -190,7 +192,8 @@ def resolve_model(
     backend: str = "auto",
     workload: str = "",
 ) -> dict[str, Any] | None:
-    models_root = skill_bank.expanduser().resolve() / "skills" / "models"
+    skill_bank = skill_bank.expanduser().resolve()
+    models_root = layer_root(skill_bank, "models")
     if not models_root.is_dir():
         raise FileNotFoundError(f"Model skills directory not found: {models_root}")
 
@@ -200,7 +203,7 @@ def resolve_model(
     requested_casefold = requested.casefold()
     matches: list[dict[str, Any]] = []
 
-    for candidate in sorted(models_root.iterdir()):
+    for candidate in layer_skill_dirs(skill_bank, "models"):
         metadata_path = candidate / "references" / "skill_info.yaml"
         if not metadata_path.exists():
             continue
