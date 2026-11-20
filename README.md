@@ -61,7 +61,7 @@ That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundle
 
 ### Codex
 
-Codex setup has **two independent pieces** — the plugin (which surfaces the skills to Codex) and `AGENTS.md` (which loads the agent identity). You need both for parity with Claude Code.
+Codex setup has **two independent pieces** — the plugin (which surfaces the skills to Codex) and the agent identity, which you add to the `AGENTS.md` of a project you work in. You need both for parity with Claude Code; the second is opt-in and changes only that one file.
 
 Release `7.3.1` and later, and `main`, need **Codex CLI 0.142.0 or newer** (check with `codex --version`). An older CLI registers the marketplace and then reports that the plugin was not found in it.
 
@@ -79,9 +79,12 @@ was cut.
 …or, if you've already cloned or extracted the repo from a zip, run
 `scripts/install-codex-agents.sh` from that directory. The script registers the
 marketplace **at the latest release tag** (`7.3.1`), installs the TAO Skill Bank
-plugin, and copies `AGENTS.md` to `~/.codex/AGENTS.md` so the TAO identity loads
-in every Codex session. It's idempotent and backs up any existing
-`~/.codex/AGENTS.md` before overwriting. Override the source with
+plugin, and prints the command that adds the agent identity to a project (step 2
+of the manual steps below), or says that the release it installed does not ship
+the helper for that yet. It's idempotent. Apart from what `codex plugin`
+records there for the marketplace and the plugin, it writes nothing into
+`~/.codex`, and it never creates or changes `~/.codex/AGENTS.md`. Override the
+source with
 `TAO_SKILL_BANK_MARKETPLACE=…` and `TAO_SKILL_BANK_REF=…` to use a fork, a
 different tag or branch (`TAO_SKILL_BANK_REF=main` for unreleased work), or a
 local absolute path:
@@ -91,6 +94,25 @@ cd /absolute/path/to/tao-skill-bank
 TAO_SKILL_BANK_MARKETPLACE=/absolute/path/to/tao-skill-bank \
   scripts/install-codex-agents.sh
 ```
+
+Add `--project /path/to/your/project` to have the script add the identity block
+to that project's `AGENTS.md` once the plugin is installed (through the pipe:
+`… | bash -s -- --project /path/to/your/project`). That needs `python3` and the
+helper `scripts/tao_agent_identity.py`, which the script takes from the release
+it installed or from the clone it runs from; when neither has it, the script
+says so and leaves the project alone.
+
+Earlier versions of the script copied the identity over `~/.codex/AGENTS.md`,
+where it replaced your own global instructions and applied to every Codex
+session, and kept the file it replaced as `~/.codex/AGENTS.md.bak.<timestamp>`.
+The script no longer touches those files. When it finds such a copy or such
+backups, it prints one line that says what is there and what to do. A backup
+may hold the identity of an earlier release instead of a file of yours, because
+those versions backed up every file that differed from the identity they
+installed. The line therefore offers a backup for restoring (`mv`) only when
+that backup does not start like the identity. When every backup starts like it,
+the line says that they are older copies that can be deleted, and for a copy
+that is still in place it gives the command that deletes it (`rm`).
 
 #### Manual steps
 
@@ -112,12 +134,25 @@ codex plugin marketplace add /absolute/path/to/tao-skill-bank
 codex plugin add nvidia-tao-toolkit@tao-skill-bank   # tao-skill-bank@tao-local-plugins for a 7.3.0 or earlier copy
 ```
 
-**2. Load the agent identity (`AGENTS.md`).** The plugin install does **not** auto-load [`AGENTS.md`](AGENTS.md) — Codex's `AGENTS.md` discovery walks down from the project root, not into the plugin cache (see [openai/codex#16430](https://github.com/openai/codex/issues/16430) for why plugin-bundled `SessionStart` hooks don't fix this yet). Pick one:
+**2. Load the agent identity (`AGENTS.md`).** The plugin install does **not** load [`AGENTS.md`](AGENTS.md): Codex reads `AGENTS.md` from the project you work in (from the project root down to the working directory) and from `~/.codex`, not from an installed plugin. Pick one:
 
-- **Per-project**: `git clone` this repo and launch `codex` from inside the clone. Codex auto-loads `AGENTS.md` from the project root per the [agents.md](https://agents.md/) cross-runtime spec.
-- **Globally** (one-time copy): `cp ~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/AGENTS.md ~/.codex/AGENTS.md`. The identity then loads in every Codex session, anywhere.
+- **Inside a clone**: `git clone` this repo and launch `codex` from inside the clone. Codex loads `AGENTS.md` from the project root per the [agents.md](https://agents.md/) cross-runtime spec.
+- **In your own project** (a block in the project's `AGENTS.md`): run the helper that ships with the plugin from inside the project.
 
-Once Codex starts honoring plugin-bundled hooks, the identity will install automatically alongside the plugin — until then, this manual step is needed.
+  ```bash
+  cd /path/to/your/project
+  python3 ~/.codex/plugins/cache/tao-skill-bank/nvidia-tao-toolkit/<version>/scripts/tao_agent_identity.py add
+  ```
+
+  A release that predates the helper has no such file; run `python3 scripts/tao_agent_identity.py add --project /path/to/your/project` from a clone of `main` instead.
+
+  - **What it does.** It writes the identity into `AGENTS.md` at the top of the git work tree (in the current directory when there is none; `--project DIR` and `--file PATH` name another target), between a `<!-- BEGIN nvidia-tao-toolkit agent identity … -->` line and an `<!-- END nvidia-tao-toolkit agent identity -->` line. A missing file is created with only the block. An existing file gets the block after its content and one blank line, and every byte that was there stays; nothing is copied over a file and no backup is made. `--dry-run` prints what would change and writes nothing. The helper warns when the file grows past the 32 KiB of project instructions that Codex reads by default (`project_doc_max_bytes`), because Codex drops what follows.
+  - **Update.** Run `add` again, for example after you upgrade the plugin: the block is replaced in place and nothing outside the markers changes. `status` says whether the block is there and whether it is the current identity.
+  - **Remove.** `remove` in place of `add` deletes the block and the blank line before it. Text you wrote before or after the block stays, and a file that held nothing else is deleted.
+  - **What it refuses.** The helper writes nothing when it cannot tell which text is yours: a read-only file, marker lines that do not make exactly one block or that stand inside a fenced code block (an example you wrote), a UTF-16 file, and a file that is itself a copy of the identity.
+  - **Before you add it.** The block becomes part of the project's `AGENTS.md`. When that file is tracked in git, the block shows up in the diff and reaches every collaborator and every agent that reads the file. A project that also feeds `AGENTS.md` to Claude Code (a `CLAUDE.md` that imports it, or a link between the two files) gives Claude Code the identity twice, once from the plugin's hook and once from the file.
+
+Cursor reads the same project `AGENTS.md`, so the one block serves Codex and Cursor. Claude Code needs none of this: the plugin's `SessionStart` hook supplies the identity there, and Claude Code does not read `AGENTS.md`.
 
 ### Credentials
 
@@ -236,7 +271,7 @@ and the plugin name is the one in `.codex-plugin/plugin.json`.
 Re-running `scripts/install-codex-agents.sh` does all of these steps for you,
 including the cleanup.
 
-If you copied `AGENTS.md` to `~/.codex/AGENTS.md`, re-copy from the upgraded plugin cache to pick up identity changes.
+If you added the identity block to a project's `AGENTS.md`, run `tao_agent_identity.py add` from the upgraded plugin again in that project to pick up identity changes; it replaces the block in place.
 
 ## Getting started (5 minutes)
 
@@ -360,7 +395,8 @@ tao-skill-bank/
 ├── scripts/
 │   ├── validate-skills.sh            # CI validator
 │   ├── verify-standalone.sh          # end-to-end smoke (docker-only path)
-│   ├── install-codex-agents.sh       # one-shot Codex install: marketplace + plugin + AGENTS.md
+│   ├── install-codex-agents.sh       # one-shot Codex install: marketplace + plugin; says how to add the identity to a project
+│   ├── tao_agent_identity.py         # adds, updates, removes the identity block in a project's AGENTS.md (Codex, Cursor)
 │   ├── build_plugin_package.py       # generates plugins/nvidia-tao-toolkit/, the flat package NVIDIA's plugin verification signs
 │   └── migrate-to-version-keys.py    # one-shot: literal nvcr.io paths → versions.yaml keys
 └── skills/

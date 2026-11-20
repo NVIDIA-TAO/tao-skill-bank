@@ -156,12 +156,11 @@ kit's authoring prompt compiles packs for other workflows.
   (`tao-run-automl`), which uses the `nvidia-tao-automl` wheel and its
   transitive SDK.
 
-## Optional: Codex agent identity
+## Optional: agent identity for Codex and Cursor
 
-For Codex sessions, `scripts/install-codex-agents.sh` registers the TAO skill
-marketplace, installs the plugin, and copies the TAO agent identity to
-`~/.codex/AGENTS.md` so it loads in every session:
+With user approval, add the TAO identity to the project's `AGENTS.md` as a
+marked block (`add` again updates it, `remove` deletes it). In the project:
 
 ```bash
-bash scripts/install-codex-agents.sh
+python3 "${TAO_SKILL_BANK_PATH:?}/scripts/tao_agent_identity.py" add
 ```

@@ -114,7 +114,8 @@ TEXT_SUFFIXES = (
 # scripts/install-codex-agents.sh stays out as well: it installs the repository
 # root as a plugin, and next to this package Codex would list every skill twice.
 SUPPORT_FILES = {
-    "AGENTS.md": "agent guidance; the session-start hook prints it",
+    "AGENTS.md": "agent guidance; the session-start hook prints it, and "
+                 "scripts/tao_agent_identity.py adds it to a project",
     "LICENSE": "licence of everything in the package",
     "versions.yaml": "image and wheel pins that skills and scripts/resolve_*.py read",
     EVAL_SUITE: "plugin-level evaluation suite",
@@ -130,6 +131,7 @@ SUPPORT_FILES = {
     "scripts/resolve_tao_model.py": "model alias resolver; imported by resolve_tao_image.py",
     "scripts/resolve_versions_key.py": "versions.yaml key resolver of data and application skills",
     "scripts/skill_layers.py": "layer lookup the listing and resolver scripts import",
+    "scripts/tao_agent_identity.py": "identity block in a project's AGENTS.md; tao-setup runs it",
     "scripts/tao_job_record.py": "job record of the four-verb launch contract",
     "scripts/tao_slurm_ssh.py": "SSH helper the launch preflight and tao-run-deft-pas import",
     "templates/k8s/": "job templates tao-run-on-kubernetes renders",
@@ -278,8 +280,8 @@ _BANK_ROOT = "Run from the bank root, the plugin folder that `$TAO_SKILL_BANK_PA
 # Each must match exactly once. They cover what no path rewrite can see: code that
 # counts directory levels up from its own file, a "<layer>/<skill>" fragment joined
 # onto the skills folder, prose that names a bare layer folder, and instructions
-# that are only true of the repository (where the bank is, the Codex installer,
-# tests and evaluation configs the package leaves out).
+# that are only true of the repository (where the bank and its identity helper
+# are, tests and evaluation configs the package leaves out).
 PACKAGE_EDITS = (
     # shell: climb from a skill sub-folder to the package root, one level fewer
     (_APPS + "tao-run-automl/cards/driver.sh",
@@ -528,31 +530,38 @@ PACKAGE_EDITS = (
     ("skills/core/tao-token-efficient-execution/scripts/install.sh",
      'for pack in "$BANK"/skills/applications/*/cards; do',
      'for pack in "$BANK"/skills/*/cards; do'),
-    # Codex: the package ships the identity file and no installer
+    # Codex and Cursor: the helper that adds the identity to a project's AGENTS.md is
+    # in the plugin folder, and no hook exports TAO_SKILL_BANK_PATH in Codex, so the
+    # command finds the helper from the folder of the skill, as the bank check does.
     ("skills/core/tao-setup/SKILL.md",
-     "For Codex sessions, `scripts/install-codex-agents.sh` registers the TAO skill\n"
-     "marketplace, installs the plugin, and copies the TAO agent identity to\n"
-     "`~/.codex/AGENTS.md` so it loads in every session:\n\n"
-     "```bash\nbash scripts/install-codex-agents.sh\n```\n",
-     "The session-start hook of this plugin does not load the TAO agent identity in\n"
-     "Codex sessions. The identity ships as `AGENTS.md` at the root of the plugin\n"
-     "folder (`$TAO_SKILL_BANK_PATH` after the check in Quick Start; exports do not\n"
-     "persist between agent tool calls, so set it again in the same call). To load\n"
-     "it in every Codex session, copy it to the Codex home with user approval; a\n"
-     "different file that is already there is backed up first:\n\n"
+     "With user approval, add the TAO identity to the project's `AGENTS.md` as a\n"
+     "marked block (`add` again updates it, `remove` deletes it). In the project:\n\n"
      "```bash\n"
-     ': "${TAO_SKILL_BANK_PATH:?set it to the plugin folder first, see Quick Start}"\n'
-     'codex_home="${CODEX_HOME:-$HOME/.codex}"\n'
-     'mkdir -p "$codex_home"\n'
-     'if [ -f "$codex_home/AGENTS.md" ] && ! cmp -s "$TAO_SKILL_BANK_PATH/AGENTS.md" '
-     '"$codex_home/AGENTS.md"; then\n'
-     '  cp "$codex_home/AGENTS.md" "$codex_home/AGENTS.md.bak.$(date +%Y%m%d%H%M%S)"\n'
-     "fi\n"
-     'cp "$TAO_SKILL_BANK_PATH/AGENTS.md" "$codex_home/AGENTS.md"\n'
+     'python3 "${TAO_SKILL_BANK_PATH:?}/scripts/tao_agent_identity.py" add\n'
+     "```\n",
+     "In Claude Code the session-start hook of this plugin supplies the TAO agent\n"
+     "identity, and nothing more is needed. Codex and Cursor do not load the\n"
+     "`AGENTS.md` at the root of the plugin folder; they read the `AGENTS.md` at the\n"
+     "root of the project the user works in. With user approval, add the identity\n"
+     "to that file as a marked block. The helper creates the file when it is\n"
+     "missing, leaves every other byte of an existing file alone, and never copies\n"
+     "over a file or makes a backup. Run it in the project. When\n"
+     "`TAO_SKILL_BANK_PATH` is not set (no session hook exported it, as in Codex),\n"
+     "replace `<this-skill-folder>` first, as in Quick Start:\n\n"
+     "```bash\n"
+     'skill_dir="<this-skill-folder>"   # the folder that holds this skill\'s SKILL.md\n'
+     'helper="${TAO_SKILL_BANK_PATH:-$skill_dir/../..}/scripts/tao_agent_identity.py"\n'
+     '[ -f "$helper" ] || { echo "No $helper. Set TAO_SKILL_BANK_PATH to the plugin folder '
+     'first, see Quick Start." >&2; exit 1; }\n'
+     'python3 "$helper" add\n'
      "```\n\n"
-     "Do not register another TAO marketplace or install another TAO plugin for\n"
-     "this. The skills are already installed, and a second copy of the plugin makes\n"
-     "Codex list every skill twice.\n"),
+     "`add` again updates the block in place, `status` reports it, and `remove`\n"
+     "deletes it; `--dry-run` shows what would change, and `--project DIR` names a\n"
+     "project other than the current one. Do not copy the identity over\n"
+     "`~/.codex/AGENTS.md` or any other file. Do not register another TAO\n"
+     "marketplace or install another TAO plugin for this either: the skills are\n"
+     "already installed, and a second copy of the plugin makes Codex list every\n"
+     "skill twice.\n"),
     # tests, fixtures and evaluation configs that the package leaves out
     (_APPS + "tao-run-deft-aoi-cosmos3/SKILL.md",
      "Requires the companion TAO skill-bank skills from `eval.config`, host Python",

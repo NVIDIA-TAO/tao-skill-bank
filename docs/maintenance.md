@@ -179,6 +179,22 @@ preview, and `AGENTS.md` alone is longer than that.
 `scripts/tests/test_session_start_hook.py` keeps each part under the limit; if
 `AGENTS.md` grows enough to break it, shorten the file or add a third part.
 
+Codex and Cursor do not load an `AGENTS.md` from an installed plugin; they read
+the one at the root of the project a session works in.
+`scripts/tao_agent_identity.py` adds the identity to that file as a block
+between two marker lines, updates the block in place, and removes it again
+without changing a byte outside the markers; `scripts/install-codex-agents.sh`
+prints that command, runs it for `--project <dir>`, and writes nothing into the
+Codex home. Nothing in this repository may copy `AGENTS.md` over a user's file:
+earlier installers did that to `~/.codex/AGENTS.md`, which replaced the user's
+own instructions and applied the identity to every Codex session. The marker
+prefixes in the helper (`BEGIN_PREFIX`, `END_PREFIX`) are a contract with files
+in users' projects, so do not change them;
+`scripts/tests/test_agent_identity.py` covers the block handling. The first
+line of `AGENTS.md` (its heading) is how the installer and the helper recognise
+a whole copy that an earlier installer left in a Codex home, or a backup of
+one; a new heading ends that recognition for the copies of earlier releases.
+
 ## Plugin package for verification
 
 NVIDIA's plugin verification evaluates, signs, and lists one self-contained
@@ -221,7 +237,8 @@ new one, so bump it as "Plugin manifests" describes.
   the user to run stays (`SKILL_FILES_KEPT`), and so does every `evals/` folder.
 - `scripts/install-codex-agents.sh`, both copies. It installs the repository
   root as a plugin, and next to this package Codex would list every skill
-  twice. The packaged `tao-setup` says how to load `AGENTS.md` instead.
+  twice. The packaged `tao-setup` runs `scripts/tao_agent_identity.py` from the
+  plugin folder instead, which adds the identity to a project's `AGENTS.md`.
 - What only the repository needs: docs, CI and marketplace files,
   `integrations/`, `scripts/tests/`, and helper scripts that no skill calls.
 

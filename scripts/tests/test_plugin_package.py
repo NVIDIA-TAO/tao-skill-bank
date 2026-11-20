@@ -177,6 +177,7 @@ def test_required_root_files_are_present(folder):
         "plugin.json", ".claude-plugin/plugin.json", ".cursor-plugin/plugin.json",
         ".codex-plugin/plugin.json", "evals/evals.json", "LICENSE", "AGENTS.md", "versions.yaml",
         "hooks/hooks.json", "hooks/session_start.sh", "scripts/skill_layers.py",
+        "scripts/tao_agent_identity.py",
         "catalog/schemas.manifest.json", "catalog/automl_support.json",
     ):
         assert (folder / relative).is_file(), relative
@@ -218,10 +219,17 @@ def test_codex_installer_is_not_shipped_and_no_shipped_file_names_it(folder):
     assert not list(folder.rglob("install-codex-agents.sh"))
     assert not [relative for relative, text in _shipped_texts(folder)
                 if "install-codex-agents" in text]
-    # What the installer did for the identity file, the setup skill now says in words.
+    # The identity and the helper that adds it to a project ship; the setup skill names
+    # the helper, and nothing shipped tells the reader to copy the identity over a file.
     assert (folder / "AGENTS.md").is_file()
+    helper = folder / "scripts" / "tao_agent_identity.py"
+    assert helper.read_bytes() == (REPO_ROOT / "scripts" / "tao_agent_identity.py").read_bytes()
+    assert helper.stat().st_mode & 0o777 == 0o755
     setup = _text(folder / "skills/tao-setup/SKILL.md")
-    assert "`AGENTS.md` at the root of the plugin" in setup
+    assert "/scripts/tao_agent_identity.py" in setup
+    for relative, text in _shipped_texts(folder):
+        assert not re.search(r"\bcp\b[^\n]*AGENTS\.md", text), relative
+        assert "AGENTS.md.bak" not in text, relative
 
 
 def test_every_listed_exception_still_applies(package, folder):
@@ -1057,32 +1065,89 @@ def test_capability_listing_says_where_the_bank_is_before_its_first_command(fold
     assert "${TAO_SKILL_BANK_PATH:-" in text[len(before):]
 
 
-def test_codex_identity_is_loaded_from_the_package_as_the_setup_skill_says(folder, tmp_path):
-    setup = _text(folder / "skills/tao-setup/SKILL.md")
-    section = setup.split("## Optional: Codex agent identity", 1)[1]
-    commands = re.search(r"```bash\n(.*?)```", section, re.S).group(1)
-    identity = (folder / "AGENTS.md").read_bytes()
-    codex_home = tmp_path / ".codex"
+IDENTITY_SECTION = "## Optional: agent identity for Codex and Cursor"
+BEGIN_MARKER = "<!-- BEGIN nvidia-tao-toolkit agent identity"
+END_MARKER = "<!-- END nvidia-tao-toolkit agent identity -->"
 
-    # Without the variable the block stops at its first line: nothing is copied from "/".
-    (tmp_path / "other").mkdir()
-    unset = _run(["bash", "-c", commands], tmp_path, HOME=tmp_path / "other")
-    assert unset.returncode != 0 and "set it to the plugin folder first" in unset.stderr
-    assert list((tmp_path / "other").iterdir()) == []
 
-    def install():
-        result = _run(["bash", "-c", commands], tmp_path, TAO_SKILL_BANK_PATH=folder, HOME=tmp_path)
-        assert result.returncode == 0, result.stderr
+def _identity_commands(setup):
+    """The commands of the identity section of a tao-setup SKILL.md."""
+    section = _text(setup).split(IDENTITY_SECTION, 1)[1]
+    return re.search(r"```bash\n(.*?)```", section, re.S).group(1)
 
-    install()
-    assert (codex_home / "AGENTS.md").read_bytes() == identity
-    install()
-    assert [path.name for path in codex_home.iterdir()] == ["AGENTS.md"]
-    (codex_home / "AGENTS.md").write_text("the user's own instructions\n", encoding="utf-8")
-    install()
-    backups = [path for path in codex_home.iterdir() if path.name.startswith("AGENTS.md.bak.")]
-    assert len(backups) == 1 and _text(backups[0]) == "the user's own instructions\n"
-    assert (codex_home / "AGENTS.md").read_bytes() == identity
+
+def test_repository_setup_skill_adds_the_identity_with_the_helper_of_the_bank(tmp_path):
+    """The section in the repository: one command, the bank from the variable Quick Start sets."""
+    commands = _identity_commands(REPO_ROOT / "skills/core/tao-setup/SKILL.md")
+    home, project = tmp_path / "home", tmp_path / "project"
+    home.mkdir()
+    project.mkdir()
+    unset = _run(["bash", "-c", commands], project, HOME=home)
+    assert unset.returncode != 0 and "TAO_SKILL_BANK_PATH" in unset.stderr
+    assert list(project.iterdir()) == []
+    added = _run(["bash", "-c", commands], project, HOME=home, TAO_SKILL_BANK_PATH=REPO_ROOT)
+    assert added.returncode == 0, added.stderr
+    assert _text(project / "AGENTS.md").startswith(BEGIN_MARKER)
+    assert list(home.iterdir()) == []
+
+
+def test_agent_identity_is_added_to_a_project_as_the_packaged_setup_skill_says(
+        folder, package, installed_home, tmp_path):
+    """No copy over a file in the Codex home: a block in the AGENTS.md of the project."""
+    setup = folder / "skills/tao-setup/SKILL.md"
+    before = _text(setup).split(IDENTITY_SECTION, 1)[1].split("```bash", 1)[0]
+    assert re.search(r"With\s+user\s+approval", before) and "marked block" in before
+    assert re.search(r"When\s+`TAO_SKILL_BANK_PATH`\s+is\s+not\s+set", before)
+    assert PLACEHOLDER in before
+    commands = _identity_commands(setup)
+    assert commands.count(PLACEHOLDER) == 1
+    identity = _text(folder / "AGENTS.md")
+    own = "# My rules\n\n- keep answers short\n"
+    home, project = tmp_path / "home", tmp_path / "project"
+    home.mkdir()
+    project.mkdir()
+    (project / "AGENTS.md").write_text(own, encoding="utf-8")
+    block = f"{identity.rstrip()}\n{END_MARKER}\n"
+
+    # Read but not filled in, with no variable exported: the block stops, nothing is written.
+    unfilled = _run(["bash", "-c", commands], project, HOME=home)
+    assert unfilled.returncode == 1
+    assert "Set TAO_SKILL_BANK_PATH to the plugin folder first" in unfilled.stderr
+    assert _text(project / "AGENTS.md") == own
+
+    # Codex: no hook exported the variable; the reader fills in the folder of the skill.
+    for cache in PLUGIN_CACHES:
+        installed = _installed(installed_home, cache, package)
+        filled = commands.replace(PLACEHOLDER, str(installed / "skills" / "tao-setup"))
+        (project / "AGENTS.md").write_text(own, encoding="utf-8")
+        added = _run(["bash", "-c", filled], project, HOME=home)
+        assert added.returncode == 0, added.stderr
+        written = _text(project / "AGENTS.md")
+        assert written.startswith(own + "\n" + BEGIN_MARKER) and written.endswith(block), cache
+    assert sorted(path.name for path in project.iterdir()) == ["AGENTS.md"]
+    assert list(home.iterdir()) == []            # no Codex home, no backup, no copy
+
+    # A skill folder that is a link into the plugin folder leads to the same helper.
+    (home / "skills").mkdir()
+    (home / "skills" / "tao-setup").symlink_to(
+        installed / "skills" / "tao-setup", target_is_directory=True)
+    linked = commands.replace(PLACEHOLDER, str(home / "skills" / "tao-setup"))
+    again = _run(["bash", "-c", linked], project, HOME=home)
+    assert again.returncode == 0 and "Nothing to do" in again.stdout, again.stderr
+
+    # A variable that a session hook exported wins, and the block needs no editing then.
+    hooked = _run(["bash", "-c", commands], project, HOME=home, TAO_SKILL_BANK_PATH=folder)
+    assert hooked.returncode == 0 and "Nothing to do" in hooked.stdout, hooked.stderr
+    assert _text(project / "AGENTS.md") == written
+
+    # "remove" in place of "add", as the text after the block says, gives the file back.
+    after = _text(setup).split(IDENTITY_SECTION, 1)[1].split("```", 2)[2]
+    assert "`remove`" in after and "`status`" in after and "Do not copy the identity" in after
+    removal = commands.replace('"$helper" add', '"$helper" remove')
+    assert removal != commands
+    removed = _run(["bash", "-c", removal], project, HOME=home, TAO_SKILL_BANK_PATH=folder)
+    assert removed.returncode == 0, removed.stderr
+    assert _text(project / "AGENTS.md") == own
 
 
 # ─────────────────────────── failure paths, on a small checkout ───────────────────────────
