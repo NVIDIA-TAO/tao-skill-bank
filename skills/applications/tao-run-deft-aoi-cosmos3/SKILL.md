@@ -143,6 +143,11 @@ credential value.
 - Train with `cosmos-framework-train --sft-toml=/tao/config/train.toml`;
   Evaluate with `cosmos-framework-evaluate --config /tao/config/evaluate.toml`;
   use the public Framework inference entrypoint for standalone inference.
+- For the known-broken TAO 7.2.0 Framework GA digest, the Evaluate submitter
+  mounts a read-only standalone Qwen3-VL PatchEmbed compatibility helper because
+  the image's evaluator imports `cosmos_rl.policy`, which is missing from its
+  installed package. The workaround is scoped to that immutable digest and is
+  not applied to other images.
 - Render Train through `"$PYTHON" scripts/render_cfw_sft.py` and each role's
   Evaluate TOML through `"$PYTHON" scripts/render_cfw_evaluate.py`. Never reuse a packaged
   workspace TOML: the renderers/submitters fail closed on stale backend paths,
