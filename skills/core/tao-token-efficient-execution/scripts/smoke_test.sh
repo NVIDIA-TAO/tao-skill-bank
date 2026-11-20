@@ -10,7 +10,9 @@
 #   T3  per-message usage lands in the session JSONL and analyze_usage.py
 #       parses it (also prints the measured per-session floor)
 # No docker, no training, no writes outside $SMOKE.
-# Requires: the API key for SMOKE_MODEL exported in this shell.
+# Requires: the API key for SMOKE_MODEL exported in this shell (unless its
+# provider is keyless/defined in ~/.pi/agent/models.json — see
+# scripts/model_preflight.sh).
 # ============================================================================
 set -u
 [ -d "$HOME/.local/share/pi-node/current/bin" ] && export PATH="$HOME/.local/share/pi-node/current/bin:$PATH"
@@ -28,16 +30,10 @@ say "== preflight =="
 command -v pi >/dev/null || { say "ABORT: pi not on PATH"; exit 1; }
 command -v jq >/dev/null || { say "ABORT: jq required"; exit 1; }
 say "  pi version: $(pi --version 2>/dev/null | head -1)"
-case "$SMOKE_MODEL" in
-  nim/*)       KEYVAR=NVIDIA_INFERENCE_API_KEY ;;
-  anthropic/*) KEYVAR=ANTHROPIC_API_KEY ;;
-  *)           KEYVAR= ;;
-esac
-if [ -n "$KEYVAR" ] && [ -z "$(eval "printf %s \"\${$KEYVAR:-}\"")" ]; then
-  say "ABORT: $KEYVAR is not set. Run:  export $KEYVAR=...  and retry."
-  exit 1
-fi
-[ -n "$KEYVAR" ] && say "  $KEYVAR: SET"
+. "$SKILL/scripts/model_preflight.sh"
+MODEL=$SMOKE_MODEL
+kit_prepare_model_env
+kit_check_model_key "  preflight:" 2>&1 || exit 1
 say "  model: $SMOKE_MODEL"
 
 # $SMOKE is recreated fresh each run — refuse to wipe a directory this test
