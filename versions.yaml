@@ -42,7 +42,6 @@ images:
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
     cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.3.0-cosmos-embed
-    vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
     paidf_anomalygen: nvcr.io/nvidia/paidf-anomalygen:1.0.1

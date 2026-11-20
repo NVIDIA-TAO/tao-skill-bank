@@ -350,6 +350,7 @@ tao-skill-bank/
 │   ├── marketplace.json              # Cursor marketplace entry
 │   └── plugin.json                   # Cursor plugin manifest (lists every skill path)
 ├── versions.yaml                     # single source of truth: container images + AutoML wheel versions
+├── evals/evals.json                  # plugin-level evaluation suite (replaces the per-skill suites when the plugin is evaluated)
 ├── README.md
 ├── docs/
 │   ├── skill-requirements.md         # must-follow rules: naming + signing gates (read first)
@@ -360,6 +361,7 @@ tao-skill-bank/
 │   ├── validate-skills.sh            # CI validator
 │   ├── verify-standalone.sh          # end-to-end smoke (docker-only path)
 │   ├── install-codex-agents.sh       # one-shot Codex install: marketplace + plugin + AGENTS.md
+│   ├── build_plugin_package.py       # generates plugins/nvidia-tao-toolkit/, the flat package NVIDIA's plugin verification signs
 │   └── migrate-to-version-keys.py    # one-shot: literal nvcr.io paths → versions.yaml keys
 └── skills/
     ├── applications/                 # end-to-end workflow skills

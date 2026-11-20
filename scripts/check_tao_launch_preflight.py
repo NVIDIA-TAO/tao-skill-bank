@@ -22,6 +22,7 @@ import yaml
 from pathlib import Path
 from typing import Any
 
+from skill_layers import skill_dir
 from tao_slurm_ssh import ssh_command
 
 
@@ -288,8 +289,8 @@ def resolve_platform(skill_bank: Path, requested: str) -> dict[str, Any]:
     the structured record; a single required env var is checked fine from prose."""
     name = PLATFORM_ALIASES.get(requested.strip().lower(), requested.strip().lower())
     info = (
-        skill_bank.expanduser()
-        / "skills" / "platform" / f"tao-run-on-{name}" / "references" / "skill_info.yaml"
+        skill_dir(skill_bank, "platform", f"tao-run-on-{name}")
+        / "references" / "skill_info.yaml"
     )
     if info.is_file():
         record = yaml.safe_load(info.read_text(encoding="utf-8")) or {}
