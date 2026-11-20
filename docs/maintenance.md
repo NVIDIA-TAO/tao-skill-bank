@@ -27,7 +27,7 @@ images:
   tao_toolkit:
 -   pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
 +   pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.27.0-pyt
-    vila:       nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
+    deploy:     nvcr.io/nvidia/tao/tao-toolkit:6.26.3-deploy
 ```
 
 That's it. Every skill referencing `tao_toolkit.pyt` (28 of them today) automatically picks up the new tag at runtime.
