@@ -6,10 +6,10 @@
 #
 # What it does:
 #   1. Registers the tao-skill-bank marketplace with the Codex CLI.
-#   2. Installs the `nvidia-tao-toolkit` plugin (skills surface). Releases through 7.3.1
+#   2. Installs the `nvidia-tao-toolkit` plugin (skills surface). Releases through 7.3.0
 #      ship it as `tao-skill-bank`; the script installs whichever name the
 #      chosen release offers and removes the other one if it is installed.
-#      Releases after 7.3.1 need Codex CLI 0.142.0 or newer.
+#      Releases after 7.3.0 need Codex CLI 0.142.0 or newer.
 #   3. Copies AGENTS.md to ~/.codex/AGENTS.md so the TAO identity loads in
 #      every Codex session, not only when codex is launched from a clone.
 #      (Codex's AGENTS.md discovery walks the project tree from the git root —
@@ -34,13 +34,13 @@ MARKETPLACE_REF="${TAO_SKILL_BANK_REF-$DEFAULT_MARKETPLACE_REF}"
 
 # Plugin and marketplace names, newest first. This script is fetched from `main`
 # but installs a release tag, so it cannot assume which names that tag ships:
-#   after 7.3.1      nvidia-tao-toolkit  in marketplace tao-skill-bank
-#   through 7.3.1    tao-skill-bank      in marketplace tao-local-plugins
+#   after 7.3.0      nvidia-tao-toolkit  in marketplace tao-skill-bank
+#   through 7.3.0    tao-skill-bank      in marketplace tao-local-plugins
 # (`name` in .codex-plugin/plugin.json and .agents/plugins/marketplace.json.)
 PLUGIN_NAMES=("nvidia-tao-toolkit" "tao-skill-bank")
 MARKETPLACE_NAMES=("tao-skill-bank" "tao-local-plugins")
 
-# Releases after 7.3.1 use the repository root as the plugin source. Codex CLIs
+# Releases after 7.3.0 use the repository root as the plugin source. Codex CLIs
 # older than this register the marketplace and then report that the plugin was
 # not found in it.
 MIN_CODEX_VERSION="0.142.0"
@@ -84,10 +84,23 @@ marketplace_registered() {
 for i in "${!PLUGIN_NAMES[@]}"; do
   codex plugin remove "${PLUGIN_NAMES[$i]}@${MARKETPLACE_NAMES[$i]}" >/dev/null 2>&1 || true
 done
+#
+# A clone registered by path is listed under the name its manifest carries now,
+# but Codex removes a marketplace by the name it was registered under. A clone
+# that was updated across the rename is listed as one generation and configured
+# as the other, so try the listed name first and then the other generation.
 for name in "${MARKETPLACE_NAMES[@]}"; do
   if marketplace_registered "$name"; then
     log "Marketplace '$name' already registered — re-pointing it."
-    codex plugin marketplace remove "$name"
+    removed=""
+    for candidate in "$name" "${MARKETPLACE_NAMES[@]}"; do
+      if codex plugin marketplace remove "$candidate" 2>/dev/null; then
+        removed="$candidate"
+        break
+      fi
+    done
+    [[ -n "$removed" ]] \
+      || die "could not remove the registered marketplace '$name'. Remove it with 'codex plugin marketplace remove <name>' and run this script again."
   fi
 done
 
@@ -118,7 +131,7 @@ done
 if [[ -z "$PLUGIN_NAME" ]]; then
   printf '%s' "$ADD_ERRORS" >&2
   if codex_older_than "$MIN_CODEX_VERSION"; then
-    printf '[install-codex-agents] This Codex CLI is older than %s, which releases after 7.3.1 need. Upgrade Codex and run this script again.\n' \
+    printf '[install-codex-agents] This Codex CLI is older than %s, which releases after 7.3.0 need. Upgrade Codex and run this script again.\n' \
       "$MIN_CODEX_VERSION" >&2
   fi
   die "could not install the TAO plugin from ${MARKETPLACE_SOURCE}${MARKETPLACE_REF:+ (ref: ${MARKETPLACE_REF})}"

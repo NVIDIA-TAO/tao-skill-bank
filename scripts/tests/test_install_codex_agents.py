@@ -105,12 +105,20 @@ def test_packaged_installer_matches_top_level_installer():
 
 
 def _write_scripted_codex(
-    path: Path, *, marketplaces: str = "", failing_adds=(), version: str = "0.154.0"
+    path: Path,
+    *,
+    marketplaces: str = "",
+    failing_adds=(),
+    failing_removals=(),
+    version: str = "0.154.0",
 ) -> None:
     """A fake codex whose version, `plugin marketplace list` and `plugin add` are scripted."""
     fail_cases = "".join(
         f'  "plugin add {plugin}") echo "plugin not found" >&2; exit 1 ;;\n'
         for plugin in failing_adds
+    ) + "".join(
+        f'  "plugin marketplace remove {name}") echo "not configured or installed" >&2; exit 1 ;;\n'
+        for name in failing_removals
     )
     path.write_text(
         f"""#!/usr/bin/env bash
@@ -154,7 +162,7 @@ def test_installer_installs_the_current_plugin_name_first(tmp_path):
 def test_installer_falls_back_to_the_name_older_releases_ship(tmp_path):
     """The script is served from main but installs a release tag.
 
-    Tags through 7.3.1 ship the plugin as ``tao-skill-bank`` in a marketplace
+    Tags through 7.3.0 ship the plugin as ``tao-skill-bank`` in a marketplace
     named ``tao-local-plugins``, so the current name is not found there.
     """
     result, calls = _run_installer(
@@ -181,7 +189,7 @@ def test_installer_reports_both_failures_when_no_name_installs(tmp_path):
 
 
 def test_installer_points_an_old_codex_cli_at_the_upgrade(tmp_path):
-    """Releases after 7.3.1 use the repository root as the plugin source.
+    """Releases after 7.3.0 use the repository root as the plugin source.
 
     Codex CLIs before 0.142.0 register such a marketplace and then find no
     plugin in it, which reads like a broken release unless the script says why.
@@ -217,7 +225,7 @@ def test_installer_clears_both_generations_before_installing(tmp_path):
 
 
 def test_installer_re_points_a_marketplace_registered_under_the_current_name(tmp_path):
-    """Every re-run after 7.3.1 finds ``tao-skill-bank`` already registered."""
+    """Every re-run after 7.3.0 finds ``tao-skill-bank`` already registered."""
     listing = (
         "MARKETPLACE     ROOT\n"
         "tao-skill-bank  /home/user/.codex/.tmp/marketplaces/tao-skill-bank\n"
@@ -253,3 +261,33 @@ def test_installer_matches_marketplace_names_exactly(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert not [c for c in calls if c.startswith("plugin marketplace remove ")]
+
+
+def test_installer_re_points_a_clone_that_changed_names_in_place(tmp_path):
+    """Codex lists a path marketplace by its manifest name and removes it by its registered name.
+
+    A clone registered while it shipped ``tao-local-plugins`` and then updated
+    to a tree that ships ``tao-skill-bank`` is listed under the new name but
+    can only be removed under the old one.
+    """
+    listing = "MARKETPLACE     ROOT\ntao-skill-bank  /home/user/src/tao-skill-bank\n"
+    result, calls = _run_installer(
+        tmp_path, marketplaces=listing, failing_removals=("tao-skill-bank",)
+    )
+
+    assert result.returncode == 0, result.stderr
+    add_marketplace = next(i for i, c in enumerate(calls) if c.startswith("plugin marketplace add "))
+    assert calls.index("plugin marketplace remove tao-local-plugins") < add_marketplace
+
+
+def test_installer_stops_when_no_registration_can_be_removed(tmp_path):
+    listing = "MARKETPLACE     ROOT\ntao-skill-bank  /home/user/src/tao-skill-bank\n"
+    result, calls = _run_installer(
+        tmp_path,
+        marketplaces=listing,
+        failing_removals=("tao-skill-bank", "tao-local-plugins"),
+    )
+
+    assert result.returncode == 1
+    assert "could not remove the registered marketplace" in result.stderr
+    assert not [c for c in calls if c.startswith("plugin marketplace add ")]
