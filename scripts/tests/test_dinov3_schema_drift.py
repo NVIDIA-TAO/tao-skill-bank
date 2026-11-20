@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Drift guard for the DINOv3 skill schemas (bug 6465432).
+"""Drift guard for the DINOv3 skill schemas.
 
 The committed ``skills/models/tao-train-dinov3/schemas/*.schema.json`` files are
 generated from the TAO Core dataclass config (``nvidia_tao_core.config.dinov3``)
@@ -114,7 +114,7 @@ def tao_core_dinov3_config():
         pytest.fail(
             "nvidia_tao_core is importable but has no config.dinov3 module: tao-core is "
             "behind tao-pytorch and the committed DINOv3 skill schemas cannot be "
-            "regenerated from it (bug 6465432)."
+            "regenerated from it."
         )
 
 

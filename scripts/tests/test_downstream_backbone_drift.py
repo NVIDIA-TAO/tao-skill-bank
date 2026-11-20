@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Drift guard for DINOv3 backbone options in downstream skill schemas (bug 6465432).
+"""Drift guard for DINOv3 backbone options in downstream skill schemas.
 
 DINOv3 backbones are selectable for SegFormer and Visual ChangeNet. The shared
 variants must remain in both generated schema sets; ViT-7B is currently a

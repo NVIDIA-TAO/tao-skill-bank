@@ -36,8 +36,6 @@
 
 Date: 2026-05-29
 
-Branch: `rarunachalam/improve-skill-agent-performance`
-
 Base: `origin/release/7.0.1`
 
 ## Scope

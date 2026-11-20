@@ -12,7 +12,7 @@
 #   3c. Every models/ skill has a `docker run` somewhere, a self-contained venv/uv
 #       Quick Start (uv run / uv sync / python -m venv), or an explicit
 #       requires_external:true frontmatter marker (README "Docker-native first").
-#   1d. All three plugin manifests carry the same version.
+#   1d. All five versioned plugin manifests carry the same version.
 #   2. The Codex-facing skills/ directory has no symlink mirror of canonical skills.
 #   3. Every SKILL.md has valid YAML frontmatter satisfying the signing pipeline's
 #      strict checks (parity with docs/skill-requirements.md § 2.1):
@@ -158,7 +158,8 @@ echo "=== 1d. manifest version parity ==="
 python3 - <<'PY'
 import json, os, sys
 errs = 0
-manifests = ['.claude-plugin/marketplace.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json']
+manifests = ['.claude-plugin/marketplace.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json',
+             '.cursor-plugin/plugin.json', '.cursor-plugin/marketplace.json']
 versions = {}
 for p in manifests:
     if not os.path.isfile(p):

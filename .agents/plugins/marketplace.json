@@ -1,14 +1,14 @@
 {
-  "name": "tao-local-plugins",
+  "name": "tao-skill-bank",
   "interface": {
-    "displayName": "TAO Local Plugins"
+    "displayName": "NVIDIA TAO Toolkit"
   },
   "plugins": [
     {
-      "name": "tao-skill-bank",
+      "name": "nvidia-tao-toolkit",
       "source": {
         "source": "local",
-        "path": "./plugins/tao-skill-bank"
+        "path": "./"
       },
       "policy": {
         "installation": "AVAILABLE",

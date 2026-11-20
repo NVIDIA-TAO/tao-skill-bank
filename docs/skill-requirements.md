@@ -8,7 +8,7 @@
 >
 > | Surface | Triggered by | What runs the check | Fix in |
 > |---|---|---|---|
-> | **CI validator** | basic frontmatter presence, body has runnable info, SDK leaks, marketplace paths, `skill_info.yaml` shape | [`scripts/validate-skills.sh`](../scripts/validate-skills.sh) (runs as the `validate-skills` job in [`.gitlab-ci.yml`](../.gitlab-ci.yml) on every MR and on `main`) | this PR |
+> | **CI validator** | basic frontmatter presence, body has runnable info, SDK leaks, marketplace paths, `skill_info.yaml` shape | [`scripts/validate-skills.sh`](../scripts/validate-skills.sh) | this PR |
 > | **Signing pipeline** | strict semver, `name == dir`, top-level `tags`, `compatibility`, size, `evals/evals.json` (Tier-3), security scanner, structure/dedup rules | Harbor / signing job after merge (also surfaces in `.skill-eval.yml` Tier-3 stage) | this PR (block before merge) |
 >
 > The signing pipeline is stricter than the CI validator. A skill can pass
@@ -188,7 +188,7 @@ examples) into `references/*.md` and leave a summary + pointer in `SKILL.md`.
 > | File | Required? | What it drives | What it does |
 > |---|---|---|---|
 > | `evals/evals.json` (this section) | **Required** for skill signing | Tier-3 **AGENT_EVAL** (routing/plan check) | No-execution: agent reads `SKILL.md` and outlines the documented plan. Cheap. |
-> | `eval.config` (at skill root) | **Optional** — opt-in only | TAO **skill-execution-eval** (live run) | Pulls real datasets, runs real `docker run`, measures real metrics. Only onboard if you want live-execution coverage. See [`skill-execution-eval-container.yml`](https://gitlab-master.nvidia.com/nvidia-tao-toolkit/skill-eval) and existing examples in [`skills/models/tao-train-visual-changenet/eval.config`](../skills/models/tao-train-visual-changenet/eval.config) / [`skills/applications/tao-run-deft-aoi/eval.config`](../skills/applications/tao-run-deft-aoi/eval.config). |
+> | `eval.config` (at skill root) | **Optional** — opt-in only | TAO **skill-execution-eval** (live run) | Pulls real datasets, runs real `docker run`, measures real metrics. Only onboard if you want live-execution coverage. See the existing examples in [`skills/models/tao-train-visual-changenet/eval.config`](../skills/models/tao-train-visual-changenet/eval.config) / [`skills/applications/tao-run-deft-aoi/eval.config`](../skills/applications/tao-run-deft-aoi/eval.config). |
 >
 > Shipping `eval.config` does **not** waive the `evals/evals.json` signing
 > requirement. Every skill needs `evals/evals.json`; `eval.config` is a

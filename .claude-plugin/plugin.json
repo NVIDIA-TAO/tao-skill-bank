@@ -1,5 +1,24 @@
 {
-  "name": "tao-skill-bank",
+  "name": "nvidia-tao-toolkit",
+  "displayName": "NVIDIA TAO Toolkit",
+  "version": "0.1.17",
   "description": "NVIDIA TAO skill bank with generated capability discovery for model training, data processing, application workflows, AutoML, and platform execution.",
-  "version": "0.1.16"
+  "author": {
+    "name": "NVIDIA",
+    "url": "https://github.com/NVIDIA-TAO/tao-skill-bank"
+  },
+  "repository": "https://github.com/NVIDIA-TAO/tao-skill-bank",
+  "license": "Apache-2.0",
+  "keywords": [
+    "nvidia",
+    "tao",
+    "computer-vision",
+    "fine-tuning",
+    "training",
+    "inference",
+    "object-detection",
+    "segmentation",
+    "vlm",
+    "automl"
+  ]
 }

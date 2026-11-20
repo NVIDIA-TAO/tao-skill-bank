@@ -1,0 +1,17 @@
+{
+  "name": "tao-skill-bank",
+  "owner": {
+    "name": "NVIDIA Corporation"
+  },
+  "metadata": {
+    "description": "NVIDIA TAO skill bank with generated capability discovery for model training, data processing, application workflows, AutoML, and platform execution.",
+    "version": "0.1.17"
+  },
+  "plugins": [
+    {
+      "name": "nvidia-tao-toolkit",
+      "source": "./",
+      "description": "Full NVIDIA TAO skill bank: every model, data, platform, application, and core helper skill in one plugin."
+    }
+  ]
+}

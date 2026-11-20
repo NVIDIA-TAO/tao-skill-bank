@@ -27,20 +27,34 @@ changes flow from `main` into a release.
 
 The skill bank works with both Claude Code and Codex. Pick the runtime you use.
 
-**The commands below install the latest release build, `7.3.0`.** Every install
+**The commands below install the latest release build, `7.3.1`.** Every install
 path pins the marketplace to that tag, so a fresh install gets the same
 validated build every time instead of whatever `main` happens to hold. Newer
 tags appear on the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/releases);
 substitute the tag you want, or use `@main` if you specifically need unreleased
 work.
 
+**Plugin name.** Release `7.3.1` and later, and `main`, ship the plugin as
+`nvidia-tao-toolkit`, following the `nvidia-<product>` naming NVIDIA uses for its agent
+plugins. The commands below match the pinned tag; use the row for what you
+install:
+
+| Release | Claude Code | Codex |
+|---|---|---|
+| `7.3.1` and later, and `main` | `nvidia-tao-toolkit@tao-skill-bank` | `nvidia-tao-toolkit@tao-skill-bank` |
+| `7.3.0` and earlier | `tao-skills@tao-skill-bank` | `tao-skill-bank@tao-local-plugins` |
+
+On Claude Code, `tao-skills` stays available as an alias of `nvidia-tao-toolkit` for one
+more release, so existing installs keep working. On Codex, the installer script
+below picks the right name for whichever release it installs.
+
 ### Claude Code
 
 In a Claude Code session, add the marketplace at the release tag and install the plugin:
 
 ```
-/plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.3.0
-/plugin install tao-skills@tao-skill-bank
+/plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.3.1
+/plugin install nvidia-tao-toolkit@tao-skill-bank
 ```
 
 That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundles all skills (every model, data, platform, application, and core helper skill). The plugin's [`SessionStart`](hooks/session_start.sh) hook loads the [`AGENTS.md`](AGENTS.md) identity at the start of every session.
@@ -48,6 +62,8 @@ That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundle
 ### Codex
 
 Codex setup has **two independent pieces** — the plugin (which surfaces the skills to Codex) and `AGENTS.md` (which loads the agent identity). You need both for parity with Claude Code.
+
+Release `7.3.1` and later, and `main`, need **Codex CLI 0.142.0 or newer** (check with `codex --version`). An older CLI registers the marketplace and then reports that the plugin was not found in it.
 
 #### One command (recommended)
 
@@ -62,7 +78,7 @@ was cut.
 
 …or, if you've already cloned or extracted the repo from a zip, run
 `scripts/install-codex-agents.sh` from that directory. The script registers the
-marketplace **at the latest release tag** (`7.3.0`), installs the TAO Skill Bank
+marketplace **at the latest release tag** (`7.3.1`), installs the TAO Skill Bank
 plugin, and copies `AGENTS.md` to `~/.codex/AGENTS.md` so the TAO identity loads
 in every Codex session. It's idempotent and backs up any existing
 `~/.codex/AGENTS.md` before overwriting. Override the source with
@@ -80,26 +96,26 @@ TAO_SKILL_BANK_MARKETPLACE=/absolute/path/to/tao-skill-bank \
 
 If you'd rather drive each step yourself:
 
-**1. Install the plugin.** Either use the VS Code Codex extension's plugin UI (select **TAO Skill Bank**), or from the CLI:
+**1. Install the plugin.** Either use the VS Code Codex extension's plugin UI (select **NVIDIA TAO Toolkit**), or from the CLI:
 
 ```bash
-codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.3.0
-codex plugin add tao-skill-bank@tao-local-plugins
+codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.3.1
+codex plugin add nvidia-tao-toolkit@tao-skill-bank   # tao-skill-bank@tao-local-plugins for 7.3.0 and earlier
 ```
 
-This installs the bundle to `~/.codex/plugins/cache/tao-local-plugins/tao-skill-bank/<version>/` (the `tao-local-plugins` segment comes from the `name` field in `.agents/plugins/marketplace.json`).
+This installs the bundle to `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/` (the marketplace segment comes from the `name` field in `.agents/plugins/marketplace.json`, the plugin segment from `.codex-plugin/plugin.json`).
 
-For a local zip or clone, use the absolute path instead of the Git URL:
+For a local zip or clone, use the absolute path instead of the Git URL, with the plugin name that copy ships:
 
 ```bash
 codex plugin marketplace add /absolute/path/to/tao-skill-bank
-codex plugin add tao-skill-bank@tao-local-plugins
+codex plugin add nvidia-tao-toolkit@tao-skill-bank   # tao-skill-bank@tao-local-plugins for a 7.3.0 or earlier copy
 ```
 
 **2. Load the agent identity (`AGENTS.md`).** The plugin install does **not** auto-load [`AGENTS.md`](AGENTS.md) — Codex's `AGENTS.md` discovery walks down from the project root, not into the plugin cache (see [openai/codex#16430](https://github.com/openai/codex/issues/16430) for why plugin-bundled `SessionStart` hooks don't fix this yet). Pick one:
 
 - **Per-project**: `git clone` this repo and launch `codex` from inside the clone. Codex auto-loads `AGENTS.md` from the project root per the [agents.md](https://agents.md/) cross-runtime spec.
-- **Globally** (one-time copy): `cp ~/.codex/plugins/cache/tao-local-plugins/tao-skill-bank/<version>/AGENTS.md ~/.codex/AGENTS.md`. The identity then loads in every Codex session, anywhere.
+- **Globally** (one-time copy): `cp ~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/AGENTS.md ~/.codex/AGENTS.md`. The identity then loads in every Codex session, anywhere.
 
 Once Codex starts honoring plugin-bundled hooks, the identity will install automatically alongside the plugin — until then, this manual step is needed.
 
@@ -148,22 +164,29 @@ special SDK exception: its Preflight lazily installs the
 Because the install pins a release tag, `update` / `upgrade` re-fetch **that same
 tag** — they do not move you to a newer release. To move to a new release, check
 the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/releases) and
-re-add the marketplace at the new tag; the existing entry is replaced in place.
+re-add the marketplace at the new tag.
 
-**Claude Code:** re-point the marketplace, then update the plugin — `/plugin
-install` is a no-op on an already-installed plugin, so it will leave you on the
-old build even after the marketplace moves.
-
-```
-/plugin marketplace add NVIDIA-TAO/tao-skill-bank@<new-tag>
-```
-
-Then update the installed plugin, either from `/plugin manage` in-session or
-from a shell:
+**Claude Code:** remove the marketplace, add it again at the new tag, and
+install the plugin. Claude Code refuses to re-add a marketplace that is already
+registered at another ref, and removing a marketplace uninstalls its plugins.
 
 ```bash
-claude plugin update tao-skills@tao-skill-bank
+claude plugin marketplace remove tao-skill-bank
+claude plugin marketplace add NVIDIA-TAO/tao-skill-bank@<new-tag>
+claude plugin install nvidia-tao-toolkit@tao-skill-bank   # tao-skills@tao-skill-bank for 7.3.0 and earlier
 ```
+
+If you installed `tao-skills` and move to `7.3.1` or later, install
+`nvidia-tao-toolkit` instead. They are the same plugin, so do not enable both: every
+skill would load twice.
+
+If you installed `tao-skill-bank` or `tao-daft-process` from this marketplace
+and it follows `main` or a branch, Claude Code switches that plugin to
+`nvidia-tao-toolkit` the next time the marketplace updates. `nvidia-tao-toolkit` carries every
+skill, including the two that `tao-daft-process` had. Run
+`claude plugin install nvidia-tao-toolkit@tao-skill-bank` once so the plugin is listed
+and can be updated, and if `tao-skills` is installed as well, run
+`claude plugin uninstall tao-skills@tao-skill-bank`.
 
 Restart, or run `/reload-plugins`, to apply. To re-fetch the currently pinned
 tag (e.g. after a cache wipe):
@@ -181,22 +204,37 @@ rm -rf ~/.claude/plugins/cache/tao-skill-bank
 
 then re-run `/plugin install`.
 
-**Codex:**
+**Codex:** moving from `7.3.0` or earlier to `7.3.1` or later changes both the
+marketplace name and the plugin name. Removing a marketplace does not remove its
+plugins, so remove the old plugin first, or Codex lists every skill twice:
 
 ```bash
-# Move to a new release. Codex refuses to re-add a marketplace that is already
-# registered at a different ref, so drop the old registration first.
+codex plugin remove tao-skill-bank@tao-local-plugins
 codex plugin marketplace remove tao-local-plugins
 codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@<new-tag>
-codex plugin add tao-skill-bank@tao-local-plugins
-
-# Or, to re-fetch the tag you are already pinned to:
-codex plugin marketplace upgrade tao-local-plugins
+codex plugin add nvidia-tao-toolkit@tao-skill-bank
 ```
 
-Note the marketplace is named `tao-local-plugins` (the `name` field in
-`.agents/plugins/marketplace.json`); `tao-skill-bank` is the plugin name.
-Re-running `scripts/install-codex-agents.sh` does all three steps for you.
+Moving between two releases that share names:
+
+```bash
+# Codex refuses to re-add a marketplace that is already registered at a
+# different ref, so drop the old registration first.
+codex plugin marketplace remove tao-skill-bank      # tao-local-plugins if both releases are 7.3.0 or earlier
+codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@<new-tag>
+codex plugin add nvidia-tao-toolkit@tao-skill-bank          # tao-skill-bank@tao-local-plugins if both releases are 7.3.0 or earlier
+```
+
+To re-fetch the tag you are already pinned to:
+
+```bash
+codex plugin marketplace upgrade tao-skill-bank     # tao-local-plugins if you are on 7.3.0 or earlier
+```
+
+The marketplace name is the `name` field in `.agents/plugins/marketplace.json`
+and the plugin name is the one in `.codex-plugin/plugin.json`.
+Re-running `scripts/install-codex-agents.sh` does all of these steps for you,
+including the cleanup.
 
 If you copied `AGENTS.md` to `~/.codex/AGENTS.md`, re-copy from the upgraded plugin cache to pick up identity changes.
 
@@ -290,7 +328,7 @@ In brief:
 2. Copy a template from [`templates/skill-skeleton/`](templates/skill-skeleton/) — `minimal/` for the bare path, `model/`, `data/`, `platform/`, or `workflow/` for richer scaffolding.
 3. Fill in frontmatter and SKILL.md body. Body must contain a `## Quick Start` section, a `docker run` block, or a link to `references/skill_info.yaml`.
 4. Add `evals/evals.json` (required for Tier-3 signing — see [`docs/skill-requirements.md`](docs/skill-requirements.md) § 2.3). `eval.config` is optional and only needed if you want live-execution coverage.
-5. Add the skill path to [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) under the relevant plugin(s).
+5. Add the skill path to [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) under `nvidia-tao-toolkit` and its `tao-skills` alias, and to [`.cursor-plugin/plugin.json`](.cursor-plugin/plugin.json). Codex finds it through the `skills` root in `.codex-plugin/plugin.json`.
 6. Do not add a mirror entry under `skills/core/`; the core helper skills route to the canonical layer directories.
 7. Validate with `scripts/validate-skills.sh` before submitting a PR.
 
@@ -299,21 +337,24 @@ In brief:
 ```
 tao-skill-bank/
 ├── .claude-plugin/
-│   ├── marketplace.json              # marketplace catalog (plugin definitions)
-│   └── plugin.json                   # plugin manifest (fallback when loaded directly)
+│   ├── marketplace.json              # Claude Code marketplace: the nvidia-tao-toolkit plugin and its skill paths
+│   └── plugin.json                   # plugin manifest (name, version, metadata; no skill paths)
 ├── hooks/
-│   ├── hooks.json                    # SessionStart hook registration
+│   ├── hooks.json                    # SessionStart hook registration (two parts, each under the output cap)
 │   └── session_start.sh              # emits agent guidance; reports credential vars present in the env
 ├── .codex-plugin/
 │   └── plugin.json                   # Codex plugin manifest
 ├── .agents/
 │   └── plugins/marketplace.json      # Codex marketplace entry
+├── .cursor-plugin/
+│   ├── marketplace.json              # Cursor marketplace entry
+│   └── plugin.json                   # Cursor plugin manifest (lists every skill path)
 ├── versions.yaml                     # single source of truth: container images + AutoML wheel versions
 ├── README.md
 ├── docs/
 │   ├── skill-requirements.md         # must-follow rules: naming + signing gates (read first)
 │   ├── authoring.md                  # guide for adding new skills
-│   └── maintenance.md                # RC bump procedure for versions.yaml
+│   └── maintenance.md                # version bump procedure for versions.yaml
 ├── templates/skill-skeleton/         # copy-paste starting points (minimal + per-layer)
 ├── scripts/
 │   ├── validate-skills.sh            # CI validator
@@ -333,7 +374,7 @@ tao-skill-bank/
 The repo runs three CI suites in parallel:
 
 - **NV-ACES skill evaluation** (`.skill-eval.yml`) — Tier 1/2 quality scoring, security scan.
-- **Skill execution eval** (`.gitlab-ci.yml`) — runs each skill's `eval.config` on a real GPU runner.
+- **Skill execution eval** — runs each skill's `eval.config` on a real GPU runner.
 - **`validate-skills`** (`scripts/validate-skills.sh`) — marketplace path resolution, no `skills/core/` mirrors, frontmatter, body has runnable info, no SDK leaks, hook references resolve.
 
 PRs must pass all three before merge.

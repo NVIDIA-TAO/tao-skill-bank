@@ -40,7 +40,7 @@ Two-line summary of the transformation. Inputs → outputs.
 docker run --gpus all --rm \
   -v /path/to/input:/input \
   -v /path/to/output:/output \
-  nvcr.io/nvidian/iva/<image>:<tag> \
+  nvcr.io/nvidia/tao/tao-toolkit:<tag> \
   <command> --input /input --output /output
 ```
 
@@ -58,7 +58,7 @@ for label in bridge tombstone shift; do
 done
 ```
 
-See `tao-skill-bank:tao-run-on-docker` for docker conventions (when containerized).
+See `nvidia-tao-toolkit:tao-run-on-docker` for docker conventions (when containerized).
 
 ## Inputs
 
