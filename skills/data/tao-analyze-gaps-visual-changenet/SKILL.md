@@ -2,7 +2,7 @@
 name: tao-analyze-gaps-visual-changenet
 description: Performs gap analysis on NVIDIA TAO VCN Classify (Visual Component Net) experiments by invoking the pinned TAO data-services container directly via `docker run … gap_analysis vcn_aoi …` — picks the optimal decision threshold, ranks per-sample weakness, and emits a top-K weakest parquet expanded per-lighting for downstream augmentation. Use when analyzing VCN classification failures, picking SDA augmentation targets, or auditing PASS/NO_PASS boundary cases.
 license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit and a CUDA GPU. Pulls the TAO data-services container pinned in this skill.yaml` at the skill bank root.
+compatibility: Requires docker + nvidia-container-toolkit and a CUDA GPU. Pulls the TAO data-services container pinned in the `versions.yaml` file at the skill bank root.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
