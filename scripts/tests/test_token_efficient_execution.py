@@ -84,6 +84,7 @@ exit 99
             "CARDS": str(APPS / "tao-run-deft-aoi/cards"),
             "VENV": sys.prefix,
             "MODEL": "test/no-network",
+            "DS_IMG": "fixture:data-services",
             "GPU_MODEL": "fixture GPU",
             "TEST_RD": str(self.rd),
             "TEST_CALLS": str(self.calls),
@@ -265,10 +266,62 @@ timeout() {
         self.assertEqual(self.run_driver("automl").returncode, 0)
         self.assertEqual(self.calls.read_text().strip(), "fixture:override")
 
+    def assert_stopped_before_side_effects(self, result, *needles):
+        self.assertEqual(result.returncode, 1, result.stderr)
+        message = result.stderr.strip().splitlines()
+        self.assertEqual(len(message), 1, result.stderr)
+        for needle in needles:
+            self.assertIn(needle, message[0])
+        self.assertFalse((self.run_home / ".launch_marker").exists())
+        self.assertFalse((self.run_home / "driver.log").exists())
+        self.assertFalse((self.run_home / "sessions").exists())
+        self.assertFalse(self.calls.exists())
+
+    def test_deft_has_no_default_data_services_image(self):
+        del self.env["DS_IMG"]
+        self.assert_stopped_before_side_effects(
+            self.run_driver("deft"), "[driver] ABORT: set DS_IMG", "~/.tao-kit/kit.env",
+            "data-services image", "gap_analysis vcn_aoi", "key=value", "embedding image_embeddings",
+            "tmm nearest_neighbors", "no default image")
+
+    def test_deft_passes_the_supplied_images_to_the_session(self):
+        self.env["TRAIN_IMG"] = "fixture:train"
+        # Stop at the first session: the mock runs in the driver's own shell.
+        with self.shell.open("a") as handle:
+            handle.write('\ntimeout() { echo "$TRAIN_IMG $DS_IMG" >> "$TEST_CALLS"; exit 0; }\n')
+        result = self.run_driver("deft")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["fixture:train fixture:data-services"])
+
+    def test_packs_have_no_default_model(self):
+        del self.env["MODEL"]
+        for pack, tag in [("deft", "[driver]"), ("automl", "[a-driver]")]:
+            with self.subTest(pack=pack):
+                self.assert_stopped_before_side_effects(
+                    self.run_driver(pack), f"{tag} ABORT: set MODEL", "~/.tao-kit/kit.env",
+                    "<provider>/<model-id>", "no default model")
+
+    def test_nim_model_needs_an_endpoint_from_the_user(self):
+        self.env["MODEL"] = "nim/org/model:off"
+        self.env["NVIDIA_INFERENCE_API_KEY"] = "fixture"
+        for pack, tag in [("deft", "[driver]"), ("automl", "[a-driver]")]:
+            with self.subTest(pack=pack):
+                self.assert_stopped_before_side_effects(
+                    self.run_driver(pack), f"{tag} ABORT: MODEL=nim/org/model:off", "no default endpoint",
+                    "set PI_KIT_NIM_BASE_URL", "/v1", "OpenAI-compatible")
+        # With the endpoint named, the same model passes the preflight and a session starts.
+        self.env["PI_KIT_NIM_BASE_URL"] = "http://localhost:8000/v1"
+        with self.shell.open("a") as handle:
+            handle.write('\ntimeout() { echo "$PI_KIT_NIM_BASE_URL $PI_KIT_NIM_MODELS" >> "$TEST_CALLS"; '
+                         'touch "$TEST_RD/AUTOML_DONE.marker"; }\n')
+        result = self.run_driver("automl")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls.read_text().strip(), "http://localhost:8000/v1 org/model")
+
     def test_missing_provider_key_aborts_before_any_session(self):
         for pack in ("deft", "automl"):
             with self.subTest(pack=pack):
-                self.env["MODEL"] = "nvidia/qwen/qwen3.6-35b-a3b"
+                self.env["MODEL"] = "nvidia/org/model-a"
                 result = self.run_driver(pack)
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn("export NVIDIA_API_KEY", result.stderr)
@@ -315,26 +368,53 @@ def preflight(model, **env):
     return result.returncode, result.stderr, result.stdout.strip()
 
 
+NIM_URL = "http://localhost:8000/v1"
+
+
 class ModelPreflightTests(unittest.TestCase):
     def test_provider_key_vars(self):
         cases = {
-            "nim/nvidia/qwen/qwen3.6-35b-a3b:off": "NVIDIA_INFERENCE_API_KEY",
-            "nvidia/qwen/qwen3.6-35b-a3b": "NVIDIA_API_KEY",
+            "nim/org/model-a:off": "NVIDIA_INFERENCE_API_KEY",
+            "nvidia/org/model-a": "NVIDIA_API_KEY",
             "anthropic/claude-fable-5": "ANTHROPIC_API_KEY",
             "openai/gpt-5": "OPENAI_API_KEY",
         }
         for model, var in cases.items():
             with self.subTest(model=model):
-                rc, err, _ = preflight(model)
+                # The nim/ provider has no default endpoint; the others are Pi built-ins.
+                env = {"PI_KIT_NIM_BASE_URL": NIM_URL} if model.startswith("nim/") else {}
+                rc, err, _ = preflight(model, **env)
                 self.assertEqual(rc, 1)
                 self.assertIn(f"export {var} ", err)
-                self.assertEqual(preflight(model, **{var: "x"})[0], 0)
+                self.assertEqual(preflight(model, **env, **{var: "x"})[0], 0)
 
     def test_nim_key_var_is_configurable(self):
-        rc, err, _ = preflight("nim/m:off", PI_KIT_NIM_API_KEY_VAR="MY_GATEWAY_KEY")
+        env = {"PI_KIT_NIM_BASE_URL": NIM_URL, "PI_KIT_NIM_API_KEY_VAR": "MY_GATEWAY_KEY"}
+        rc, err, _ = preflight("nim/m:off", **env)
         self.assertEqual(rc, 1)
         self.assertIn("export MY_GATEWAY_KEY ", err)
-        self.assertEqual(preflight("nim/m:off", PI_KIT_NIM_API_KEY_VAR="MY_GATEWAY_KEY", MY_GATEWAY_KEY="x")[0], 0)
+        self.assertEqual(preflight("nim/m:off", **env, MY_GATEWAY_KEY="x")[0], 0)
+
+    def test_nim_model_without_an_endpoint_aborts(self):
+        for env in ({}, {"NVIDIA_INFERENCE_API_KEY": "x"}, {"PI_KIT_SKIP_KEY_PREFLIGHT": "1"},
+                    {"PI_KIT_NIM_BASE_URL": "  ", "NVIDIA_INFERENCE_API_KEY": "x"}):
+            with self.subTest(env=sorted(env)):
+                rc, err, _ = preflight("nim/m:off", **env)
+                self.assertEqual(rc, 1)
+                self.assertEqual(len(err.strip().splitlines()), 1, err)
+                self.assertIn("[t] ABORT: MODEL=nim/m:off", err)
+                self.assertIn("no default endpoint: set PI_KIT_NIM_BASE_URL", err)
+                self.assertNotIn("export NVIDIA_INFERENCE_API_KEY", err)
+        # The older name of the variable is still read, as the Pi extension reads it.
+        self.assertEqual(preflight("nim/m:off", NVIDIA_INFERENCE_BASE_URL="https://gw.example/v1",
+                                   NVIDIA_INFERENCE_API_KEY="x")[0], 0)
+
+    def test_unset_model_aborts_and_names_the_shape(self):
+        rc, err, _ = preflight("")
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        self.assertIn("[t] ABORT: set MODEL", err)
+        self.assertIn("<provider>/<model-id>", err)
 
     def test_nim_model_id_is_registered_from_model(self):
         _, _, models = preflight("nim/meta/llama-4-70b:off", NVIDIA_INFERENCE_API_KEY="x", PI_KIT_NIM_MODELS="a/b")
@@ -383,30 +463,42 @@ console.log(JSON.stringify(out));
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
+    def test_no_endpoint_or_no_model_id_means_no_provider(self):
+        # Neither the endpoint nor a model id is built in: both come from the user.
+        for env in ({}, {"PI_KIT_NIM_BASE_URL": "  "}, {"PI_KIT_NIM_MODELS": "a/b"},
+                    {"PI_KIT_NIM_BASE_URL": NIM_URL}, {"PI_KIT_NIM_BASE_URL": NIM_URL, "PI_KIT_NIM_MODELS": " , "}):
+            with self.subTest(env=sorted(env)):
+                out = self.load(**env)
+                self.assertNotIn("name", out)
+                self.assertNotIn("cfg", out)
+                # The request hook is harmless without a provider and stays registered.
+                self.assertEqual(out["nim"]["temperature"], 0)
+
     def test_defaults(self):
-        out = self.load()
+        out = self.load(PI_KIT_NIM_BASE_URL=NIM_URL, PI_KIT_NIM_MODELS="org/model-a")
         cfg = out["cfg"]
         self.assertEqual(out["name"], "nim")
-        self.assertEqual(cfg["baseUrl"], "https://inference-api.nvidia.com/v1")
+        self.assertEqual(cfg["baseUrl"], NIM_URL)
         self.assertEqual(cfg["apiKey"], "$NVIDIA_INFERENCE_API_KEY")
-        self.assertEqual(len(cfg["models"]), 4)
-        self.assertTrue(all(m["compat"] == cfg["models"][0]["compat"] for m in cfg["models"]))
+        # Only the id the user named is registered, under a label that fits any endpoint.
+        self.assertEqual([m["id"] for m in cfg["models"]], ["org/model-a"])
+        self.assertEqual(cfg["name"], "OpenAI-compatible endpoint (nim)")
         self.assertEqual(out["nim"]["temperature"], 0)
         self.assertIsNone(out.get("other"))
 
     def test_environment_overrides(self):
         cfg = self.load(PI_KIT_NIM_BASE_URL="http://localhost:8000/v1/", PI_KIT_NIM_API_KEY_VAR="MY_KEY",
-                        PI_KIT_NIM_MODELS="meta/llama-4-70b, nvidia/qwen/qwen3.6-35b-a3b",
+                        PI_KIT_NIM_MODELS="org/model-a, org/model-b,org/model-a",
                         PI_KIT_NIM_MAX_TOKENS="4096")["cfg"]
         self.assertEqual(cfg["baseUrl"], "http://localhost:8000/v1")
         self.assertEqual(cfg["apiKey"], "$MY_KEY")
         ids = [m["id"] for m in cfg["models"]]
-        self.assertEqual(len(ids), 5)
-        self.assertEqual(ids[-1], "meta/llama-4-70b")
+        self.assertEqual(ids, ["org/model-a", "org/model-b"])
+        self.assertTrue(all(m["compat"] == cfg["models"][0]["compat"] for m in cfg["models"]))
         self.assertTrue(all(m["maxTokens"] == 4096 for m in cfg["models"]))
 
     def test_legacy_base_url_alias_and_invalid_key_var(self):
-        cfg = self.load(NVIDIA_INFERENCE_BASE_URL="https://gw.example/v1",
+        cfg = self.load(NVIDIA_INFERENCE_BASE_URL="https://gw.example/v1", PI_KIT_NIM_MODELS="org/model-a",
                         PI_KIT_NIM_API_KEY_VAR="not a var")["cfg"]
         self.assertEqual(cfg["baseUrl"], "https://gw.example/v1")
         self.assertEqual(cfg["apiKey"], "$NVIDIA_INFERENCE_API_KEY")
@@ -448,6 +540,23 @@ class InstallTests(unittest.TestCase):
         result = self.run_install()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("RESULT: ready", result.stdout)
+        # The smoke test has no default model, so the printed command names the variable.
+        smoke = [line.strip() for line in result.stdout.splitlines() if "smoke_test.sh" in line]
+        self.assertEqual(len(smoke), 1, result.stdout)
+        self.assertTrue(smoke[0].startswith("SMOKE_MODEL=<provider>/<model-id> bash "), smoke)
+
+    def test_smoke_test_without_a_model_stops_before_writing_anything(self):
+        smoke_dir = self.root / "smoke"
+        result = subprocess.run(
+            ["bash", str(KIT / "scripts/smoke_test.sh")],
+            env={"PATH": os.environ["PATH"], "HOME": str(self.root / "home"), "SMOKE_DIR": str(smoke_dir)},
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("ABORT: set SMOKE_MODEL to <provider>/<model-id>", result.stdout)
+        self.assertIn("there is no default model", result.stdout)
+        self.assertFalse(smoke_dir.exists())
+        self.assertFalse((self.root / "home").exists())
 
 
 if __name__ == "__main__":

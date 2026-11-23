@@ -46,8 +46,8 @@ Extract these fields for a default run:
 | `status_interval_minutes` | Yes | `5` | Ask during launch intake. Default: 5 minutes. |
 | required credentials | Platform/model-dependent | `SLURM_USER`, `SLURM_HOSTNAME`, `SSH_KEY_PATH` or `SSH_AUTH_SOCK`, `HF_TOKEN` | First read the chosen platform skill's `## Credentials` section and `references/skill_info.yaml` (required_credentials / credential_groups), satisfy required credential groups, then add selected-model credentials. Do not ask for unrelated platform credentials. |
 | compute shape | Model-dependent | `num_gpus=4`, `num_nodes=1` | Ask only for model-required hardware fields that are not provided by the platform. |
-| `llm_endpoint` / `base_url` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"https://inference-api.nvidia.com"` | Resolve from user input or `AUTOML_LLM_ENDPOINT`; pass explicitly in `automl_settings`. |
-| `llm_model` / `model` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"gcp/google/gemini-3.1-pro-preview"` | Resolve from user input or `AUTOML_LLM_MODEL`; pass explicitly in `automl_settings`. |
+| `llm_endpoint` / `base_url` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"https://<your-llm-endpoint>/v1"` | Resolve from user input or `AUTOML_LLM_ENDPOINT`; ask when neither gives it. Always pass it explicitly in `automl_settings`: when it is left out, the runner package uses its own built-in endpoint, which most users cannot reach. |
+| `llm_model` / `model` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"<model-id>"` | Resolve from user input or `AUTOML_LLM_MODEL`; ask when neither gives it. Always pass it explicitly in `automl_settings`: when it is left out, the runner package uses a model id of its built-in endpoint. |
 | `llm_api_key` / `api_key` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"nvapi-..."` or `"sk-..."` | Resolve from `AUTOML_LLM_API_KEY` or `NVIDIA_API_KEY`. Do not print or log the value; if unavailable, stop for credential setup instead of falling back silently. |
 
 Use these quick-start AutoML defaults without asking:
@@ -136,7 +136,7 @@ Customization-only fields:
 | `status_interval_minutes` | `5`, `10`, `15` | Already asked during launch intake; customize only if the user wants a different cadence. |
 | `automl_hyperparameters` | `["train.optm_lr", "train.epoch"]` | List choices from the generated schema JSON, not from hand-written guesses. |
 | `custom_param_ranges` | `{"train.optm_lr": {"valid_min": 1e-6, "valid_max": 1e-4}}` | Validate against schema type/range/options before using. |
-| `llm_endpoint`, `llm_model`, `llm_api_key` | `https://inference-api.nvidia.com`, `gcp/google/gemini-3.1-pro-preview`, `nvapi-...` | Required only when the selected algorithm is `llm`, `hybrid`, or `autoresearch`. Resolve credentials from env/secret files; do not echo keys. |
+| `llm_endpoint`, `llm_model`, `llm_api_key` | `https://<your-llm-endpoint>/v1`, `<model-id>`, `nvapi-...` | Required only when the selected algorithm is `llm`, `hybrid`, or `autoresearch`. Resolve credentials from env/secret files; do not echo keys. |
 
 **MANDATORY: Read the generated dataclass schema before configuring AutoML.**
 
@@ -201,8 +201,8 @@ result = runner.run(
 
 When the user requests or customizes into an LLM-powered algorithm, resolve ALL THREE of the following before generating the script. Do not ask for these on default `bayesian` quick-start runs.
 
-1. **`llm_endpoint`** — user input -> `AUTOML_LLM_ENDPOINT` -> `https://inference-api.nvidia.com`
-2. **`llm_model`** — user input -> `AUTOML_LLM_MODEL` -> `gcp/google/gemini-3.1-pro-preview`
+1. **`llm_endpoint`** — user input -> `AUTOML_LLM_ENDPOINT` -> ask the user for the base URL of an OpenAI-compatible endpoint they can reach. Never leave it out: the runner package then uses its own built-in endpoint, which most users cannot reach.
+2. **`llm_model`** — user input -> `AUTOML_LLM_MODEL` -> ask the user for a model id that endpoint serves. Never leave it out: the runner package then uses a model id of its built-in endpoint.
 3. **`llm_api_key`** — `AUTOML_LLM_API_KEY` -> `NVIDIA_API_KEY` -> declared local secret file when allowed. Do not print the value.
 
 If the runner does not receive valid LLM settings, the LLM brain may silently fall back to random sampling — wasting GPU budget on random configs instead of intelligent ones. There is no error message; the only clue is "LLM call failed... Falling back to random" in the logs.

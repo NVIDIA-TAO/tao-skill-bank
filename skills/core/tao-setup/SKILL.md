@@ -100,11 +100,13 @@ application workflows as fresh per-stage sessions instead of one long
 conversation (measured 74-91% cheaper, 4-5x lower peak context, and the only
 mode validated on small execution models). Setup only scaffolds the config;
 the routing rule applies at launch time: **when a card pack exists for the
-requested workflow (`skills/applications/<skill>/cards/`), prefer its
-`driver.sh` over in-conversation stage execution.** The `tao-launch-workflow`
-gate still applies in full — the driver launch is the side-effecting action
-it reviews. Packs ship today for `tao-run-deft-aoi` and `tao-run-automl`; the
-kit's authoring prompt compiles packs for other workflows.
+requested workflow (`skills/applications/<skill>/cards/`), the `pi` harness
+is installed, and the user asked for the card-pack route, use its `driver.sh`
+instead of in-conversation stage execution; otherwise run the stages in the
+conversation.** The `tao-launch-workflow` gate still applies in full — the
+driver launch is the side-effecting action it reviews. Packs ship today for
+`tao-run-deft-aoi` and `tao-run-automl`; the kit's authoring prompt compiles
+packs for other workflows.
 
 ## Discovery flow (how TAO skills chain)
 

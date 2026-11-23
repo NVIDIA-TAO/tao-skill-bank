@@ -204,12 +204,12 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// Guard 3 — the ds:aoi container rejects '-e <spec>' for gap_analysis (pure Hydra CLI).
+		// Guard 3 — the DEFT AOI pack's data-services image (DS_IMG) rejects '-e <spec>' for gap_analysis (pure Hydra CLI).
 		if (cmd.includes("gap_analysis vcn_aoi") && /\s-e\s+\S+\.ya?ml/.test(cmd)) {
 			return {
 				block: true,
 				reason:
-					"GUARD(ds-aoi-cli): the nvcr.io/nvidian/iva/tao-toolkit-ds:aoi image rejects '-e <spec>' for gap_analysis (exits on argparse). Pass pure Hydra overrides (key=value) instead — see your stage card's exact invocation.",
+					"GUARD(ds-aoi-cli): the data-services image this pack is compiled for (DS_IMG) rejects '-e <spec>' for gap_analysis (exits on argparse). Pass pure Hydra overrides (key=value) instead — see your stage card's exact invocation.",
 			};
 		}
 

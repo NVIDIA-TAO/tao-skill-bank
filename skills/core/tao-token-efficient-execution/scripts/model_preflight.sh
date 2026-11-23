@@ -4,8 +4,10 @@
 # Model/provider preflight shared by the Pi pack drivers and smoke_test.sh.
 # Source it, then call (with MODEL set):
 #   kit_prepare_model_env       export Pi-side nim config; register MODEL's nim id
-#   kit_check_model_key <tag>   return 1 (after printing why) if the provider's
-#                               credential variable is not exported
+#   kit_check_model_key <tag>   return 1 (after printing why) if MODEL is not
+#                               set, if a nim/ MODEL has no endpoint, or if the
+#                               provider's credential variable is not exported
+# MODEL and the nim/ endpoint have no default: the user names both.
 # Only tests whether a credential variable is non-empty; never prints values.
 # ============================================================================
 
@@ -15,6 +17,13 @@ kit_nim_key_var() {
   local var=${PI_KIT_NIM_API_KEY_VAR:-$KIT_NIM_DEFAULT_KEY_VAR}
   [[ $var =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || var=$KIT_NIM_DEFAULT_KEY_VAR
   echo "$var"
+}
+
+# Endpoint of the kit's nim/ provider; adapters/pi/nvidia-provider.ts reads the
+# same two variables. Empty = not configured.
+kit_nim_base_url() {
+  local url=${PI_KIT_NIM_BASE_URL:-${NVIDIA_INFERENCE_BASE_URL:-}}
+  echo "${url//[[:space:]]/}"
 }
 
 # Credential variable for a <provider>/<model> ref; empty = not a known Pi
@@ -58,8 +67,16 @@ kit_prepare_model_env() {
 kit_check_model_key() {
   local tag=$1 var
   case "${MODEL:-}" in
+    "") echo "$tag ABORT: set MODEL (export it or set it in ~/.tao-kit/kit.env) to <provider>/<model-id>[:thinking], the model that executes the cards, e.g. nvidia/<model-id> or nim/<model-id>:off; there is no default model" >&2; return 1 ;;
     ?*/?*) ;;
     *) echo "$tag ABORT: MODEL must be <provider>/<model-id>, got '${MODEL:-}'" >&2; return 1 ;;
+  esac
+  case "$MODEL" in
+    nim/*)
+      if [ -z "$(kit_nim_base_url)" ]; then
+        echo "$tag ABORT: MODEL=$MODEL uses the kit's nim/ provider, which has no default endpoint: set PI_KIT_NIM_BASE_URL (export it or set it in ~/.tao-kit/kit.env) to the base URL, including /v1, of the OpenAI-compatible endpoint that serves this model, e.g. http://localhost:8000/v1" >&2
+        return 1
+      fi ;;
   esac
   var=$(kit_model_key_var "$MODEL")
   if [ -z "$var" ]; then

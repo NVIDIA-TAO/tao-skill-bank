@@ -151,6 +151,15 @@ def test_preflight_bank_check_stops_when_python3_cannot_import_pyyaml(importable
         assert PYYAML_INSTALL in message[0]
 
 
+@pytest.mark.parametrize("path", [SETUP, LAUNCH])
+def test_card_pack_route_needs_the_pi_harness_and_a_request(path):
+    """Pack drivers stop without pi, so no session is told to prefer one unasked."""
+    text = " ".join(path.read_text(encoding="utf-8").split())
+    assert "the `pi` harness is installed" in text
+    assert "the user asked for the card-pack route" in text
+    assert not re.search(r"\bprefer (?:its `driver\.sh`|the pack's|the token-efficient path)", text)
+
+
 def test_packaged_clip_image_resolves_from_skill_info():
     """Image lookup uses the packaged model contract, not config.json."""
     launch = LAUNCH.read_text(encoding="utf-8")
