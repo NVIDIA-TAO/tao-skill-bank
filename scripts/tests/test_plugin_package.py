@@ -893,6 +893,15 @@ def test_helper_scripts_answer_from_the_package_as_from_the_repository(folder):
     assert _run(image, folder).returncode != 0
 
 
+def test_capability_listing_greets_with_the_name_of_the_plugin(folder):
+    """The first line a user reads names the plugin as its manifests do."""
+    display_name = _json(folder / builder.CLAUDE_MANIFEST)["displayName"]
+    for root in (REPO_ROOT, folder):
+        listing = _run([sys.executable, "scripts/list_tao_capabilities.py", "--format", "text"], root)
+        assert listing.returncode == 0, listing.stderr
+        assert listing.stdout.splitlines()[0] == f"Hi, I'm the {display_name} plugin."
+
+
 def test_session_start_hook_runs_from_the_package(folder):
     """The hook of the package prints the same JSON form and names only what the package has."""
     hook = folder / "hooks" / "session_start.sh"

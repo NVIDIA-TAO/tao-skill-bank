@@ -303,7 +303,7 @@ def format_capabilities_text(data: dict[str, Any]) -> str:
     automl_models = [item["model"] for item in automl["supported"]]
 
     lines = [
-        "Hi, I'm the TAO Skill Bank.",
+        "Hi, I'm the NVIDIA TAO Toolkit plugin.",
         "",
         "I turn a TAO model goal, dataset, KPI, and compute target into runnable "
         "NVIDIA TAO workflows for training, AutoML/HPO, evaluation, inference, "
