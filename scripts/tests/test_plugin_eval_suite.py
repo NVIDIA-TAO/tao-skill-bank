@@ -41,7 +41,7 @@ CLOSING = (
 # What the closing must not say again: that nothing outside the skill's folder
 # may be read, in the words of the earlier closing and of the request before it.
 READS_ONLY_THE_SKILL = (
-    "do not read or write anything outside", ", reading only that skill's documentation, outline",
+    "do not read or write anything outside", "eading only that skill's documentation",
 )
 # The one sentence that may follow the closing: a fact about the session, or one
 # more file that the task asks about. {task id: sentence}
