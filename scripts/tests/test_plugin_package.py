@@ -778,6 +778,17 @@ def test_layer_lookup_answers_the_same_in_both_layouts(folder):
     assert skill_layers.layer_root(REPO_ROOT, "models") == REPO_ROOT / "skills" / "models"
 
 
+def test_packaged_helper_scripts_start_cleanly_and_leave_no_bytecode(folder, tmp_path):
+    """The checks of test_helper_scripts_start.py on the scripts folder of the package."""
+    import test_helper_scripts_start as helper_start  # the test module beside this one
+
+    scripts = tmp_path / "plugin" / "scripts"
+    shutil.copytree(folder / "scripts", scripts)
+    assert sorted(path.name for path in scripts.iterdir()) == helper_start.HELPERS
+    helper_start.check_helpers_start(scripts, tmp_path)
+    helper_start.check_no_bytecode_is_written(scripts, tmp_path)
+
+
 def test_helper_scripts_answer_from_the_package_as_from_the_repository(folder):
     def names(root, script, *keys):
         result = _run([sys.executable, f"scripts/{script}", "--format", "json"], root)

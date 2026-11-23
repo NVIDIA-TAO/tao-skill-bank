@@ -278,6 +278,27 @@ Fix the skill, or record the decision in the table the message names. The
 build cannot see a layer folder that code joins from a variable; the helper
 and hook tests in `scripts/tests/test_plugin_package.py` cover that.
 
+**Helper scripts.** An agent starts the shipped helpers from the user's project,
+often as `python3 -I <script>` and on a Python that may lack PyYAML. Every
+helper under `scripts/` that `SUPPORT_FILES` lists must therefore:
+
+- put its own folder on `sys.path` before it imports a sibling module, because
+  `python3 -I` leaves that folder off the import path;
+- set `sys.dont_write_bytecode` when it runs as a script, so that a run leaves
+  no `__pycache__` in the installed plugin folder;
+- when it needs PyYAML and cannot import it, print one line that names the
+  Python, the package and `python3 -m pip install pyyaml`, and exit with code
+  4. `python3 -I` and `python3 -s` leave out the user site, where `pip` installs
+  for a user who is not root; there the line first says to start the script
+  without that option, because the install command would change nothing.
+
+`scripts/tests/test_helper_scripts_start.py` starts every shipped helper as
+`python3 -I -B scripts/<name>.py --help` from another folder, with and without
+PyYAML and on `/usr/bin/python3` when there is one, and pins the seven helpers
+that need PyYAML and both forms of the line; `scripts/tests/test_plugin_package.py`
+repeats the start checks on the generated folder. A helper that starts to need
+PyYAML is added to that list on purpose, not by accident.
+
 **Evaluation suite.** [`evals/evals.json`](../evals/evals.json) replaces every
 per-skill suite when the plugin is evaluated, so a task added to
 `skills/<layer>/<skill>/evals/evals.json` must be added there too, or listed in
@@ -331,7 +352,7 @@ as up to date and is not written. Otherwise:
   `__MACOSX`) is removed, from a signed folder too and without `--force`; the
   signature stays, because it never listed junk. `--check` reports junk on its
   own line and does not count junk that git ignores, such as the `__pycache__`
-  a helper leaves when it is run from the folder.
+  that other code leaves when it imports a helper from the folder.
 - Whatever is removed is listed first. `.git` is never read or removed, and an
   output folder that is itself the root of a git work tree is refused unless
   it lies inside the source checkout.

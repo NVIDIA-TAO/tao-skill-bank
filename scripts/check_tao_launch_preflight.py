@@ -16,14 +16,33 @@ import shlex
 import socket
 import subprocess
 import sys
-
-import yaml
-
 from pathlib import Path
 from typing import Any
 
-from skill_layers import skill_dir
-from tao_slurm_ssh import ssh_command
+# "python3 -I <script>" leaves the folder of the script off the import path, so
+# add it for the sibling modules. A run as a script writes no __pycache__ here.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+if __name__ == "__main__":
+    sys.dont_write_bytecode = True
+
+try:
+    import yaml
+except ModuleNotFoundError:
+    # One line and an exit code of its own instead of a traceback. "python3 -I" and
+    # "python3 -s" leave out the user site, where pip installs for a user who is not
+    # root, so the line names that case before it names the install command.
+    _no_user_site = (
+        " It runs without the user site (python3 -I or -s, or PYTHONNOUSERSITE), which hides "
+        "a PyYAML that pip installed for the user: start the script without that option "
+        "first. If PyYAML is still missing, install it with:"
+    )
+    print(f"error: this Python ({sys.executable}) cannot import PyYAML, which this helper "
+          "script needs." + (_no_user_site if sys.flags.no_user_site else " Install it with:")
+          + " python3 -m pip install pyyaml", file=sys.stderr)
+    raise SystemExit(4)
+
+from skill_layers import skill_dir  # noqa: E402
+from tao_slurm_ssh import ssh_command  # noqa: E402
 
 
 # The bank this script ships in, so it works from a clone or any plugin install
