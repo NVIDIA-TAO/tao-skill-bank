@@ -2,7 +2,7 @@
 name: tao-setup
 description: One-time session setup and orchestration map for the TAO skill bank. Run this first when the TAO skills were installed individually (e.g. from a public skills catalog) so the session gets the cross-skill discovery flow, credential checks, and host preflight that the bundled plugin hook would otherwise inject automatically. Trigger phrases include "set up TAO skills", "TAO session setup", "prepare TAO environment", "TAO getting started".
 license: Apache-2.0
-compatibility: Requires bash and Python 3.10+. Docker plus the NVIDIA container toolkit are needed by most downstream TAO skills but are only checked (not installed) here.
+compatibility: Requires bash and Python 3.10+ with PyYAML (the shared helper scripts import it). Docker plus the NVIDIA container toolkit are needed by most downstream TAO skills but are only checked (not installed) here.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -45,7 +45,9 @@ done
 
 set -a; source /path/to/.env; set +a   # omit if already exported
 
-# 1. Host preflight — most TAO skills dispatch docker containers on a GPU host.
+# 1. Host preflight — the shared helper scripts need PyYAML for python3, and
+#    most TAO skills dispatch docker containers on a GPU host.
+python3 -c 'import yaml' 2>/dev/null && echo "OK: PyYAML" || echo "MISSING: PyYAML (python3 cannot import yaml; the shared helper scripts need it). Install it with: python3 -m pip install pyyaml"
 docker info > /dev/null && echo "OK: docker" || echo "MISSING: docker"
 nvidia-smi > /dev/null && echo "OK: GPU" || echo "MISSING: NVIDIA GPU/driver"
 
@@ -62,6 +64,12 @@ done
 #    ~/.tao-kit/kit.env. Non-invasive; see skills/core/tao-token-efficient-execution.
 bash "${TAO_SKILL_BANK_PATH}/skills/core/tao-token-efficient-execution/scripts/install.sh"
 ```
+
+If the check prints `MISSING: PyYAML`, the machine is not ready: the listing,
+resolver, and launch-preflight helpers under `scripts/` cannot start without
+it. Install PyYAML into the Python that `python3` runs (in a virtual
+environment when the system Python refuses the install), rerun the check, and
+do not report setup as complete before it prints `OK: PyYAML`.
 
 If Docker or the NVIDIA host runtime is missing, use the
 `tao-setup-nvidia-gpu-host` skill — it checks and (with approval) installs
