@@ -1747,7 +1747,11 @@ def check_slurm_runtime(platform: dict[str, Any]) -> bool:
     default_partition = defaults.get("partition")
     default_time = float(defaults.get("time_hours", 4))
     default_timeout = float(defaults.get("timeout_hours", max(default_time - 0.2, 0.1)))
-    max_time = float(defaults.get("max_time_hours", default_time))
+    # A wall-time limit belongs to the user's partition, so none is assumed: it is
+    # enforced only when SLURM_MAX_TIME_HOURS or the platform metadata names one.
+    max_time = parse_float_env("SLURM_MAX_TIME_HOURS")
+    if max_time is None and defaults.get("max_time_hours") is not None:
+        max_time = float(defaults["max_time_hours"])
 
     requested_partition = os.environ.get("SLURM_PARTITION", default_partition)
     requested_time = parse_float_env("SLURM_TIME_HOURS")
@@ -1770,12 +1774,12 @@ def check_slurm_runtime(platform: dict[str, Any]) -> bool:
         requested_timeout = min(default_timeout, max(requested_time - 0.1, 0.1))
     print(f"SLURM internal timeout: SLURM_TIMEOUT_HOURS={requested_timeout:g}")
 
-    if requested_time > max_time:
+    if max_time is not None and requested_time > max_time:
         print(
-            "SLURM runtime exceeds packaged partition limit: "
+            "SLURM runtime exceeds the configured wall-time limit: "
             f"requested {requested_time:g}h > max {max_time:g}h. "
-            "Use SLURM_TIME_HOURS=4 or provide a different partition with a "
-            "known-good wall-time limit before launch."
+            f"Use SLURM_TIME_HOURS={max_time:g} or less, or raise "
+            "SLURM_MAX_TIME_HOURS when the partition allows a longer wall time."
         )
         return False
     if requested_timeout >= requested_time:

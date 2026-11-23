@@ -87,7 +87,8 @@ For SLURM:
    Use the selected platform helper's `Resource defaults` for runtime values.
    For the packaged SLURM defaults, generate launchers with
    `SLURM_TIME_HOURS=4` and `SLURM_TIMEOUT_HOURS=3.8`; never invent a
-   12-hour default for the 4-hour partition list.
+   12-hour default. A longer wall time is the user's choice and must fit
+   the limit of their partition.
    Launching the orchestrator with `nohup` or in the background is allowed for
    durability, but it does not satisfy chat monitoring by itself. After launch,
    keep a foreground chat-side polling loop attached until terminal state or
