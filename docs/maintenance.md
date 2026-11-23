@@ -358,16 +358,20 @@ was invoked. Every prompt therefore ends with the same closing, `CLOSING` in
 that test file. It asks the agent to open and read the skill's files, with a
 file-reading tool or a read-only command such as `cat`, and to describe the
 plan only. It forbids executing a script or program, starting a container or
-job, using the network or web search, and reading or writing anything outside
-the skill's folder. No prompt may forbid all commands, tools, or file reads,
-because an agent that reads files through commands must be allowed to read the
-skill. One sentence may follow the closing, a fact about the session or one
-more file that the task asks about, and only when `AFTER_CLOSING` lists it for
-that task. The tests also require that a prompt names no skill, no absolute or
+job, using the network or web search, and writing any file. It says that
+listing the installed skills to find the right one is fine and that the plan is
+to be based on that skill's own files: an agent has to find the skill before it
+can read it, and under a closing that forbade reading anything outside the
+skill's folder the judge marked that listing as a wrong action. No prompt may
+forbid all commands, tools, or file reads, because an agent that reads files
+through commands must be allowed to read the skill. One sentence may follow the
+closing, a fact about the session or one more file that the task asks about,
+and only when `AFTER_CLOSING` lists it for that task. The tests also require
+that a prompt names no skill, no absolute or
 home-folder path, and no shell variable; that no request is cut out of the
 description of its skill; that no task expects a script to be run; and that
 every expected behaviour says what the plan contains and none denies every
-command or tool.
+command or tool or limits reading to the folder of the skill.
 
 **Verification output.** Verification and evaluation add files to the folder.
 The build never writes these names, `--check` ignores them, and a rebuild

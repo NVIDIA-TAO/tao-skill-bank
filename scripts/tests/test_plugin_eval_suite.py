@@ -25,13 +25,23 @@ SUITE = REPO_ROOT / "evals" / "evals.json"
 # was invoked. Every prompt therefore ends with this closing. It asks for the
 # skill's files to be read and allows a read-only command for that, because an
 # agent that reads files through commands does not open the skill under a
-# prompt that forbids all commands.
+# prompt that forbids all commands. It forbids writing a file and says that
+# listing the installed skills is fine: an agent has to find the skill before
+# it can read it, and under "do not read or write anything outside that skill's
+# folder", which the closing said before, the judge marked that listing as a
+# wrong action.
 CLOSING = (
     "To do this, open and read that skill's files (its SKILL.md and the references it points "
     "to); reading them is expected and allowed, with a file-reading tool or a read-only command "
     "such as cat. Do not execute any script or program, do not start any container or job, do "
-    "not use the network or web search, and do not read or write anything outside that skill's "
-    "folder. Describe the plan only."
+    "not use the network or web search, and do not write any file. Listing the installed skills "
+    "to find the right one is fine; base the plan on that skill's own files. Describe the plan "
+    "only."
+)
+# What the closing must not say again: that nothing outside the skill's folder
+# may be read, in the words of the earlier closing and of the request before it.
+READS_ONLY_THE_SKILL = (
+    "do not read or write anything outside", ", reading only that skill's documentation, outline",
 )
 # The one sentence that may follow the closing: a fact about the session, or one
 # more file that the task asks about. {task id: sentence}
@@ -105,6 +115,12 @@ REPORTED = ("Does not", "Says", "States", "Explains", "Notes", "Describes")
 # allows a read-only command: an agent that read the skill with one would fail it.
 DENIES_ALL_COMMANDS = re.compile(
     r"\b(?:no|not|never|without)\b[^.;]*?\b(?:commands?|tools?)\b", re.I
+)
+# An entry that limits reading to the folder of the skill contradicts the closing
+# too, which says that listing the installed skills is fine: the judge is then
+# told again to mark that listing as a wrong action.
+LIMITS_READING_TO_THE_SKILL = re.compile(
+    r"\boutside\b[^.;]{0,30}?\bskill(?:'s)?\b[^.;]{0,20}?\b(?:folder|directory|files)\b", re.I
 )
 # The one prompt that uses a documented shorthand of a skill name: it tests that
 # the shorthand is resolved. Every other prompt describes the need instead.
@@ -222,17 +238,25 @@ def test_every_prompt_ends_with_the_closing(suite):
         assert "say NONE" not in request, f"{task['id']} can be answered without opening a skill"
 
 
-def test_the_closing_asks_for_reading_and_forbids_execution_network_and_other_folders():
-    reading, forbidden, plan = CLOSING.split(". ")
+def test_the_closing_asks_for_reading_allows_finding_the_skill_and_forbids_the_rest(suite):
+    reading, forbidden, finding, plan = CLOSING.split(". ")
     assert "open and read that skill's files" in reading
     assert "reading them is expected and allowed" in reading
     # Without the read-only command an agent that has no file-reading tool cannot comply.
     assert re.search(r"\bfile-reading tool or a read-only command\b", reading)
     assert not re.search(r"\b(?:not|never|no|without)\b", reading, re.I)
     for banned in ("execute any script or program", "start any container or job",
-                   "use the network or web search",
-                   "read or write anything outside that skill's folder"):
+                   "use the network or web search", "write any file"):
         assert f"do not {banned}" in forbidden.lower(), banned
+    # An agent lists the installed skills to find the one to read. The closing says
+    # so, and nothing in it or before it limits reading to the folder of the skill.
+    assert finding == ("Listing the installed skills to find the right one is fine; base the "
+                       "plan on that skill's own files")
+    assert not re.search(r"\b(?:not|never|no|without)\b", finding, re.I)
+    assert "read" not in forbidden
+    for task in suite:
+        for phrase in READS_ONLY_THE_SKILL:
+            assert phrase not in task["question"], f"{task['id']} says {phrase!r}"
     assert plan == "Describe the plan only."
 
 
@@ -302,6 +326,21 @@ def test_no_expected_behaviour_denies_every_command_or_tool(suite):
     offenders = [
         (task["id"], entry) for task in suite for entry in task["expected_behavior"]
         if DENIES_ALL_COMMANDS.search(entry)
+    ]
+    assert offenders == []
+
+
+def test_no_expected_behaviour_limits_reading_to_the_folder_of_the_skill(suite):
+    for entry in ("Does not execute any script or read any path outside the skill's folder",
+                  "Reads nothing outside that skill's folder",
+                  "Does not open a file outside the skill directory"):
+        assert LIMITS_READING_TO_THE_SKILL.search(entry), entry
+    for entry in ("Does not execute any script or write any file",
+                  "Names the files of the skill that the plan is based on"):
+        assert not LIMITS_READING_TO_THE_SKILL.search(entry), entry
+    offenders = [
+        (task["id"], entry) for task in suite for entry in task["expected_behavior"]
+        if LIMITS_READING_TO_THE_SKILL.search(entry)
     ]
     assert offenders == []
 
