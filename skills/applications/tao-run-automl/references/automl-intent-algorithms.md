@@ -36,8 +36,8 @@ Extract these fields for a default run:
 | `network_arch` | Yes | `"cosmos-rl"` | Read from `<skill_dir>/references/skill_info.yaml` after resolving `model_skill`. |
 | `action` | Yes | `"train"`, `"distill"`, `"prune"`, `"quantize"` | Default to `train` only for train-stage requests. For compression requests, use the named action. |
 | `platform` | Yes | `"brev"`, `"slurm"`, `"local-docker"`, `"kubernetes"` | After the user confirms they want AutoML, discover the execution platforms from the installed platform skills (tao-run-on-docker / -slurm / -kubernetes / -brev, plus any external one); on a runtime that surfaces only the core router skills, read `skills/platform/tao-run-on-*/SKILL.md` frontmatter. Ask them to choose from those platforms. |
-| action dataset/checkpoint inputs | Yes | `"s3://bucket/data/subset"`, `"/lustre/<project>/datasets/<model>/train"`, `prune.checkpoint=/...`, or `quantize.model_path=/...` | User provides a root URI/path, exact spec-key paths, parent job IDs, or the model skill declares a default profile for this exact network/action/use case. |
-| `eval_dataset_uri` or direct eval spec paths | Model-dependent | `"s3://bucket/data/eval"`, `"/lustre/<project>/datasets/<model>/eval"`, or `custom.val_dataset.media_path=/...` | Ask only if the model skill's Per-Action Dataset Requirements require an eval/validation source and no default profile supplies it. |
+| action dataset/checkpoint inputs | Yes | `"s3://bucket/data/subset"`, `"/lustre/<project>/datasets/<model>/train"`, `prune.checkpoint=/...`, or `quantize.model_path=/...` | User provides a root URI/path, exact spec-key paths, or parent job IDs. No skill ships a default dataset: when none is given, follow the model skill's rule for a missing dataset and ask; never substitute one. |
+| `eval_dataset_uri` or direct eval spec paths | Model-dependent | `"s3://bucket/data/eval"`, `"/lustre/<project>/datasets/<model>/eval"`, or `custom.val_dataset.media_path=/...` | Ask only if the model skill's Per-Action Dataset Requirements require an eval/validation source. |
 | `image` | Yes | `"nvcr.io/..."` | Resolve the default with `scripts/resolve_tao_image.py --model <requested_model> --action <action>`, show it to the user, and require confirmation or `image=<override>` before creating the AutoML runner. |
 | `metric` | No | `"<metric_name>"` | Use the model skill recommendation or ask if unclear. Do not choose model-specific metrics from this AutoML skill. |
 | `direction` | No | `"minimize"` or `"maximize"` | **Only needed if your metric name doesn't contain `"loss"` AND you want to minimize, or contains `"loss"` AND you want to maximize.** Otherwise the implicit "contains 'loss' → minimize, else maximize" rule applies. |
@@ -45,7 +45,7 @@ Extract these fields for a default run:
 | `long_running_enabled` | Yes | `true` | Ask during launch intake. If enabled, keep the agent attached and emit status until completion. Default: enabled. |
 | `status_interval_minutes` | Yes | `5` | Ask during launch intake. Default: 5 minutes. |
 | required credentials | Platform/model-dependent | `SLURM_USER`, `SLURM_HOSTNAME`, `SSH_KEY_PATH` or `SSH_AUTH_SOCK`, `HF_TOKEN` | First read the chosen platform skill's `## Credentials` section and `references/skill_info.yaml` (required_credentials / credential_groups), satisfy required credential groups, then add selected-model credentials. Do not ask for unrelated platform credentials. |
-| compute shape | Model-dependent | `num_gpus=4`, `num_nodes=1` | Ask only for model-required hardware fields that are not provided by the platform/default profile. |
+| compute shape | Model-dependent | `num_gpus=4`, `num_nodes=1` | Ask only for model-required hardware fields that are not provided by the platform. |
 | `llm_endpoint` / `base_url` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"https://inference-api.nvidia.com"` | Resolve from user input or `AUTOML_LLM_ENDPOINT`; pass explicitly in `automl_settings`. |
 | `llm_model` / `model` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"gcp/google/gemini-3.1-pro-preview"` | Resolve from user input or `AUTOML_LLM_MODEL`; pass explicitly in `automl_settings`. |
 | `llm_api_key` / `api_key` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"nvapi-..."` or `"sk-..."` | Resolve from `AUTOML_LLM_API_KEY` or `NVIDIA_API_KEY`. Do not print or log the value; if unavailable, stop for credential setup instead of falling back silently. |
@@ -54,7 +54,7 @@ Use these quick-start AutoML defaults without asking:
 
 | Field | Default |
 |---|---|
-| `algorithm` | `bayesian`, unless the user/model default profile explicitly selects another algorithm |
+| `algorithm` | `bayesian`, unless the user explicitly selects another algorithm |
 | `automl_max_recommendations` | model/workflow default if declared, otherwise `10` |
 | `automl_hyperparameters` | `None` so AutoML uses dataclass-schema params with `automl_enabled=true` |
 | `custom_param_ranges` | `None` so ranges/options/defaults come from the generated dataclass schema |
