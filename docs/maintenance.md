@@ -173,11 +173,36 @@ in this order:
 The Cursor manifests are provided so the plugin loads in Cursor; the install
 instructions in `README.md` cover Claude Code and Codex only.
 
-The SessionStart hook runs as two commands (`identity`, `context`) because
-Claude Code replaces hook output longer than 10,000 characters with a short
-preview, and `AGENTS.md` alone is longer than that.
-`scripts/tests/test_session_start_hook.py` keeps each part under the limit; if
-`AGENTS.md` grows enough to break it, shorten the file or add a third part.
+The SessionStart hook prints one JSON object,
+`{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "..."}}`,
+and nothing else. Claude Code takes plain text or this object from a
+session-start hook. The Cursor CLI takes JSON only and drops plain text. The
+field Cursor documents for this event is `additional_context`; its page on
+Claude Code hooks says in general that it supports the nested
+`hookSpecificOutput` responses and gives the mapping for other events only.
+That the Cursor CLI adds the `additionalContext` of this object to a session
+was observed with version 2026.11.19 and is not documented, so check it again
+when Cursor changes its hooks. The comment at the top of
+`hooks/session_start.sh` names the page of each host. The script builds the
+object with `awk`, so it needs no Python, and `AGENTS.md` must be UTF-8. Codex
+documents the same object, but it lists no hook for a plugin folder whose root
+`plugin.json` declares the Agent Plugins schema, which the generated package
+has, and it skips a plugin hook that the user has not trusted. Do not count on
+the hook in Codex.
+
+The hook runs as two commands (`identity`, `context`) because Claude Code
+replaces the context of one hook command that is longer than 10,000 characters
+with a file path and a short preview, and `AGENTS.md` alone is longer than
+that. `scripts/tests/test_session_start_hook.py` keeps the text and the whole
+output of each part under the limit; if `AGENTS.md` grows enough to break it,
+shorten the file or add a third part. The context part states the plugin folder
+in one line in every host, because only Claude Code gives a hook a way to
+export `TAO_SKILL_BANK_PATH`. It names the card packs only where the `pi`
+harness is installed, and for a host without Docker it prints the read-only
+check command of `tao-setup-nvidia-gpu-host`, never an install command. A path
+that the hook prints for a shell, in that command and in the export line, is
+single-quoted by the hook itself: `printf %q` of bash 3.2 breaks a multi-byte
+character in a UTF-8 locale, and the output is then not valid JSON.
 
 Codex and Cursor do not load an `AGENTS.md` from an installed plugin; they read
 the one at the root of the project a session works in.

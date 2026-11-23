@@ -23,6 +23,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import build_plugin_package as builder  # noqa: E402
 import skill_layers  # noqa: E402
+import test_session_start_hook as hook_checks  # noqa: E402
 
 # The package is built from the files git tracks, so an extracted archive cannot build it.
 pytestmark = pytest.mark.skipif(not (REPO_ROOT / ".git").exists(), reason="needs a git checkout")
@@ -820,16 +821,31 @@ def test_helper_scripts_answer_from_the_package_as_from_the_repository(folder):
 
 
 def test_session_start_hook_runs_from_the_package(folder):
+    """The hook of the package prints the same JSON form and names only what the package has."""
+    hook = folder / "hooks" / "session_start.sh"
+    for part in ("identity", "context"):
+        output = hook_checks.run_hook(part, hook=hook)
+        text = hook_checks.context_of(output)
+        assert 0 < len(text) < len(output) < HOOK_OUTPUT_CAP, part
+    line = hook_checks.folder_line(text)
+    assert line.startswith(f"TAO plugin folder: `{folder}`. It is not exported here")
+    assert f"`{folder}/skills`" in line and f"`{folder}/scripts`" in line
+    # The Docker hint names the check script where the flat layout has it.
+    script = folder / "skills" / hook_checks.SETUP_SCRIPT
+    assert script.is_file()
+    assert hook_checks.check_command(text) == [
+        "bash", str(script), "--backend", "docker", "--check-only"]
+    # A README is named only when the package ships one.
+    assert ("README.md" in text) == (folder / "README.md").is_file()
+    # Card packs are found one level below skills/ as they are two levels below it.
     card_folders = (REPO_ROOT / "skills").glob("*/*/cards")
     packs = sorted(path.parent.name for path in card_folders if path.is_dir())
-    announcement = f"Card packs are available for: {' '.join(packs)}."
-    for part in ("identity", "context"):
-        result = _run(["bash", "hooks/session_start.sh", part], folder)
-        assert result.returncode == 0, result.stderr
-        assert 0 < len(result.stdout) < HOOK_OUTPUT_CAP, part
-    assert f"TAO skill bank root: `{folder}`" in result.stdout
-    assert packs and announcement in result.stdout
-    assert announcement in _run(["bash", "hooks/session_start.sh", "context"], REPO_ROOT).stdout
+    announcement = f"card packs exist for: {' '.join(packs)}."
+    with_pi = hook_checks.hook_path("pi")
+    assert packs and announcement in hook_checks.context_of(
+        hook_checks.run_hook("context", hook=hook, path=with_pi))
+    assert announcement in hook_checks.context_of(hook_checks.run_hook("context", path=with_pi))
+    assert "ard pack" not in text
 
 
 def test_skill_code_finds_the_package_root_and_its_neighbours(folder):
