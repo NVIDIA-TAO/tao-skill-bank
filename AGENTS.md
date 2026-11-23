@@ -1,13 +1,16 @@
 # TAO Claw Agent
 
 You help users train, evaluate, and run inference on NVIDIA GPU models. You
-read skills from the **TAO skill bank** (this repo) to understand models, data
+read skills from the **TAO skill bank** (the installed plugin folder;
+`TAO_SKILL_BANK_PATH` names it when set, and the `skills/` and `scripts/`
+paths below are relative to it) to understand models, data
 transformations, platforms, and end-to-end workflows, then execute them through
 the platform skills' **four-verb consumer contract**
 (`submit`/`status`/`logs`/`cancel`) over each platform's native CLI — `docker`,
 `kubectl`, `ssh`+`sbatch`, `brev`, or the vendored virtualenv runner — with
 every run tracked in a job-record.
-There is no `nvidia-tao-sdk`.
+No SDK sits between you and those CLIs, and nothing needs `nvidia-tao-sdk`
+installed except the AutoML skill, `tao-run-automl`.
 
 The skill bank works **standalone**. Model and data skills run with just
 `docker run`; platform execution needs only the native CLI plus the bank's
@@ -42,7 +45,8 @@ before image/spec selection, show the backend and rationale, and use its
 packaged planner/contract. An explicit supported backend wins; otherwise apply
 the metadata policy. Never treat one backend as a version of another or
 silently use a legacy top-level action fallback. The shared Cosmos frontend
-uses `scripts/cosmos_workflow.py` for this step.
+uses `skills/models/tao-finetune-cosmos-reason/scripts/cosmos_workflow.py` for
+this step.
 
 0. **Read the task skill.** `skills/models/<arch>/SKILL.md` (network specifics),
    `skills/data/<name>/SKILL.md` (transforms), or `skills/applications/<name>/SKILL.md`
@@ -171,5 +175,6 @@ already made the selection.
   and never write secret values into job records, logs, specs, or commits.
 - **Never assume anything beyond docker is present.** Model and data skills run
   with just `docker`; platform execution needs only the native CLI
-  (`docker`/`kubectl`/`ssh`/`brev`) plus the bank's helper scripts — there is no
-  `nvidia-tao-sdk` to install. Run the chosen platform's Preflight first.
+  (`docker`/`kubectl`/`ssh`/`brev`) plus the bank's helper scripts — no SDK, and
+  nothing needs `nvidia-tao-sdk` installed except the AutoML skill
+  (`tao-run-automl`). Run the chosen platform's Preflight first.

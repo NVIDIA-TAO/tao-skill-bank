@@ -848,6 +848,23 @@ def test_session_start_hook_runs_from_the_package(folder):
     assert "ard pack" not in text
 
 
+def test_identity_text_is_true_of_the_repository_and_of_the_package(folder):
+    """AGENTS.md is printed into sessions that work in other projects: what it names must exist."""
+    named = re.compile(r"`((?:skills|scripts)/[\w./-]+\.(?:py|sh|md|yaml|json))`")
+    for root in (REPO_ROOT, folder):
+        text = _text(root / "AGENTS.md")
+        paths = named.findall(text)
+        assert any(path.endswith("/cosmos_workflow.py") for path in paths)
+        for path in paths:
+            assert (root / path).is_file(), f"{root.name}/AGENTS.md names {path}"
+        # The bank is the plugin folder, not the project a session works in.
+        assert "this repo" not in text and "the installed plugin folder" in text
+        # versions.yaml pins nvidia-tao-sdk for AutoML, so the text must not deny the package.
+        assert "nvidia-tao-sdk==" in _text(root / "versions.yaml")
+        assert not re.search(r"(?i)there is no\s+`?nvidia-tao-sdk", text)
+        assert text.count("nothing needs `nvidia-tao-sdk`") == 2
+
+
 def test_skill_code_finds_the_package_root_and_its_neighbours(folder):
     root = folder.resolve()
     for relative in (
