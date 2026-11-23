@@ -79,14 +79,17 @@ AGENT_PLUGINS_KEYS = {
 }
 AGENT_PLUGINS_NAME = re.compile(r"^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 TOP_LEVEL = {
-    ".claude-plugin", ".codex-plugin", ".cursor-plugin", "AGENTS.md", "LICENSE", "catalog", "evals",
-    "hooks", "plugin.json", "scripts", "skills", "templates", "versions.yaml",
+    ".claude-plugin", ".codex-plugin", ".cursor-plugin", "AGENTS.md", "LICENSE", "README.md",
+    "catalog", "evals", "hooks", "plugin.json", "scripts", "skills", "templates", "versions.yaml",
 }
 REPOSITORY_ONLY = (
     "scripts/tests/", "scripts/ci/", "templates/skill-skeleton/", "templates/tests/", "docs/",
     "integrations/", ".github/", ".agents/",
 )
 HOOK_OUTPUT_CAP = 10_000
+# What the README of the package names in code spans: paths from the root of the
+# package, file names, skills and tools.
+README_NAMES = re.compile(r"`([\w.-]+(?:/[\w.-]+)*/?)`")
 
 
 def _repository_skills():
@@ -177,7 +180,7 @@ def test_required_root_files_are_present(folder):
     for relative in (
         "plugin.json", ".claude-plugin/plugin.json", ".cursor-plugin/plugin.json",
         ".codex-plugin/plugin.json", "evals/evals.json", "LICENSE", "AGENTS.md", "versions.yaml",
-        "hooks/hooks.json", "hooks/session_start.sh", "scripts/skill_layers.py",
+        "README.md", "hooks/hooks.json", "hooks/session_start.sh", "scripts/skill_layers.py",
         "scripts/tao_agent_identity.py",
         "catalog/schemas.manifest.json", "catalog/automl_support.json",
     ):
@@ -231,6 +234,66 @@ def test_codex_installer_is_not_shipped_and_no_shipped_file_names_it(folder):
     for relative, text in _shipped_texts(folder):
         assert not re.search(r"\bcp\b[^\n]*AGENTS\.md", text), relative
         assert "AGENTS.md.bak" not in text, relative
+
+
+def test_package_readme_is_the_one_kept_for_the_package_and_true_of_it(folder):
+    """README.md of the package comes from docs/; the repository's own README stays out."""
+    from test_session_start_hook import HOOK_TOOLS  # what the hook is run with in its tests
+
+    source = builder.SUPPORT_FILE_SOURCES["README.md"]
+    readme = _text(folder / "README.md")
+    assert readme == _text(REPO_ROOT / source) != _text(REPO_ROOT / "README.md")
+    assert not (folder / source).exists()
+    assert readme.startswith(f"# NVIDIA TAO Toolkit plugin (`{builder.PLUGIN_NAME}`)\n")
+    # `claude plugin validate` asks for a README of at least 40 words in the plugin folder.
+    assert len(readme.split()) >= 40
+
+    # What it names is there: a path from the root, a file name somewhere, a skill.
+    names = {path.name for path in _files(folder)}
+    for token in sorted(set(README_NAMES.findall(readme))):
+        if "/" in token:
+            assert (folder / token).exists(), token
+        elif re.search(r"\.(?:md|json|yaml|sh|py)$", token) or token == "LICENSE":
+            assert token in names, token
+        elif token.startswith("tao-"):
+            assert (folder / "skills" / token / "SKILL.md").is_file(), token
+    assert "`skills/<skill>/`" in readme and "python3 <this folder>/scripts/" in readme
+    # It has no relative link, which would point somewhere else in the repository.
+    assert all(target.startswith("https://") for target in re.findall(r"\]\(([^)]+)\)", readme))
+    repository = _json(folder / "plugin.json")["repository"]
+    assert set(re.findall(r"https://[^\s)]+[\w/]", readme)) == {
+        repository, repository + "/issues", repository + "/blob/main/SECURITY.md"}
+    assert (REPO_ROOT / "SECURITY.md").is_file()
+
+    # Requirements: the tools of the hook, the Python of the setup skill, PyYAML.
+    for tool in HOOK_TOOLS:
+        assert f"`{tool}`" in readme, tool
+    # A host starts the hook as a program, so its first line is what finds bash.
+    assert _text(folder / "hooks/session_start.sh").startswith("#!/usr/bin/env bash\n")
+    assert "`/usr/bin/env`" in readme
+    assert "Python 3.10 or later" in readme
+    assert "Python 3.10+" in _text(folder / "skills/tao-setup/SKILL.md").split("---")[1]
+    assert "`python3 -m pip install pyyaml`" in " ".join(readme.split())
+
+    # The hook prints JSON, as the README says. Credentials: the section the hook
+    # points at lists the names the hook looks for.
+    hook = _text(folder / "hooks/session_start.sh")
+    assert "hookSpecificOutput" in hook, "the README describes a hook that prints one JSON object"
+    assert "The Credentials section of" in hook
+    looked_for = re.search(r'_tao_cred_vars="([^"]+)"', hook).group(1).replace("\\\n", " ").split()
+    section = readme.split("\n## Credentials\n")[1].split("\n## ")[0]
+    assert sorted(re.findall(r"`([A-Z][A-Z0-9_]+)`", section)) == sorted(looked_for)
+    assert len(looked_for) == 8
+
+    # Licence: the one the manifests and the LICENSE file state, in the section on it.
+    licence = readme.split("\n## Licence\n")[1].split("\n## ")[0]
+    assert "The plugin is licensed under the Apache License 2.0" in " ".join(licence.split())
+    assert len(re.findall(r"(?i)licen[cs]ed under", licence)) == 1
+    assert _json(folder / "plugin.json")["license"] == "Apache-2.0"
+    assert "Apache License" in _text(folder / "LICENSE") and "Version 2.0" in _text(folder / "LICENSE")
+    for name in _repository_skills():
+        frontmatter = _text(folder / "skills" / name / "SKILL.md").split("---", 2)[1]
+        assert re.search(r"^license: \S", frontmatter, re.M), name
 
 
 def test_every_listed_exception_still_applies(package, folder):
@@ -343,6 +406,16 @@ def test_codex_manifest_can_be_left_out(package):
     without = builder.build(REPO_ROOT, codex_manifest=False)
     assert set(package.files) - set(without.files) == {builder.CODEX_MANIFEST}
     assert all(without.files[path] == package.files[path] for path in without.files)
+    # The README is the same file in both builds. It names the folder of that
+    # manifest as one a build may leave out, and no other path this build lacks.
+    readme = without.files["README.md"][0].decode("utf-8")
+    left_out = builder.CODEX_MANIFEST.split("/")[0] + "/"
+    assert f"unless the build left it out, `{left_out}`" in " ".join(readme.split())
+    assert readme.count(left_out) == 1
+    shipped = builder.with_folders(without.files)
+    paths = {token for token in README_NAMES.findall(readme) if "/" in token}
+    assert left_out in paths
+    assert {token for token in paths if token.rstrip("/") not in shipped} == {left_out}
 
 
 # ─────────────────────────────── build behaviour ───────────────────────────────
@@ -1308,6 +1381,17 @@ def test_small_checkout_builds_and_exit_codes_are_0_1_and_2(small):
         code, _, error = small.main(*options)
         assert code == 2 and "evals/evals.json is not valid JSON" in error
     assert _text(small.output / "AGENTS.md") == "# Agents!\n"
+
+
+def test_a_support_file_kept_at_another_path_ships_under_its_package_path(small, monkeypatch):
+    monkeypatch.setitem(builder.SUPPORT_FILES, "README.md", "readme of the package")
+    small.write("README.md", "# Repository\n")
+    small.fails_with("the source checkout has no docs/plugin-package-readme.md")
+    small.write("docs/plugin-package-readme.md", "# Package\n")
+    code, _, error = small.main()
+    assert (code, error) == (0, "")
+    assert _text(small.output / "README.md") == "# Package\n"
+    assert not (small.output / "docs").exists()
 
 
 def test_build_stops_when_a_skill_has_no_task_in_the_root_suite(small):

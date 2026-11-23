@@ -21,7 +21,8 @@ What a build does:
     SKILL_FILES_LEFT_OUT and ONE_SKILL_FILES_LEFT_OUT name: per-skill signing
     files, tests and their fixtures, and per-skill evaluation configs;
   * copies SUPPORT_FILES: the hook, the helper scripts and templates the skills
-    call, AGENTS.md, versions.yaml, LICENSE and the plugin-level evaluation suite;
+    call, AGENTS.md, versions.yaml, LICENSE, the plugin-level evaluation suite
+    and the README of the package, which the repository keeps under docs/;
   * rewrites skills/<layer>/<skill> references in every text file it copies, and
     applies PACKAGE_EDITS, the hand-written edits for code that counts directory
     levels or joins a layer-relative path and for text that is only true of the
@@ -117,6 +118,8 @@ SUPPORT_FILES = {
     "AGENTS.md": "agent guidance; the session-start hook prints it, and "
                  "scripts/tao_agent_identity.py adds it to a project",
     "LICENSE": "licence of everything in the package",
+    "README.md": "what the plugin is and needs, for people and for plugin validators; the "
+                 "session-start hook names its Credentials section",
     "versions.yaml": "image and wheel pins that skills and scripts/resolve_*.py read",
     EVAL_SUITE: "plugin-level evaluation suite",
     "hooks/hooks.json": "registers the session-start hook",
@@ -136,6 +139,12 @@ SUPPORT_FILES = {
     "scripts/tao_slurm_ssh.py": "SSH helper the launch preflight and tao-run-deft-pas import",
     "templates/k8s/": "job templates tao-run-on-kubernetes renders",
     "templates/slurm/": "sbatch templates tao-run-on-slurm renders",
+}
+
+# Support files that the repository keeps at another path, because the path they
+# have in the package is taken there: path in the package -> path in the repository.
+SUPPORT_FILE_SOURCES = {
+    "README.md": "docs/plugin-package-readme.md",  # README.md is the repository's own
 }
 
 # Shipped files that name a file under scripts/ of the repository which the
@@ -1219,17 +1228,18 @@ def build(source: Path = REPO_ROOT, *, codex_manifest: bool = True) -> Package:
         add(path, package_path)
 
     for entry in SUPPORT_FILES:
+        kept_at = SUPPORT_FILE_SOURCES.get(entry, entry)
         if entry.endswith("/"):
             matches = [path for path in sorted(tracked) if path.startswith(entry)]
         else:
-            matches = [entry] if entry in tracked else []
+            matches = [kept_at] if kept_at in tracked else []
         if not matches:
             hint = ""
             if entry == "scripts/skill_layers.py":
                 hint = "; its helper scripts predate the flat package and cannot run in it"
-            problems.append(f"the source checkout has no {entry}{hint}")
+            problems.append(f"the source checkout has no {kept_at}{hint}")
         for path in matches:
-            add(path, path)
+            add(path, entry if path == kept_at != entry else path)
 
     for path in sorted(edits):
         if path in tracked:
