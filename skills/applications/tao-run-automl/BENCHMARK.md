@@ -9,9 +9,10 @@ Recommended for publication based on the completed evaluation evidence in this r
 ## Evaluation Metadata
 
 - Skill: `tao-run-automl`
-- Evaluation date: 2026-10-16
-- Evaluator version: `1.5.6`
-- Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
+- Validation status: `passed`
+- Evaluation date: 2026-11-20
+- Evaluator version: `1.6.10`
+- Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-5-5`), Codex (`openai/openai/gpt-6.1-sol`)
 - Tasks: 2 evaluation tasks (2 positive)
 - Dataset digest: `sha256:6e6a8b1880c4283f37cfa5a864e7adf4d95f63ad1728111063fdc09ab2ac0604` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 1
@@ -20,6 +21,20 @@ Recommended for publication based on the completed evaluation evidence in this r
 - Tier 3 evidence: required for publication
 
 Each task attempt ran in its own isolated sandbox pod.
+
+## Tier 1 LLM Provenance
+
+SkillSpector provider, model, analyzer revision, and determinism evidence retained for this scan.
+
+| Skill | Provider | Adapter | Analyzer | Model | Revision | Determinism |
+| --- | --- | --- | --- | --- | --- | --- |
+| tao-run-automl | nv_inference | openai | mcp_tool_poisoning | `aws/anthropic/bedrock-claude-opus-5-5` | `2.13.5` | nondeterministic / provider_defaults |
+| tao-run-automl | nv_inference | openai | semantic_developer_intent | `aws/anthropic/bedrock-claude-opus-5-5` | `2.13.5` | nondeterministic / provider_defaults |
+| tao-run-automl | nv_inference | openai | semantic_quality_policy | `aws/anthropic/bedrock-claude-opus-5-5` | `2.13.5` | nondeterministic / provider_defaults |
+| tao-run-automl | nv_inference | openai | semantic_security_discovery | `aws/anthropic/bedrock-claude-opus-5-5` | `2.13.5` | nondeterministic / provider_defaults |
+| tao-run-automl | nv_inference | openai | meta_analyzer | `aws/anthropic/bedrock-claude-opus-5-5` | `2.13.5` | nondeterministic / provider_defaults |
+
+- Controls for `tao-run-automl`: temperature=not set (source=provider_default, forwarded=no); seed=not set (source=unset, forwarded=no); reasoning_effort=not set (source=provider_default, forwarded=no)
 
 ## What This Report Answers
 
@@ -35,12 +50,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.2% — baseline ran, but no comparable score was available; uplift unavailable | 89.2% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 99.5% — baseline ran, but no comparable score was available; uplift unavailable | 78.1% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 50.0% → 100.0% (+50.0 points) | 50.0% → 100.0% (+50.0 points) |
+| Correctness | 50.0% → 100.0% (+50.0 points) | 50.0% → 80.0% (+30.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 47.5% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 50.0% → 100.0% (+50.0 points) | 58.3% → 100.0% (+41.7 points) |
-| Efficiency | 95.8% — baseline ran, but no comparable score was available; uplift unavailable | 98.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 58.3% → 100.0% (+41.7 points) | 58.3% → 66.7% (+8.4 points) |
+| Efficiency | 97.4% — baseline ran, but no comparable score was available; uplift unavailable | 96.4% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -48,28 +63,39 @@ Example: `47.0% → 92.0% (+45.0 points)` means the skill-assisted run scored 92
 
 A partial dimension was calculated from only the available configured signals; review the detailed report before relying on it.
 
+### Comparison details
+
+Shared-source comparisons use the same signals and weights on both conditions. They do not replace the full dimension scores above or change the publication verdict.
+
+| Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
+| --- | --- | --- | --- | --- |
+| claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
+| claude-code | Efficiency | Token-only comparison | 98.8% → 94.9% (-3.9 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
+| codex | Efficiency | Token-only comparison | 91.9% → 92.9% (+1.0 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+
 ## Token Usage
 
 Actual Tier 3 execution usage is reported for every observed agent/case pair and both conditions.
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 188,695 | 413,282 | -224,587 | -54.34% | skill 2/2; base 2/2 |
-| claude-code | tao-run-automl-basic | 70,962 | 287,304 | -216,342 | -75.30% | skill 1/1; base 1/1 |
-| claude-code | tao-run-automl-container-default | 117,733 | 125,978 | -8,245 | -6.54% | skill 1/1; base 1/1 |
-| codex | All cases | 45,335 | 27,664 | +17,671 | +63.88% | skill 2/2; base 2/2 |
-| codex | tao-run-automl-basic | 14,280 | 13,605 | +675 | +4.96% | skill 1/1; base 1/1 |
-| codex | tao-run-automl-container-default | 31,055 | 14,059 | +16,996 | +120.89% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 234,030 | 440,946 | -206,916 | -46.93% | skill 4/4; base 4/4 |
+| claude-code | All cases | 159,708 | 107,046 | +52,662 | +49.20% | skill 2/2; base 2/2 |
+| claude-code | tao-run-automl-basic | 80,297 | 35,539 | +44,758 | +125.94% | skill 1/1; base 1/1 |
+| claude-code | tao-run-automl-container-default | 79,411 | 71,507 | +7,904 | +11.05% | skill 1/1; base 1/1 |
+| codex | All cases | 44,154 | 35,517 | +8,637 | +24.32% | skill 2/2; base 2/2 |
+| codex | tao-run-automl-basic | 13,804 | 13,342 | +462 | +3.46% | skill 1/1; base 1/1 |
+| codex | tao-run-automl-container-default | 30,350 | 22,175 | +8,175 | +36.87% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 203,862 | 142,563 | +61,299 | +43.00% | skill 4/4; base 4/4 |
 
-Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
+Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. Change is `100 * (with - without) / without`; negative means fewer tokens. N/A comparisons include their reason in the coverage column; coverage is never estimated.
 
 ## Tier Status
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 46 finding(s) |
-| Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 3 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 38 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 4 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 2 task(s) |
 
 ## Findings and Observations
@@ -80,15 +106,19 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 - **HIGH** DUPLICATE/duplicate: Duplicate content found across references/automl-compression-literature.md and references/automl-intent-algorithms.md:
   "## Action Policy" in references/automl-compression-literature.md (lines 20-39)
   vs "### LLM/Agentic Algorithms (NEW)" in references/automl-intent-algorithms.md (lines 306-319) (`references/automl-compression-literature.md:20`)
-- **HIGH** DUPLICATE/duplicate: Duplicate content found within cards/driver.sh:
-  "(comment)" in cards/driver.sh (lines 86-88)
-  vs "finish_if_terminal()" in cards/driver.sh (lines 85-93) (`cards/driver.sh:86`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/automl-intent-algorithms.md:
+  "## Pre-Launch Review Gate" in SKILL.md (lines 115-143)
+  vs "## Automatic Baseline Eval Job" in SKILL.md (lines 144-168)
+  vs "## Step 1: Parse User Intent" in references/automl-intent-algorithms.md (lines 95-103)
+  vs "## Step 1: Parse User Intent" in references/automl-intent-algorithms.md (lines 104-109) (`SKILL.md:115`)
 - **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/detailed-guide.md:
   "## Reference Map" in SKILL.md (lines 29-49)
   vs "## Reference Map" in references/detailed-guide.md (lines 7-14) (`SKILL.md:29`)
+- **MEDIUM** DUPLICATE/duplicate: Duplicate content found within cards/driver.sh:
+  "(comment)" in cards/driver.sh (lines 94-96)
+  vs "finish_if_terminal()" in cards/driver.sh (lines 93-101) (`cards/driver.sh:94`)
 - **MEDIUM** QUALITY/quality_correctness: No documented scripts in table format (`skills/applications/tao-run-automl/SKILL.md`)
-- **MEDIUM** QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/applications/tao-run-automl/SKILL.md`)
-- 44 additional finding(s) are available in the full evaluation artifacts.
+- 37 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 
