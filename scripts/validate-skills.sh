@@ -457,6 +457,10 @@ _oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 for root, dirs, files in os.walk('.'):
     if any(x in root for x in ('.git', 'templates/skill-skeleton', '.venv')):
         continue
+    # plugins/ at the top level holds the generated, signed plugin package. Only
+    # that folder is skipped, not a folder of the same name anywhere else.
+    if root == './plugins' or root.startswith('./plugins/'):
+        continue
     if 'SKILL.md' not in files: continue
     if _oos(root):
         continue
@@ -493,7 +497,10 @@ _SC = os.environ.get('SCOPE_CHANGED') == '1'
 _CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
 _oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 for root, dirs, files in os.walk('.'):
-    if any(x in root for x in ('.git', 'templates/skill-skeleton', 'plugins', '.venv')):
+    if any(x in root for x in ('.git', 'templates/skill-skeleton', '.venv')):
+        continue
+    # Only the top-level plugins/ folder (the generated plugin package) is skipped.
+    if root == './plugins' or root.startswith('./plugins/'):
         continue
     if 'SKILL.md' not in files:
         continue
@@ -609,6 +616,8 @@ def iter_metadata_files():
         dirs[:] = [
             d for d in dirs
             if d not in ('.git', 'templates', '.claude-plugin', '.codex-plugin', '.venv', '.venv-tao')
+            # only the top-level plugins/ folder, which holds the generated plugin package
+            and not (root == '.' and d == 'plugins')
         ]
         for fname in ('skill_info.yaml', 'model_info.yaml'):
             if fname in files:

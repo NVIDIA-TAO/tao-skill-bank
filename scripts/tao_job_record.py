@@ -45,6 +45,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+if __name__ == "__main__":
+    sys.dont_write_bytecode = True  # no __pycache__ beside the sibling helper
 import redact_secrets  # noqa: E402  (sibling helper; the redaction backstop)
 
 STATES = ("PENDING", "RUNNING", "COMPLETE", "ERROR", "CANCELED", "UNKNOWN")

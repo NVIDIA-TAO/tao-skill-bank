@@ -9,9 +9,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
-from list_tao_models import build_automl_support, format_automl_text
+# "python3 -I <script>" leaves the folder of the script off the import path, so
+# add it for the sibling modules. A run as a script writes no __pycache__ here.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+if __name__ == "__main__":
+    sys.dont_write_bytecode = True
+
+from list_tao_models import build_automl_support, format_automl_text  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

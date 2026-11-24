@@ -14,12 +14,34 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
+# "python3 -I <script>" leaves the folder of the script off the import path, so
+# add it for the sibling modules. A run as a script writes no __pycache__ here.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+if __name__ == "__main__":
+    sys.dont_write_bytecode = True
 
-from resolve_tao_model import backend_contracts, select_implementation_backend
+try:
+    import yaml
+except ModuleNotFoundError:
+    # One line and an exit code of its own instead of a traceback. "python3 -I" and
+    # "python3 -s" leave out the user site, where pip installs for a user who is not
+    # root, so the line names that case before it names the install command.
+    _no_user_site = (
+        " It runs without the user site (python3 -I or -s, or PYTHONNOUSERSITE), which hides "
+        "a PyYAML that pip installed for the user: start the script without that option "
+        "first. If PyYAML is still missing, install it with:"
+    )
+    print(f"error: this Python ({sys.executable}) cannot import PyYAML, which this helper "
+          "script needs." + (_no_user_site if sys.flags.no_user_site else " Install it with:")
+          + " python3 -m pip install pyyaml", file=sys.stderr)
+    raise SystemExit(4)
+
+from resolve_tao_model import backend_contracts, select_implementation_backend  # noqa: E402
+from skill_layers import layer_root, layer_skill_dirs, skill_dir  # noqa: E402
 
 # The bank this script ships in, so it works from a clone or any plugin install
 # without setup. $TAO_SKILL_BANK_PATH overrides it when the caller means another bank.
@@ -89,9 +111,9 @@ def load_model_metadata(
     requested_model: str,
 ) -> tuple[str, Path, dict[str, Any]]:
     """Load model metadata by skill directory or network_arch alias."""
-    models_root = skill_bank.expanduser() / "skills" / "models"
+    models_root = layer_root(skill_bank, "models")
     requested = requested_model.strip()
-    exact_path = models_root / requested / "references" / "skill_info.yaml"
+    exact_path = skill_dir(skill_bank, "models", requested) / "references" / "skill_info.yaml"
     if exact_path.exists():
         return requested, exact_path, load_yaml(exact_path)
 
@@ -100,7 +122,7 @@ def load_model_metadata(
 
     matches: list[tuple[str, Path, dict[str, Any]]] = []
     requested_casefold = requested.casefold()
-    for candidate in sorted(models_root.iterdir()):
+    for candidate in layer_skill_dirs(skill_bank, "models"):
         metadata_path = candidate / "references" / "skill_info.yaml"
         if not metadata_path.exists():
             continue
@@ -131,7 +153,7 @@ def load_model_metadata(
         )
 
     available = []
-    for candidate in sorted(models_root.iterdir()):
+    for candidate in layer_skill_dirs(skill_bank, "models"):
         metadata_path = candidate / "references" / "skill_info.yaml"
         if not metadata_path.exists():
             continue
@@ -155,10 +177,7 @@ def load_application_metadata(
     """Load one explicitly named packaged application contract."""
     application = requested_application.strip()
     metadata_path = (
-        skill_bank.expanduser()
-        / "skills"
-        / "applications"
-        / application
+        skill_dir(skill_bank, "applications", application)
         / "references"
         / "skill_info.yaml"
     )

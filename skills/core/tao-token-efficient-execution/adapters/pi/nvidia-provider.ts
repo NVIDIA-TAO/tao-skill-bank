@@ -3,28 +3,35 @@
 /**
  * OpenAI-compatible "nim" provider for Pi.
  *
- * Defaults to the NVIDIA-internal Inference API so the kit can run on
- * Nemotron/Qwen instead of Anthropic:
+ * Lets the kit run on a model behind the user's own OpenAI-compatible
+ * endpoint (a self-hosted NIM container, a vLLM/SGLang server, a gateway)
+ * instead of a Pi built-in provider:
  *
- *   pi --model "nim/nvidia/nvidia/Nemotron-3-Nano-30B-A3B:off" ...
+ *   PI_KIT_NIM_BASE_URL=http://localhost:8000/v1 PI_KIT_NIM_MODELS=<model-id> \
+ *     pi --model "nim/<model-id>:off" ...
  *
- * Everything is configurable from the environment (read once at extension
- * load), so a self-hosted NIM container, vLLM/SGLang server, or any other
- * OpenAI-compatible gateway works without editing this file:
+ * There is no default endpoint and no built-in model id: the provider is
+ * registered only when a base URL and at least one model id are set, and the
+ * pack drivers stop before any session when MODEL=nim/... has no endpoint
+ * (scripts/model_preflight.sh). Everything is configured from the
+ * environment (read once at extension load), without editing this file:
  *
- *   PI_KIT_NIM_BASE_URL      endpoint incl. /v1, not /chat/completions
+ *   PI_KIT_NIM_BASE_URL      required: endpoint incl. /v1, not /chat/completions
  *                            (alias: NVIDIA_INFERENCE_BASE_URL)
  *   PI_KIT_NIM_API_KEY_VAR   NAME of the env var holding the key
  *                            (default NVIDIA_INFERENCE_API_KEY)
- *   PI_KIT_NIM_MODELS        comma-separated extra model ids; pack drivers
- *                            append the id from MODEL=nim/<id> automatically
+ *   PI_KIT_NIM_MODELS        comma-separated model ids to register; none is
+ *                            built in. Pack drivers and the smoke test add
+ *                            the id from MODEL=nim/<id> themselves, so set
+ *                            it only for hand-run sessions or further ids
  *   PI_KIT_NIM_CONTEXT_WINDOW / PI_KIT_NIM_MAX_TOKENS
  *                            shared limits (default 131072 / 16384)
  *
  * The key value is NEVER stored in this repo: Pi resolves it from the named
  * variable at request time.
  *
- * Default-endpoint facts (verified 2026-07-22/23 via curl, all default ids):
+ * Facts of the endpoint the compat settings below were verified against
+ * (2026-07-22/23 via curl); check them for yours:
  *  - /v1/chat/completions, Bearer auth, model field is the full id string
  *  - tool calling works with thinking off; max_tokens 16384 accepted
  *  - thinking is ON server-side by default and is disabled through
@@ -34,14 +41,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const PROVIDER = "nim";
-const DEFAULT_BASE_URL = "https://inference-api.nvidia.com/v1";
 const DEFAULT_API_KEY_VAR = "NVIDIA_INFERENCE_API_KEY";
-const DEFAULT_MODELS = [
-	"nvidia/nvidia/Nemotron-3-Nano-30B-A3B",
-	"nvidia/qwen/qwen3.6-35b-a3b",
-	"nvidia/qwen/qwen3-5-397b-a17b",
-	"nvidia/nvidia/nemotron-3-super-v3",
-];
 
 const env = (name: string) => process.env[name]?.trim() || "";
 const positiveInt = (name: string, fallback: number) => {
@@ -49,12 +49,14 @@ const positiveInt = (name: string, fallback: number) => {
 	return Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
-const BASE_URL = (env("PI_KIT_NIM_BASE_URL") || env("NVIDIA_INFERENCE_BASE_URL") || DEFAULT_BASE_URL).replace(/\/+$/, "");
+// "" = no endpoint configured: the provider is then not registered.
+const BASE_URL = (env("PI_KIT_NIM_BASE_URL") || env("NVIDIA_INFERENCE_BASE_URL")).replace(/\/+$/, "");
 const API_KEY_VAR = /^[A-Za-z_][A-Za-z0-9_]*$/.test(env("PI_KIT_NIM_API_KEY_VAR"))
 	? env("PI_KIT_NIM_API_KEY_VAR")
 	: DEFAULT_API_KEY_VAR;
-const MODEL_IDS = [...new Set([...DEFAULT_MODELS, ...env("PI_KIT_NIM_MODELS").split(",").map((id) => id.trim())])]
-	.filter(Boolean);
+// No model id is built in: the ids are the ones the user's endpoint serves.
+const NAMED_MODELS = env("PI_KIT_NIM_MODELS");
+const MODEL_IDS = [...new Set(NAMED_MODELS.split(",").map((id) => id.trim()))].filter(Boolean);
 const CONTEXT_WINDOW = positiveInt("PI_KIT_NIM_CONTEXT_WINDOW", 131072);
 const MAX_TOKENS = positiveInt("PI_KIT_NIM_MAX_TOKENS", 16384);
 
@@ -71,8 +73,10 @@ export default function (pi: ExtensionAPI) {
 		return undefined;
 	});
 
+	if (!BASE_URL || MODEL_IDS.length === 0) return;
+
 	pi.registerProvider(PROVIDER, {
-		name: "NVIDIA Inference API (OpenAI-compatible)",
+		name: "OpenAI-compatible endpoint (nim)",
 		baseUrl: BASE_URL,
 		apiKey: `$${API_KEY_VAR}`,
 		api: "openai-completions",
@@ -82,7 +86,7 @@ export default function (pi: ExtensionAPI) {
 			// reasoning MUST be true for pi to emit chat_template_kwargs at all
 			// (pi-ai openai-completions.js:518). Thinking is then controlled by
 			// the model-ref suffix: `nim/...:off` -> enable_thinking:false.
-			// With thinking on, the default endpoint burns the whole completion
+			// With thinking on, the verified endpoint burns the whole completion
 			// budget on reasoning (measured 29.9k chars, no tool call) — always
 			// pass :off for card execution.
 			reasoning: true,

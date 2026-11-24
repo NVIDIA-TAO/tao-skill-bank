@@ -28,7 +28,7 @@ BASE = {
     "CPUS_PER_TASK": "16",
     "TIME": "04:00:00",
     "LOG_DIR": "/lustre/users/me/results/dino-train-a1b2c3/slurm-logs",
-    "SBATCH_EXTRA": "#SBATCH --account=edgeai\n#SBATCH --partition=polar,polar3",
+    "SBATCH_EXTRA": "#SBATCH --account=edgeai\n#SBATCH --partition=gpu-a,gpu-b",
     "ENV_FILE": "",
     "EXTRA_ENV": "",
     "IMAGE": "/lustre/fsw/sqsh/tao-toolkit-6.26.3-pyt.sqsh",

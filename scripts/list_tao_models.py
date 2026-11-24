@@ -14,10 +14,33 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
+# "python3 -I <script>" leaves the folder of the script off the import path, so
+# add it for the sibling modules. A run as a script writes no __pycache__ here.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+if __name__ == "__main__":
+    sys.dont_write_bytecode = True
+
+try:
+    import yaml
+except ModuleNotFoundError:
+    # One line and an exit code of its own instead of a traceback. "python3 -I" and
+    # "python3 -s" leave out the user site, where pip installs for a user who is not
+    # root, so the line names that case before it names the install command.
+    _no_user_site = (
+        " It runs without the user site (python3 -I or -s, or PYTHONNOUSERSITE), which hides "
+        "a PyYAML that pip installed for the user: start the script without that option "
+        "first. If PyYAML is still missing, install it with:"
+    )
+    print(f"error: this Python ({sys.executable}) cannot import PyYAML, which this helper "
+          "script needs." + (_no_user_site if sys.flags.no_user_site else " Install it with:")
+          + " python3 -m pip install pyyaml", file=sys.stderr)
+    raise SystemExit(4)
+
+from skill_layers import layer_file, layer_skill_dirs, skill_dir  # noqa: E402
 
 
 # The bank this script ships in, so it works from a clone or any plugin install
@@ -74,12 +97,12 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def load_schema_manifest(skill_bank: Path) -> dict[str, Any]:
     """Load the packaged model action manifest."""
-    return load_json(skill_bank.expanduser() / "skills" / "models" / "schemas.manifest.json")
+    return load_json(layer_file(skill_bank, "models", "schemas.manifest.json"))
 
 
 def load_automl_manifest(skill_bank: Path) -> dict[str, Any]:
     """Load the packaged AutoML compatibility manifest if present."""
-    path = skill_bank.expanduser() / "skills" / "models" / "automl_support.json"
+    path = layer_file(skill_bank, "models", "automl_support.json")
     if not path.exists():
         return {"supported": [], "unsupported": []}
     return load_json(path)
@@ -109,7 +132,7 @@ def parse_scalar(value: str) -> Any:
 
 def load_skill_info(skill_bank: Path, model: str) -> dict[str, Any]:
     """Load top-level model metadata from references/skill_info.yaml."""
-    path = skill_bank.expanduser() / "skills" / "models" / model / "references" / "skill_info.yaml"
+    path = skill_dir(skill_bank, "models", model) / "references" / "skill_info.yaml"
     if not path.exists():
         return {}
 
@@ -124,8 +147,8 @@ def load_skill_info(skill_bank: Path, model: str) -> dict[str, Any]:
 
 def load_backend_capabilities(skill_bank: Path, model: str) -> dict[str, Any]:
     """Load backend/action matrices declared by shared model frontends."""
-    skill_dir = skill_bank.expanduser() / "skills" / "models" / model
-    path = skill_dir / "references" / "skill_info.yaml"
+    model_dir = skill_dir(skill_bank, "models", model)
+    path = model_dir / "references" / "skill_info.yaml"
     if not path.exists():
         return {}
     parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -145,7 +168,7 @@ def load_backend_capabilities(skill_bank: Path, model: str) -> dict[str, Any]:
             )
         if not isinstance(relative, str) or not relative.strip():
             raise ValueError(f"backend_contracts.{name}.path must be a relative YAML path")
-        contract_path = skill_dir / str(relative)
+        contract_path = model_dir / str(relative)
         contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
         if not isinstance(contract, dict):
             raise ValueError(f"{contract_path} must contain a YAML object")
@@ -179,7 +202,7 @@ def load_backend_capabilities(skill_bank: Path, model: str) -> dict[str, Any]:
 
 def skill_info_actions(skill_bank: Path, model: str) -> list[str]:
     """Read action names from a model skill_info.yaml without a YAML dependency."""
-    path = skill_bank.expanduser() / "skills" / "models" / model / "references" / "skill_info.yaml"
+    path = skill_dir(skill_bank, "models", model) / "references" / "skill_info.yaml"
     if not path.exists():
         return []
 
@@ -202,7 +225,7 @@ def skill_info_actions(skill_bank: Path, model: str) -> list[str]:
 
 def load_model_schema_manifest(skill_bank: Path, model: str) -> dict[str, Any]:
     """Load skills/models/<model>/schemas/manifest.json when shipped."""
-    path = skill_bank.expanduser() / "skills" / "models" / model / "schemas" / "manifest.json"
+    path = skill_dir(skill_bank, "models", model) / "schemas" / "manifest.json"
     if not path.exists():
         return {}
     return load_json(path)
@@ -216,7 +239,7 @@ def action_schema_rel(action: str) -> Path:
 def action_schema_status(skill_bank: Path, model: str, action: str) -> tuple[bool, str]:
     """Return whether a model has a valid packaged action dataclass schema."""
     schema_rel = action_schema_rel(action)
-    schema_path = skill_bank.expanduser() / "skills" / "models" / model / schema_rel
+    schema_path = skill_dir(skill_bank, "models", model) / schema_rel
     if not schema_path.exists():
         return False, f"{schema_rel.as_posix()} is not packaged"
 
@@ -245,12 +268,11 @@ def build_model_records(skill_bank: Path) -> list[dict[str, Any]]:
     if not isinstance(manifest_models, dict):
         raise ValueError("skills/models/schemas.manifest.json is missing a models object")
 
-    models_root = skill_bank / "skills" / "models"
     model_names = set(manifest_models)
     model_names.update(
         item.name
-        for item in models_root.iterdir()
-        if item.is_dir() and (item / "references" / "skill_info.yaml").exists()
+        for item in layer_skill_dirs(skill_bank, "models")
+        if (item / "references" / "skill_info.yaml").exists()
     )
 
     records: list[dict[str, Any]] = []
@@ -336,7 +358,7 @@ def action_metadata(skill_bank: Path, model: str, action: str) -> dict[str, Any]
         }
 
     schema_rel = action_schema_rel(action)
-    schema_path = skill_bank.expanduser() / "skills" / "models" / model / schema_rel
+    schema_path = skill_dir(skill_bank, "models", model) / schema_rel
     if schema_path.exists():
         schema = load_json(schema_path)
         return {
@@ -502,7 +524,7 @@ def train_action_metadata(skill_bank: Path, model: str) -> dict[str, Any]:
             "automl_default_parameters": train.get("automl_default_parameters", []),
         }
 
-    train_schema = skill_bank.expanduser() / "skills" / "models" / model / TRAIN_SCHEMA_REL
+    train_schema = skill_dir(skill_bank, "models", model) / TRAIN_SCHEMA_REL
     if train_schema.exists():
         schema = load_json(train_schema)
         return {

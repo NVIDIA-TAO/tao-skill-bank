@@ -24,7 +24,21 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError:
+    # One line and an exit code of its own instead of a traceback. "python3 -I" and
+    # "python3 -s" leave out the user site, where pip installs for a user who is not
+    # root, so the line names that case before it names the install command.
+    _no_user_site = (
+        " It runs without the user site (python3 -I or -s, or PYTHONNOUSERSITE), which hides "
+        "a PyYAML that pip installed for the user: start the script without that option "
+        "first. If PyYAML is still missing, install it with:"
+    )
+    print(f"error: this Python ({sys.executable}) cannot import PyYAML, which this helper "
+          "script needs." + (_no_user_site if sys.flags.no_user_site else " Install it with:")
+          + " python3 -m pip install pyyaml", file=sys.stderr)
+    raise SystemExit(4)
 
 # The bank this script is part of, so resolution works from a git clone, a plugin
 # install, or anywhere else the tree is unpacked. $TAO_SKILL_BANK_PATH overrides it

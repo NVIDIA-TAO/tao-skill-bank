@@ -236,6 +236,23 @@ def test_codex_manifest_skills_root_covers_every_skill_on_disk():
     )
 
 
+def test_codex_listing_text_stays_within_the_documented_limits():
+    """The limits OpenAI documents for the listing text of a plugin.
+
+    https://developers.openai.com/plugins/deploy/submission, "Listing metadata":
+    displayName and shortDescription "at most 30 characters", longDescription
+    "at most 4000 characters", defaultPrompt "Up to three starter prompts, at
+    most 128 characters each". They apply to a public submission; Codex itself
+    installs a plugin with longer text.
+    """
+    interface = json.loads((REPO_ROOT / ".codex-plugin/plugin.json").read_text())["interface"]
+    assert 0 < len(interface["displayName"]) <= 30
+    assert 0 < len(interface["shortDescription"]) <= 30
+    assert 0 < len(interface["longDescription"]) <= 4000
+    assert len(interface["defaultPrompt"]) <= 3
+    assert all(0 < len(prompt) <= 128 for prompt in interface["defaultPrompt"])
+
+
 def _assert_lists_every_skill(listed_paths, owner):
     listed = {(REPO_ROOT / s).resolve() for s in listed_paths}
     on_disk = _skills_on_disk()

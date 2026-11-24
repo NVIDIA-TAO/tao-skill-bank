@@ -66,12 +66,13 @@ export TAO_SKILL_BANK_PATH=/path/to/tao-skill-bank
 # (the shipped pack drivers run on Pi; claude alone only supports templates/driver.template.sh)
 bash "$TAO_SKILL_BANK_PATH/skills/core/tao-token-efficient-execution/scripts/install.sh"
 
-# edit ~/.tao-kit/kit.env: set WS (and VENV for the AutoML pack) and MODEL;
-# export your provider's API key in your shell — never put it in kit.env.
-# The default MODEL (nim/...) targets the NVIDIA-internal Inference API. Without
-# access, use Pi's built-in build.nvidia.com provider (MODEL=nvidia/<model-id>,
-# export NVIDIA_API_KEY), point nim/ at your own endpoint (PI_KIT_NIM_BASE_URL),
-# or define a local vLLM/NIM/Ollama provider in ~/.pi/agent/models.json.
+# edit ~/.tao-kit/kit.env: set WS and MODEL (plus VENV for the AutoML pack and
+# DS_IMG for the DEFT AOI pack); export your provider's API key in your shell —
+# never put it in kit.env. MODEL has no default: use Pi's built-in
+# build.nvidia.com provider (MODEL=nvidia/<model-id>, export NVIDIA_API_KEY),
+# the kit's nim/ provider for your own OpenAI-compatible endpoint
+# (MODEL=nim/<model-id>:off with PI_KIT_NIM_BASE_URL; it has no default
+# endpoint), or a local vLLM/NIM/Ollama provider in ~/.pi/agent/models.json.
 # then launch a pack driver detached (leave stderr attached: config errors print immediately):
 nohup bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-automl/cards/driver.sh" > /dev/null &
 
@@ -145,5 +146,5 @@ fixed, explicitly.
 | `adapters/pi/`, `adapters/claude-code/` | guard + recorder per harness |
 | `scripts/install.sh` | prerequisite check + kit.env scaffold |
 | `scripts/analyze_usage.py` | per-session token accounting from session JSONL |
-| `scripts/smoke_test.sh` | no-GPU adapter test (guard, recorder, accounting) |
+| `scripts/smoke_test.sh` | no-GPU adapter test (guard, recorder, accounting); needs `SMOKE_MODEL=<provider>/<model-id>`, no default |
 | `scripts/model_preflight.sh` | MODEL provider → credential-variable check and `nim/` id registration, sourced by pack drivers and the smoke test |
