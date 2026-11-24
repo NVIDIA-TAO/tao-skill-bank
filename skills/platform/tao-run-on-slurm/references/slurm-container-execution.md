@@ -47,11 +47,14 @@ not permission to shadow packages in the image or add a startup source patch.
 
 ### Packaged SQSH conversion profile
 
-On the cluster where this profile was validated, use partition `cpu_long`, not
-`cpu`; the latter's roughly 30-minute wall can kill TAO conversion and leave a
-truncated file. Request 4 CPUs, 7200M memory, no exclusive node, and a timeout
-of at least 120 minutes. This profile is preserved from a successful conversion
-job (21m28s elapsed).
+Run the conversion on a CPU partition of the user's cluster, named in
+`SLURM_CONVERSION_PARTITION`; this skill ships no partition name. Do not use
+a partition with a short wall-time limit: a wall of roughly 30 minutes can
+kill TAO conversion and leave a truncated file. Request 4 CPUs, 7200M memory,
+no exclusive node, and a timeout of at least 120 minutes. This profile is
+preserved from a successful conversion job (21m28s elapsed). When the user
+has not named the partition, show `sinfo -h -o '%P %l %c %m %G'` from
+the login node (partition, time limit, CPUs, memory, GPUs) and ask.
 
 Set `TMPDIR=/tmp` and both `ENROOT_TEMP_PATH` and
 `SLURM_ENROOT_TEMP_PATH` to job-unique
