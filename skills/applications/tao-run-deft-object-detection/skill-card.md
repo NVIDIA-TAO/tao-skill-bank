@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and ML engineers use this skill to have an agent run an iterative gap-analysis, mining, and retraining loop that grows the training set and improves mAP for a TAO Grounding DINO detector, and to prepare the pseudo-labeled, embedded source pool that the loop mines from. <br>
+Developers and ML engineers use this skill to have an agent run an iterative DEFT smart-data-augmentation loop for TAO Grounding DINO object detection (baseline, gap analysis, unique-neighbor mining, ODVG staging, and retraining across N iterations), and to prepare the Co-DETR pseudo-labeled, embedded source pool the loop mines from. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,25 +25,25 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [references/data-layout.md](references/data-layout.md) <br>
-- [references/prep-source-pool.md](references/prep-source-pool.md) <br>
-- [references/preflight.md](references/preflight.md) <br>
-- [references/pipeline-and-state.md](references/pipeline-and-state.md) <br>
-- [references/scripts-and-agents.md](references/scripts-and-agents.md) <br>
-- [references/grounding-dino.md](references/grounding-dino.md) <br>
-- [references/stage-mined-data.md](references/stage-mined-data.md) <br>
-- [references/tao-analyze-detection-kpi.md](references/tao-analyze-detection-kpi.md) <br>
-- [references/tao-analyze-gaps-od-map.md](references/tao-analyze-gaps-od-map.md) <br>
-- [references/tao-generate-image-embeddings.md](references/tao-generate-image-embeddings.md) <br>
-- [references/tao-mine-od-images.md](references/tao-mine-od-images.md) <br>
+- [Data layout](references/data-layout.md) <br>
+- [Source-pool prep](references/prep-source-pool.md) <br>
+- [Pre-Flight checks](references/preflight.md) <br>
+- [Pipeline and state](references/pipeline-and-state.md) <br>
+- [Scripts and agents](references/scripts-and-agents.md) <br>
+- [Grounding DINO overlay](references/grounding-dino.md) <br>
+- [Gap analysis overlay](references/tao-analyze-gaps-od-map.md) <br>
+- [Image embeddings overlay](references/tao-generate-image-embeddings.md) <br>
+- [Mining overlay](references/tao-mine-od-images.md) <br>
+- [Stage mined data](references/stage-mined-data.md) <br>
+- [Detection KPI overlay](references/tao-analyze-detection-kpi.md) <br>
 - [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Shell commands, Files, Analysis] <br>
-**Output Format:** [Markdown status updates with inline bash code blocks; on-disk JSON state, JSONL loop log, model checkpoints, and a Markdown loop report] <br>
+**Output Format:** [Markdown with inline bash code blocks; run artifacts (deft_state.json, loop_log.jsonl, checkpoints, KPI files, DEFT_Loop_Report.md)] <br>
 **Output Parameters:** [1D] <br>
-**Other Properties Related to Output:** [Verbose train, inference, and Docker output is redirected to files; the loop report is re-rendered on every committed stage] <br>
+**Other Properties Related to Output:** [Verbose train, inference, and Docker output is redirected to files; stage state is committed through commit_stage.py.] <br>
 
 ## Evaluation Agents Used: <br>
 - Claude Code (`aws/anthropic/bedrock-claude-opus-5-5`) <br>
@@ -52,7 +52,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-4 evaluation tasks (4 positive), 1 attempt per task, each attempt in its own isolated sandbox pod in a `k8s-sandbox` environment; each task was also attempted without the skill as a baseline. <br>
+4 evaluation tasks (4 positive), 1 attempt per task, each task attempt run in its own isolated sandbox pod (`k8s-sandbox`); dataset digest `sha256:d3fce2a83efb9ec178ecc5fc8a20f8c2280adffa3b279916a073015372c25237` (skill-evaluator-dataset-snapshot/1); evaluator version `1.6.10`; evaluation date 2026-11-24. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -63,18 +63,18 @@ Reported benchmark dimensions: <br>
 - Efficiency: Did it avoid wasted tool calls and token usage? Scored from `skill_efficiency` (50%) + `token_efficiency` (50%). <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
-- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
-- `skill_efficiency`: Tool-call productivity (legacy wire id; routing is scored under Discoverability). <br>
-- `accuracy`: Final-answer correctness against the reference answer. <br>
-- `goal_accuracy`: Whether the user's goal was achieved. <br>
-- `behavior_check`: Whether the expected workflow behavior was followed. <br>
-- `token_efficiency`: Actual uncached prompt plus completion usage (50% of Efficiency). <br>
+- `security`: Security: unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Skill Execution: whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `skill_efficiency`: Tool Productivity: tool-call productivity (legacy wire id; routing is scored under Discoverability). <br>
+- `accuracy`: Accuracy: final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Goal Accuracy: whether the user's goal was achieved. <br>
+- `behavior_check`: Behavior Check: whether the expected workflow behavior was followed. <br>
+- `token_efficiency`: Token Efficiency: actual uncached prompt plus completion usage (50% of Efficiency). <br>
 
 
 
 ## Evaluation Results: <br>
-> ✅ **Overall verdict: PASS — Recommended for publication**
+**Overall verdict: PASS — Recommended for publication**
 
 ### Publication Recommendation
 
@@ -84,29 +84,33 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 84.6% — baseline ran, but no comparable score was available; uplift unavailable | 64.8% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 83.4% — baseline ran, but no comparable score was available; uplift unavailable | 63.6% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 75.0% → 100.0% (+25.0 points) |
-| Correctness | 15.0% → 80.0% (+65.0 points) | 25.0% → 75.0% (+50.0 points) |
+| Correctness | 15.0% → 90.0% (+75.0 points) | 20.0% → 70.0% (+50.0 points) |
 | Discoverability | 75.0% — baseline ran, but no comparable score was available; uplift unavailable | 23.8% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 14.4% → 78.1% (+63.7 points) | 14.4% → 38.8% (+24.4 points) |
-| Efficiency | 89.7% — baseline ran, but no comparable score was available; uplift unavailable | 86.6% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 14.4% → 62.5% (+48.1 points) | 16.2% → 27.8% (+11.6 points) |
+| Efficiency | 89.7% — baseline ran, but no comparable score was available; uplift unavailable | 96.5% — baseline ran, but no comparable score was available; uplift unavailable |
 
-**How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
-
-Example: `47.0% → 92.0% (+45.0 points)` means the skill-assisted run scored 92.0%, 45.0 percentage points above its 47.0% no-skill baseline.
-
-A partial dimension was calculated from only the available configured signals; review the detailed report before relying on it.
+Baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points. A partial dimension was calculated from only the available configured signals.
 
 #### Comparison details
-
-Shared-source comparisons use the same signals and weights on both conditions. They do not replace the full dimension scores above or change the publication verdict.
 
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 98.7% → 96.1% (-2.6 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 98.6% → 96.0% (-2.6 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| codex | Efficiency | Token-only comparison | 93.3% → 93.1% (-0.2 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| codex | Efficiency | Token-only comparison | 93.2% → 93.1% (-0.1 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+
+### Tier Status
+
+| Tier | Purpose | Status | Evidence |
+|---|---|---|---|
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 97 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 5 finding(s) |
+| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 4 task(s) |
+
+Scoring: dimension bands are PASS at 50% or above, NEUTRAL from 40% to below 50%, FAIL below 40%. Overall verdict is PASS only when every configured dimension passes for at least one supported agent; lift is reported as diagnostic evidence and does not override this gate.
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
