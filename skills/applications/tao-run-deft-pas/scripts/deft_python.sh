@@ -10,7 +10,6 @@
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_parent=$(CDPATH= cd -- "$script_dir/../../../../.." && pwd)
 export PYTHONPATH="$script_dir${PYTHONPATH:+:$PYTHONPATH}"
 
 runtime=false
@@ -77,7 +76,6 @@ candidates=(
   "${WORKSPACE:-}/.venv/bin/python3"
   "$script_dir/../.venv/bin/python3"
   /usr/bin/python3
-  "$repo_parent/.venv/bin/python3"
   "$HOME/.venvs/deft/bin/python3"
   "$(command -v python3 2>/dev/null || true)"
 )
