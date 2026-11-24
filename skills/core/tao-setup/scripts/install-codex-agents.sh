@@ -25,7 +25,8 @@
 #
 # Usage:
 #   scripts/install-codex-agents.sh [--project DIR]
-#   curl -fsSL <raw URL of this script> | bash -s -- --project DIR
+#   When the script is piped into bash from its release URL, as the README
+#   shows, pass the options after `bash -s --`: bash -s -- --project DIR
 #
 #   --project DIR   after the install, add the identity block to DIR/AGENTS.md
 #                   (needs python3, and a release that ships the helper script
