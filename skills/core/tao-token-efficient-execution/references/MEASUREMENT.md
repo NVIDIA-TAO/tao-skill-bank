@@ -111,11 +111,11 @@ script.
 
 `bill` weights tokens by Anthropic-style price ratios (output ×5, cache read
 ×0.1, cache write ×1.25, uncached input ×1). A provider that reports no cache
-accounting — the default `nim/` endpoint returns prompt/completion tokens only
-(recorded in `adapters/pi/nvidia-provider.ts`) — yields `bill == no-cache
-bill`. That penalises the long arm more than a caching provider would, which
-is why arms are only compared on the same provider and both bills are
-reported.
+accounting — the endpoint the `nim/` provider was verified against returns
+prompt/completion tokens only (recorded in `adapters/pi/nvidia-provider.ts`) —
+yields `bill == no-cache bill`. That penalises the long arm more than a
+caching provider would, which is why arms are only compared on the same
+provider and both bills are reported.
 
 ## What to record
 
