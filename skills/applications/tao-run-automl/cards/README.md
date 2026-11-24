@@ -30,7 +30,8 @@ on the last ok mark, and halts when the latest mark is a FAIL (no auto-retry).
 ## Run it
 
 ```bash
-# prerequisites: kit install done, WS + VENV set in ~/.tao-kit/kit.env, API key exported.
+# prerequisites: the Pi harness (`pi`) on PATH, kit install done, WS + VENV + MODEL set
+# in ~/.tao-kit/kit.env, API key exported.
 # Standalone (no plugin): export TAO_SKILL_BANK_PATH=/path/to/tao-skill-bank first.
 # one-time: stage the C-RADIOv2-B backbone (downloads from Hugging Face; needs
 # pyyaml + huggingface_hub in VENV, HF_TOKEN if gated). Idempotent.
@@ -39,9 +40,12 @@ nohup bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-automl/cards/driver
 tail -f ~/.tao-kit/automl/driver.log
 ```
 
-Config (env or `~/.tao-kit/kit.env`): `WS`, `VENV` required; `MODEL`,
-`TRAIN_IMG`, `SB` (skill bank the cards read references from, defaults to
-this bank), `BACKBONE`, `PI_KIT_TURN_BUDGET` optional.
+Config (env or `~/.tao-kit/kit.env`): `WS`, `VENV`, `MODEL` required, with no
+default; `TRAIN_IMG`, `SB` (skill bank the cards read references from,
+defaults to this bank), `BACKBONE`, `PI_KIT_TURN_BUDGET` optional. `MODEL` is
+`<provider>/<model-id>[:thinking]` of the model that executes the cards; a
+`nim/` model also needs `PI_KIT_NIM_BASE_URL`, the base URL of your own
+OpenAI-compatible endpoint.
 
 ## Workspace layout (`$WS`)
 

@@ -10,7 +10,7 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 - Skill: `tao-run-deft-aoi`
 - Validation status: `passed`
-- Evaluation date: 2026-11-20
+- Evaluation date: 2026-11-24
 - Evaluator version: `1.6.10`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-5-5`), Codex (`openai/openai/gpt-6.1-sol`)
 - Tasks: 3 evaluation tasks (3 positive)
@@ -50,12 +50,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 79.2% — baseline ran, but no comparable score was available; uplift unavailable | 78.9% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 87.1% — baseline ran, but no comparable score was available; uplift unavailable | 80.9% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 66.7% → 100.0% (+33.3 points) |
-| Correctness | 33.3% → 93.3% (+60.0 points) | 60.0% → 93.3% (+33.3 points) |
-| Discoverability | 56.7% — baseline ran, but no comparable score was available; uplift unavailable | 56.7% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 26.1% → 55.0% (+28.9 points) | 45.6% → 48.9% (+3.3 points) |
-| Efficiency | 90.9% — baseline ran, but no comparable score was available; uplift unavailable | 95.6% — baseline ran, but no comparable score was available; uplift unavailable |
+| Correctness | 40.0% → 100.0% (+60.0 points) | 60.0% → 93.3% (+33.3 points) |
+| Discoverability | 91.7% — baseline ran, but no comparable score was available; uplift unavailable | 55.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 17.8% → 52.2% (+34.4 points) | 37.2% → 61.1% (+23.9 points) |
+| Efficiency | 91.7% — baseline ran, but no comparable score was available; uplift unavailable | 94.9% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -70,9 +70,9 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 97.9% → 94.3% (-3.6 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 98.0% → 92.9% (-5.1 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| codex | Efficiency | Token-only comparison | 89.4% → 91.1% (+1.7 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| codex | Efficiency | Token-only comparison | 89.2% → 89.9% (+0.7 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 
 ## Token Usage
 
@@ -80,15 +80,15 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 571,559 | 290,681 | +280,878 | +96.63% | skill 3/3; base 3/3 |
-| claude-code | tao-run-deft-aoi-basic | 36,175 | 35,528 | +647 | +1.82% | skill 1/1; base 1/1 |
-| claude-code | tao-run-deft-aoi-customer-metric | 325,065 | 110,008 | +215,057 | +195.49% | skill 1/1; base 1/1 |
-| claude-code | tao-run-deft-aoi-resume-state | 210,319 | 145,145 | +65,174 | +44.90% | skill 1/1; base 1/1 |
-| codex | All cases | 155,836 | 142,164 | +13,672 | +9.62% | skill 3/3; base 3/3 |
-| codex | tao-run-deft-aoi-basic | 13,688 | 13,302 | +386 | +2.90% | skill 1/1; base 1/1 |
-| codex | tao-run-deft-aoi-customer-metric | 72,546 | 69,856 | +2,690 | +3.85% | skill 1/1; base 1/1 |
-| codex | tao-run-deft-aoi-resume-state | 69,602 | 59,006 | +10,596 | +17.96% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 727,395 | 432,845 | +294,550 | +68.05% | skill 6/6; base 6/6 |
+| claude-code | All cases | 523,752 | 363,909 | +159,843 | +43.92% | skill 3/3; base 3/3 |
+| claude-code | tao-run-deft-aoi-basic | 79,745 | 35,509 | +44,236 | +124.58% | skill 1/1; base 1/1 |
+| claude-code | tao-run-deft-aoi-customer-metric | 234,168 | 108,690 | +125,478 | +115.45% | skill 1/1; base 1/1 |
+| claude-code | tao-run-deft-aoi-resume-state | 209,839 | 219,710 | -9,871 | -4.49% | skill 1/1; base 1/1 |
+| codex | All cases | 290,750 | 142,413 | +148,337 | +104.16% | skill 3/3; base 3/3 |
+| codex | tao-run-deft-aoi-basic | 13,653 | 13,324 | +329 | +2.47% | skill 1/1; base 1/1 |
+| codex | tao-run-deft-aoi-customer-metric | 96,935 | 85,950 | +10,985 | +12.78% | skill 1/1; base 1/1 |
+| codex | tao-run-deft-aoi-resume-state | 180,162 | 43,139 | +137,023 | +317.63% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 814,502 | 506,322 | +308,180 | +60.87% | skill 6/6; base 6/6 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. Change is `100 * (with - without) / without`; negative means fewer tokens. N/A comparisons include their reason in the coverage column; coverage is never estimated.
 
@@ -96,7 +96,7 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 105 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 104 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 5 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 3 task(s) |
 
@@ -121,7 +121,7 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 - **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/scripts-and-agents.md:
   "## Train AutoML Policy" in SKILL.md (lines 94-119)
   vs "## Workflow-level Pitfall — AutoML policy in the spec" in references/scripts-and-agents.md (lines 154-168) (`SKILL.md:94`)
-- 105 additional finding(s) are available in the full evaluation artifacts.
+- 104 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 

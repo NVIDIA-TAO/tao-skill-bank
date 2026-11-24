@@ -30,8 +30,9 @@ and reports DONE only when `deft_state.json` records `status == "complete"`.
 ## Run it
 
 ```bash
-# prerequisites: kit install done (see the kit skill), WS set in ~/.tao-kit/kit.env,
-# workspace prepared per ../SKILL.md (NV_PCB_Siamese layout), API key exported.
+# prerequisites: the Pi harness (`pi`) on PATH, kit install done (see the kit skill),
+# WS, MODEL and DS_IMG set in ~/.tao-kit/kit.env, workspace prepared per ../SKILL.md
+# (NV_PCB_Siamese layout), API key exported.
 # Standalone (no plugin): export TAO_SKILL_BANK_PATH=/path/to/tao-skill-bank first.
 nohup bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/cards/driver.sh" > /dev/null &
 tail -f ~/.tao-kit/deft-aoi/driver.log
@@ -41,8 +42,20 @@ Launching is side-effecting: complete the `tao-launch-workflow` gate first. Sess
 `driver.log`, and the launch marker live in `~/.tao-kit/deft-aoi/` (never in
 the skill-bank checkout); run artifacts land in `$WS/results/<run>/`.
 
-Config (env or `~/.tao-kit/kit.env`): `WS` required; `MODEL`, `TRAIN_IMG`,
-`DS_IMG`, `MOUNTS_T`, `PI_KIT_TURN_BUDGET` optional. `GPU_MODEL` defaults to the
+Config (env or `~/.tao-kit/kit.env`): `WS`, `MODEL` and `DS_IMG` required, with
+no default; the driver stops at startup and names the one that is missing.
+`TRAIN_IMG`, `MOUNTS_T`, `PI_KIT_TURN_BUDGET` optional. `MODEL` is
+`<provider>/<model-id>[:thinking]` of the model that executes the cards; a
+`nim/` model also needs `PI_KIT_NIM_BASE_URL`, the base URL of your own
+OpenAI-compatible endpoint. `DS_IMG` is a TAO data-services image that you
+supply and can pull. Cards 30 and 50 and the kit's guard are compiled for one
+command form, so the image must provide `gap_analysis vcn_aoi` with pure
+`key=value` overrides (no `-e <spec>`), `embedding image_embeddings` and
+`tmm nearest_neighbors`; an image with another command form breaks the pack.
+Ask the user for the image; never guess or substitute one, not even as an
+example: show the placeholder `<data-services-image-uri>`.
+
+`GPU_MODEL` defaults to the
 first `nvidia-smi --query-gpu=name,memory.total` row; set it only when that
 query is unavailable. `BACKBONE` defaults to
 `$WS/augmentation/backbone/c_radio_v2_b.safetensors` (what
