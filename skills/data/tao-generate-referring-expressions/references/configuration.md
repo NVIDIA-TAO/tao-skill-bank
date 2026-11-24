@@ -90,14 +90,14 @@ Temperature guidance:
 
 ### OpenAI-compatible endpoints
 
-For NVIDIA Inference API, vLLM-served Qwen3-VL, NIM endpoints, etc.:
+For NIM endpoints, vLLM-served Qwen3-VL, etc.:
 ```yaml
 image_referring_expression:
   vlm:
     backend: "openai"
     openai:
-      base_url: "https://inference-api.nvidia.com/v1"   # no /chat/completions
-      model_name: "gcp/google/gemini-3-flash-preview"
+      base_url: "https://<your-endpoint>/v1"   # no /chat/completions
+      model_name: "<model-id>"
       api_key: "your_key"
       temperature: 0.3
       max_tokens: 8192
