@@ -45,7 +45,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive), 1 attempt per task, run in the `k8s-sandbox` environment with each task attempt in its own isolated sandbox pod; each task was also attempted without the skill as a baseline. Evaluator version `1.6.10`, evaluation date 2026-11-20. <br>
+1 evaluation task (1 positive), 1 attempt per task, run in the `k8s-sandbox` environment with each task attempt in its own isolated sandbox pod; each task was also attempted without the skill as a baseline. Evaluator version `1.6.10`, evaluation date 2026-11-24. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -81,8 +81,8 @@ Recommended for publication based on the completed evaluation evidence in this r
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
 | Correctness | 20.0% → 100.0% (+80.0 points) | 20.0% → 40.0% (+20.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 16.7% → 100.0% (+83.3 points) | 33.3% → 33.3% (±0.0 points) |
-| Efficiency | 98.5% — baseline ran, but no comparable score was available; uplift unavailable | 93.7% → 93.7% (±0.0 points) |
+| Effectiveness | 33.3% → 100.0% (+66.7 points) | 33.3% → 33.3% (±0.0 points) |
+| Efficiency | 98.5% — baseline ran, but no comparable score was available; uplift unavailable | 93.8% → 93.7% (-0.1 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -97,17 +97,16 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 99.1% → 97.0% (-2.1 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 99.1% → 96.9% (-2.2 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
 
 ### Tier Status
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 16 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 15 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 2 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
-
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>

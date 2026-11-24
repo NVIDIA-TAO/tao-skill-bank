@@ -10,7 +10,7 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 - Skill: `tao-generate-image-grounding`
 - Validation status: `passed`
-- Evaluation date: 2026-11-20
+- Evaluation date: 2026-11-24
 - Evaluator version: `1.6.10`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-5-5`), Codex (`openai/openai/gpt-6.1-sol`)
 - Tasks: 1 evaluation tasks (1 positive)
@@ -54,8 +54,8 @@ The three-tier evaluation checks whether the skill:
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
 | Correctness | 20.0% → 100.0% (+80.0 points) | 20.0% → 40.0% (+20.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 16.7% → 100.0% (+83.3 points) | 33.3% → 33.3% (±0.0 points) |
-| Efficiency | 98.5% — baseline ran, but no comparable score was available; uplift unavailable | 93.7% → 93.7% (±0.0 points) |
+| Effectiveness | 33.3% → 100.0% (+66.7 points) | 33.3% → 33.3% (±0.0 points) |
+| Efficiency | 98.5% — baseline ran, but no comparable score was available; uplift unavailable | 93.8% → 93.7% (-0.1 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -70,7 +70,7 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 99.1% → 97.0% (-2.1 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 99.1% → 96.9% (-2.2 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
 
 ## Token Usage
@@ -79,11 +79,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 75,045 | 35,481 | +39,564 | +111.51% | skill 1/1; base 1/1 |
-| claude-code | tao-generate-image-grounding-basic | 75,045 | 35,481 | +39,564 | +111.51% | skill 1/1; base 1/1 |
-| codex | All cases | 13,538 | 13,386 | +152 | +1.14% | skill 1/1; base 1/1 |
-| codex | tao-generate-image-grounding-basic | 13,538 | 13,386 | +152 | +1.14% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 88,583 | 48,867 | +39,716 | +81.27% | skill 2/2; base 2/2 |
+| claude-code | All cases | 75,200 | 35,565 | +39,635 | +111.44% | skill 1/1; base 1/1 |
+| claude-code | tao-generate-image-grounding-basic | 75,200 | 35,565 | +39,635 | +111.44% | skill 1/1; base 1/1 |
+| codex | All cases | 13,489 | 13,310 | +179 | +1.34% | skill 1/1; base 1/1 |
+| codex | tao-generate-image-grounding-basic | 13,489 | 13,310 | +179 | +1.34% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 88,689 | 48,875 | +39,814 | +81.46% | skill 2/2; base 2/2 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. Change is `100 * (with - without) / without`; negative means fewer tokens. N/A comparisons include their reason in the coverage column; coverage is never estimated.
 
@@ -91,7 +91,7 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 16 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 15 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 2 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
 
@@ -100,9 +100,6 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/configuration.md:
-  "## Outputs" in SKILL.md (lines 94-102)
-  vs "## Output Layout" in references/configuration.md (lines 140-160) (`SKILL.md:94`)
 - **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/configuration.md:
   "# Image Grounding Pipeline" in SKILL.md (lines 1-6)
   vs "## Purpose" in SKILL.md (lines 7-10)
@@ -113,10 +110,13 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
   vs "### Gemini (default)" in references/configuration.md (lines 71-85)
   vs "## All Parameters" in references/configuration.md (lines 104-126)
   vs "## Input JSONL Schema" in references/configuration.md (lines 127-139) (`SKILL.md:1`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/configuration.md:
+  "## Outputs" in SKILL.md (lines 94-102)
+  vs "## Output Layout" in references/configuration.md (lines 140-160) (`SKILL.md:94`)
 - **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/data/tao-generate-image-grounding/SKILL.md`)
 - **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/data/tao-generate-image-grounding/SKILL.md`)
 - **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/data/tao-generate-image-grounding`)
-- 13 additional finding(s) are available in the full evaluation artifacts.
+- 12 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 
