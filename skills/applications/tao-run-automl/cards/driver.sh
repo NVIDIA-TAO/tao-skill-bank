@@ -9,8 +9,8 @@
 # progress.log; the driver owns run-dir selection (no cross-run pointer file).
 # See skills/core/tao-token-efficient-execution/SKILL.md for the framework.
 #
-# Config comes from the environment or ~/.tao-kit/kit.env. Required: WS, VENV.
-# Common overrides: MODEL, TRAIN_IMG, PI_KIT_TURN_BUDGET.
+# Config comes from the environment or ~/.tao-kit/kit.env. Required, no
+# default: WS, VENV, MODEL. Common overrides: TRAIN_IMG, PI_KIT_TURN_BUDGET.
 # ============================================================================
 set -u
 KIT_ENV=${KIT_ENV:-$HOME/.tao-kit/kit.env}
@@ -46,7 +46,7 @@ case "$BACKBONE" in *[[:space:]]*) echo "[a-driver] ABORT: BACKBONE must not con
 [ -s "$BACKBONE" ] || { echo "[a-driver] ABORT: backbone not staged at $BACKBONE; run: $VENV/bin/python $STAGE_BACKBONE --workspace $WS (or set BACKBONE)" >&2; exit 1; }
 SYSPROMPT="You are a precise task executor operating in a bash environment on a GPU workstation. You MUST perform every action by calling your tools (bash, read, edit, write) — never describe, simulate, or invent a result or command output. Follow the stage card exactly; work alone; never ask questions; end your turn the moment the card says to."
 
-MODEL=${MODEL:-nim/nvidia/qwen/qwen3.6-35b-a3b:off}
+MODEL=${MODEL:-}                                    # required, no default; checked by kit_check_model_key
 export WS SB VENV TRAIN_IMG BACKBONE
 export PI_KIT_WS="$WS"
 export PI_KIT_RUN_PREFIX="automl2_"

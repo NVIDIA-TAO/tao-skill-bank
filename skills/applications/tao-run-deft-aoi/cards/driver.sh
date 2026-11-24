@@ -11,8 +11,8 @@
 # See skills/core/tao-token-efficient-execution/SKILL.md for the framework.
 #
 # Config comes from the environment or ~/.tao-kit/kit.env (see the kit's
-# templates/kit.env.template). Required: WS. Common overrides: MODEL,
-# TRAIN_IMG, DS_IMG, PI_KIT_TURN_BUDGET.
+# templates/kit.env.template). Required, no default: WS, DS_IMG, MODEL.
+# Common overrides: TRAIN_IMG, PI_KIT_TURN_BUDGET.
 # ============================================================================
 set -u
 KIT_ENV=${KIT_ENV:-$HOME/.tao-kit/kit.env}
@@ -35,7 +35,9 @@ RESULTS=$WS/results
 SKILL_ROOT=${SKILL_ROOT:-$(cd "$PACK/.." && pwd)}   # the tao-run-deft-aoi skill this pack ships with
 DPY=$SKILL_ROOT/scripts/deft_python.sh
 TRAIN_IMG=${TRAIN_IMG:-nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt}
-DS_IMG=${DS_IMG:-nvcr.io/nvidian/iva/tao-toolkit-ds:aoi}
+# The pack ships no data-services image: cards 30 and 50 are compiled for one
+# command form, so the user names an image that provides it.
+[ -n "${DS_IMG:-}" ] || { echo "[driver] ABORT: set DS_IMG (export it or set it in ~/.tao-kit/kit.env) to a TAO data-services image you can pull that provides 'gap_analysis vcn_aoi' with key=value overrides, 'embedding image_embeddings' and 'tmm nearest_neighbors'; this pack has no default image" >&2; exit 1; }
 # C-RADIOv2-B backbone on the host; default is what scripts/stage_backbone.py writes.
 if [ -z "${BACKBONE:-}" ]; then
   BACKBONE=$WS/augmentation/backbone/c_radio_v2_b.safetensors
@@ -53,7 +55,7 @@ SYSPROMPT="You are a precise task executor operating in a bash environment on a 
 GPU_MODEL=${GPU_MODEL:-$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null | head -1)}
 [ -n "$GPU_MODEL" ] || { echo "[driver] ABORT: cannot read the GPU model via nvidia-smi; set GPU_MODEL (e.g. \"NVIDIA RTX PRO 6000 Blackwell, 97887 MiB\")" >&2; exit 1; }
 
-MODEL=${MODEL:-nim/nvidia/qwen/qwen3.6-35b-a3b:off}
+MODEL=${MODEL:-}                                    # required, no default; checked by kit_check_model_key
 export WS TRAIN_IMG DS_IMG SKILL_ROOT DPY GPU_MODEL BACKBONE
 export PI_KIT_WS="$WS"
 # 120 clears every legitimately-completed session measured in the study
