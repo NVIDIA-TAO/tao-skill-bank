@@ -10,7 +10,7 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 - Skill: `tao-route-visual-changenet-samples`
 - Validation status: `passed`
-- Evaluation date: 2026-11-20
+- Evaluation date: 2026-11-24
 - Evaluator version: `1.6.10`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-5-5`), Codex (`openai/openai/gpt-6.1-sol`)
 - Tasks: 1 evaluation tasks (1 positive)
@@ -55,7 +55,7 @@ The three-tier evaluation checks whether the skill:
 | Correctness | 0.0% → 100.0% (+100.0 points) | 20.0% → 60.0% (+40.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
 | Effectiveness | 16.7% → 100.0% (+83.3 points) | 33.3% → 33.3% (±0.0 points) |
-| Efficiency | 97.9% — baseline ran, but no comparable score was available; uplift unavailable | 93.8% → 93.6% (-0.2 points) |
+| Efficiency | 98.0% — baseline ran, but no comparable score was available; uplift unavailable | 93.8% → 93.7% (-0.1 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -70,7 +70,7 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 99.0% → 95.8% (-3.2 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 99.1% → 96.0% (-3.1 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
 
 ## Token Usage
@@ -79,11 +79,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 77,445 | 35,655 | +41,790 | +117.21% | skill 1/1; base 1/1 |
-| claude-code | tao-route-visual-changenet-samples-basic | 77,445 | 35,655 | +41,790 | +117.21% | skill 1/1; base 1/1 |
-| codex | All cases | 13,599 | 13,322 | +277 | +2.08% | skill 1/1; base 1/1 |
-| codex | tao-route-visual-changenet-samples-basic | 13,599 | 13,322 | +277 | +2.08% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 91,044 | 48,977 | +42,067 | +85.89% | skill 2/2; base 2/2 |
+| claude-code | All cases | 77,071 | 35,500 | +41,571 | +117.10% | skill 1/1; base 1/1 |
+| claude-code | tao-route-visual-changenet-samples-basic | 77,071 | 35,500 | +41,571 | +117.10% | skill 1/1; base 1/1 |
+| codex | All cases | 13,549 | 13,344 | +205 | +1.54% | skill 1/1; base 1/1 |
+| codex | tao-route-visual-changenet-samples-basic | 13,549 | 13,344 | +205 | +1.54% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 90,620 | 48,844 | +41,776 | +85.53% | skill 2/2; base 2/2 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. Change is `100 * (with - without) / without`; negative means fewer tokens. N/A comparisons include their reason in the coverage column; coverage is never estimated.
 
@@ -101,12 +101,12 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 <summary>Show detailed findings and successful checks</summary>
 
 - **HIGH** DUPLICATE/duplicate: Duplicate content found within SKILL.md:
+  "### Step 2 — Mining subset" in SKILL.md (lines 38-54)
+  vs "# Mining subset" in SKILL.md (lines 116-129) (`SKILL.md:38`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found within SKILL.md:
   "### Step 3 — AnomalyGen subset" in SKILL.md (lines 55-65)
   vs "## Reference Python Recipe" in SKILL.md (lines 103-115)
   vs "# AnomalyGen subset" in SKILL.md (lines 130-135) (`SKILL.md:55`)
-- **HIGH** DUPLICATE/duplicate: Duplicate content found within SKILL.md:
-  "### Step 2 — Mining subset" in SKILL.md (lines 38-54)
-  vs "# Mining subset" in SKILL.md (lines 116-129) (`SKILL.md:38`)
 - **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/data/tao-route-visual-changenet-samples/SKILL.md`)
 - **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/data/tao-route-visual-changenet-samples/SKILL.md`)
 - **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/data/tao-route-visual-changenet-samples`)

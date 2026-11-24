@@ -10,7 +10,7 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 - Skill: `tao-generate-referring-expressions`
 - Validation status: `passed`
-- Evaluation date: 2026-11-20
+- Evaluation date: 2026-11-24
 - Evaluator version: `1.6.10`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-5-5`), Codex (`openai/openai/gpt-6.1-sol`)
 - Tasks: 1 evaluation tasks (1 positive)
@@ -50,12 +50,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.7% — baseline ran, but no comparable score was available; uplift unavailable | 57.4% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 99.6% — baseline ran, but no comparable score was available; uplift unavailable | 61.4% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 20.0% → 100.0% (+80.0 points) | 20.0% → 60.0% (+40.0 points) |
+| Correctness | 20.0% → 100.0% (+80.0 points) | 20.0% → 80.0% (+60.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 16.7% → 100.0% (+83.3 points) | 33.3% → 33.3% (±0.0 points) |
-| Efficiency | 98.2% — baseline ran, but no comparable score was available; uplift unavailable | 93.8% → 93.6% (-0.2 points) |
+| Effectiveness | 33.3% → 100.0% (+66.7 points) | 33.3% → 33.3% (±0.0 points) |
+| Efficiency | 98.2% — baseline ran, but no comparable score was available; uplift unavailable | 93.7% → 93.6% (-0.1 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -70,7 +70,7 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 99.1% → 96.5% (-2.6 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 99.1% → 96.4% (-2.7 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
 
 ## Token Usage
@@ -79,11 +79,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 76,183 | 35,444 | +40,739 | +114.94% | skill 1/1; base 1/1 |
-| claude-code | tao-generate-referring-expressions-basic | 76,183 | 35,444 | +40,739 | +114.94% | skill 1/1; base 1/1 |
-| codex | All cases | 13,591 | 13,334 | +257 | +1.93% | skill 1/1; base 1/1 |
-| codex | tao-generate-referring-expressions-basic | 13,591 | 13,334 | +257 | +1.93% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 89,774 | 48,778 | +40,996 | +84.05% | skill 2/2; base 2/2 |
+| claude-code | All cases | 76,266 | 35,519 | +40,747 | +114.72% | skill 1/1; base 1/1 |
+| claude-code | tao-generate-referring-expressions-basic | 76,266 | 35,519 | +40,747 | +114.72% | skill 1/1; base 1/1 |
+| codex | All cases | 13,586 | 13,386 | +200 | +1.49% | skill 1/1; base 1/1 |
+| codex | tao-generate-referring-expressions-basic | 13,586 | 13,386 | +200 | +1.49% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 89,852 | 48,905 | +40,947 | +83.73% | skill 2/2; base 2/2 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. Change is `100 * (with - without) / without`; negative means fewer tokens. N/A comparisons include their reason in the coverage column; coverage is never estimated.
 
