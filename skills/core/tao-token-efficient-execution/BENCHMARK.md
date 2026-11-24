@@ -10,11 +10,11 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 - Skill: `tao-token-efficient-execution`
 - Validation status: `passed`
-- Evaluation date: 2026-11-20
+- Evaluation date: 2026-11-24
 - Evaluator version: `1.6.10`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-5-5`), Codex (`openai/openai/gpt-6.1-sol`)
 - Tasks: 2 evaluation tasks (2 positive)
-- Dataset digest: `sha256:bfff4633c2e301a01f7fff0642ff1e8ba77911a75e4d0f5c2e2c6b14112dfbc9` (skill-evaluator-dataset-snapshot/1)
+- Dataset digest: `sha256:b4c8a553e78608c8e72603848a5f7783b231ab0998bfc69d563fcc848539bc71` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 1
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
@@ -50,12 +50,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 82.6% — baseline ran, but no comparable score was available; uplift unavailable | 52.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 82.0% — baseline ran, but no comparable score was available; uplift unavailable | 52.7% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 10.0% → 90.0% (+80.0 points) | 0.0% → 50.0% (+50.0 points) |
+| Correctness | 0.0% → 90.0% (+90.0 points) | 0.0% → 50.0% (+50.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 10.0% → 60.0% (+50.0 points) | 10.0% → 20.0% (+10.0 points) |
-| Efficiency | 63.0% — baseline ran, but no comparable score was available; uplift unavailable | 93.7% → 93.6% (-0.1 points) |
+| Effectiveness | 5.0% → 55.0% (+50.0 points) | 10.0% → 20.0% (+10.0 points) |
+| Efficiency | 64.8% — baseline ran, but no comparable score was available; uplift unavailable | 93.7% → 93.6% (-0.1 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -70,7 +70,7 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 98.4% → 93.5% (-4.9 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 94.9% → 93.0% (-1.9 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
 
 ## Token Usage
@@ -79,13 +79,13 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 420,505 | 355,671 | +64,834 | +18.23% | skill 2/2; base 2/2 |
-| claude-code | tao-token-efficient-execution-routing | 209,542 | 177,493 | +32,049 | +18.06% | skill 1/1; base 1/1 |
-| claude-code | tao-token-efficient-execution-run-pack | 210,963 | 178,178 | +32,785 | +18.40% | skill 1/1; base 1/1 |
-| codex | All cases | 27,357 | 26,892 | +465 | +1.73% | skill 2/2; base 2/2 |
-| codex | tao-token-efficient-execution-routing | 13,669 | 13,430 | +239 | +1.78% | skill 1/1; base 1/1 |
-| codex | tao-token-efficient-execution-run-pack | 13,688 | 13,462 | +226 | +1.68% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 447,862 | 382,563 | +65,299 | +17.07% | skill 4/4; base 4/4 |
+| claude-code | All cases | 517,998 | 639,402 | -121,404 | -18.99% | skill 2/2; base 2/2 |
+| claude-code | tao-token-efficient-execution-routing | 210,290 | 319,985 | -109,695 | -34.28% | skill 1/1; base 1/1 |
+| claude-code | tao-token-efficient-execution-run-pack | 307,708 | 319,417 | -11,709 | -3.67% | skill 1/1; base 1/1 |
+| codex | All cases | 27,379 | 26,863 | +516 | +1.92% | skill 2/2; base 2/2 |
+| codex | tao-token-efficient-execution-routing | 13,723 | 13,419 | +304 | +2.27% | skill 1/1; base 1/1 |
+| codex | tao-token-efficient-execution-run-pack | 13,656 | 13,444 | +212 | +1.58% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 545,377 | 666,265 | -120,888 | -18.14% | skill 4/4; base 4/4 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. Change is `100 * (with - without) / without`; negative means fewer tokens. N/A comparisons include their reason in the coverage column; coverage is never estimated.
 
