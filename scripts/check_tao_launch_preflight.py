@@ -16,13 +16,33 @@ import shlex
 import socket
 import subprocess
 import sys
-
-import yaml
-
 from pathlib import Path
 from typing import Any
 
-from tao_slurm_ssh import ssh_command
+# "python3 -I <script>" leaves the folder of the script off the import path, so
+# add it for the sibling modules. A run as a script writes no __pycache__ here.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+if __name__ == "__main__":
+    sys.dont_write_bytecode = True
+
+try:
+    import yaml
+except ModuleNotFoundError:
+    # One line and an exit code of its own instead of a traceback. "python3 -I" and
+    # "python3 -s" leave out the user site, where pip installs for a user who is not
+    # root, so the line names that case before it names the install command.
+    _no_user_site = (
+        " It runs without the user site (python3 -I or -s, or PYTHONNOUSERSITE), which hides "
+        "a PyYAML that pip installed for the user: start the script without that option "
+        "first. If PyYAML is still missing, install it with:"
+    )
+    print(f"error: this Python ({sys.executable}) cannot import PyYAML, which this helper "
+          "script needs." + (_no_user_site if sys.flags.no_user_site else " Install it with:")
+          + " python3 -m pip install pyyaml", file=sys.stderr)
+    raise SystemExit(4)
+
+from skill_layers import skill_dir  # noqa: E402
+from tao_slurm_ssh import ssh_command  # noqa: E402
 
 
 # The bank this script ships in, so it works from a clone or any plugin install
@@ -288,8 +308,8 @@ def resolve_platform(skill_bank: Path, requested: str) -> dict[str, Any]:
     the structured record; a single required env var is checked fine from prose."""
     name = PLATFORM_ALIASES.get(requested.strip().lower(), requested.strip().lower())
     info = (
-        skill_bank.expanduser()
-        / "skills" / "platform" / f"tao-run-on-{name}" / "references" / "skill_info.yaml"
+        skill_dir(skill_bank, "platform", f"tao-run-on-{name}")
+        / "references" / "skill_info.yaml"
     )
     if info.is_file():
         record = yaml.safe_load(info.read_text(encoding="utf-8")) or {}
@@ -1727,7 +1747,11 @@ def check_slurm_runtime(platform: dict[str, Any]) -> bool:
     default_partition = defaults.get("partition")
     default_time = float(defaults.get("time_hours", 4))
     default_timeout = float(defaults.get("timeout_hours", max(default_time - 0.2, 0.1)))
-    max_time = float(defaults.get("max_time_hours", default_time))
+    # A wall-time limit belongs to the user's partition, so none is assumed: it is
+    # enforced only when SLURM_MAX_TIME_HOURS or the platform metadata names one.
+    max_time = parse_float_env("SLURM_MAX_TIME_HOURS")
+    if max_time is None and defaults.get("max_time_hours") is not None:
+        max_time = float(defaults["max_time_hours"])
 
     requested_partition = os.environ.get("SLURM_PARTITION", default_partition)
     requested_time = parse_float_env("SLURM_TIME_HOURS")
@@ -1750,12 +1774,12 @@ def check_slurm_runtime(platform: dict[str, Any]) -> bool:
         requested_timeout = min(default_timeout, max(requested_time - 0.1, 0.1))
     print(f"SLURM internal timeout: SLURM_TIMEOUT_HOURS={requested_timeout:g}")
 
-    if requested_time > max_time:
+    if max_time is not None and requested_time > max_time:
         print(
-            "SLURM runtime exceeds packaged partition limit: "
+            "SLURM runtime exceeds the configured wall-time limit: "
             f"requested {requested_time:g}h > max {max_time:g}h. "
-            "Use SLURM_TIME_HOURS=4 or provide a different partition with a "
-            "known-good wall-time limit before launch."
+            f"Use SLURM_TIME_HOURS={max_time:g} or less, or raise "
+            "SLURM_MAX_TIME_HOURS when the partition allows a longer wall time."
         )
         return False
     if requested_timeout >= requested_time:

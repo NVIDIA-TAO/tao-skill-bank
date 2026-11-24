@@ -9,6 +9,7 @@
 - Adding a new image
 - When to use absolute paths instead of keys
 - Plugin manifests
+- Plugin package for verification
 - Bumping the documented release pin
 - Related: Python wheel install matrix
 
@@ -27,7 +28,7 @@ images:
   tao_toolkit:
 -   pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
 +   pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.27.0-pyt
-    vila:       nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
+    deploy:     nvcr.io/nvidia/tao/tao-toolkit:6.26.3-deploy
 ```
 
 That's it. Every skill referencing `tao_toolkit.pyt` (28 of them today) automatically picks up the new tag at runtime.
@@ -172,11 +173,252 @@ in this order:
 The Cursor manifests are provided so the plugin loads in Cursor; the install
 instructions in `README.md` cover Claude Code and Codex only.
 
-The SessionStart hook runs as two commands (`identity`, `context`) because
-Claude Code replaces hook output longer than 10,000 characters with a short
-preview, and `AGENTS.md` alone is longer than that.
-`scripts/tests/test_session_start_hook.py` keeps each part under the limit; if
-`AGENTS.md` grows enough to break it, shorten the file or add a third part.
+The SessionStart hook prints one JSON object,
+`{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "..."}}`,
+and nothing else. Claude Code takes plain text or this object from a
+session-start hook. The Cursor CLI takes JSON only and drops plain text. The
+field Cursor documents for this event is `additional_context`; its page on
+Claude Code hooks says in general that it supports the nested
+`hookSpecificOutput` responses and gives the mapping for other events only.
+That the Cursor CLI adds the `additionalContext` of this object to a session
+was observed with version 2026.11.19 and is not documented, so check it again
+when Cursor changes its hooks. The comment at the top of
+`hooks/session_start.sh` names the page of each host. The script builds the
+object with `awk`, so it needs no Python, and `AGENTS.md` must be UTF-8. Codex
+documents the same object, but it lists no hook for a plugin folder whose root
+`plugin.json` declares the Agent Plugins schema, which the generated package
+has, and it skips a plugin hook that the user has not trusted. Do not count on
+the hook in Codex.
+
+The hook runs as two commands (`identity`, `context`) because Claude Code
+replaces the context of one hook command that is longer than 10,000 characters
+with a file path and a short preview, and `AGENTS.md` alone is longer than
+that. `scripts/tests/test_session_start_hook.py` keeps the text and the whole
+output of each part under the limit; if `AGENTS.md` grows enough to break it,
+shorten the file or add a third part. The context part states the plugin folder
+in one line in every host, because only Claude Code gives a hook a way to
+export `TAO_SKILL_BANK_PATH`. It names the card packs only where the `pi`
+harness is installed, and for a host without Docker it prints the read-only
+check command of `tao-setup-nvidia-gpu-host`, never an install command. A path
+that the hook prints for a shell, in that command and in the export line, is
+single-quoted by the hook itself: `printf %q` of bash 3.2 breaks a multi-byte
+character in a UTF-8 locale, and the output is then not valid JSON.
+
+Codex and Cursor do not load an `AGENTS.md` from an installed plugin; they read
+the one at the root of the project a session works in.
+`scripts/tao_agent_identity.py` adds the identity to that file as a block
+between two marker lines, updates the block in place, and removes it again
+without changing a byte outside the markers; `scripts/install-codex-agents.sh`
+prints that command, runs it for `--project <dir>`, and writes nothing into the
+Codex home. Nothing in this repository may copy `AGENTS.md` over a user's file:
+earlier installers did that to `~/.codex/AGENTS.md`, which replaced the user's
+own instructions and applied the identity to every Codex session. The marker
+prefixes in the helper (`BEGIN_PREFIX`, `END_PREFIX`) are a contract with files
+in users' projects, so do not change them;
+`scripts/tests/test_agent_identity.py` covers the block handling. The first
+line of `AGENTS.md` (its heading) is how the installer and the helper recognise
+a whole copy that an earlier installer left in a Codex home, or a backup of
+one; a new heading ends that recognition for the copies of earlier releases.
+
+## Plugin package for verification
+
+NVIDIA's plugin verification evaluates, signs, and lists one self-contained
+plugin folder, `plugins/nvidia-tao-toolkit/`. That folder is a second copy of
+the plugin in a different shape. It does not replace the repository root, which
+stays the plugin that the marketplace files of this repository install:
+
+| | Repository root | `plugins/nvidia-tao-toolkit/` |
+|---|---|---|
+| Skills | `skills/<layer>/<skill>/` | `skills/<skill>/` |
+| Root `plugin.json` (Agent Plugins 1.0.0) | No, see "Plugin manifests" | Yes |
+| Layer of a skill | Its folder | `catalog/skill-layers.json` |
+| Other content | The whole repository | The hook, `AGENTS.md`, `versions.yaml`, `LICENSE`, `evals/`, the helper scripts and templates that skills call, and a `README.md` of its own |
+
+The folder is generated by `scripts/build_plugin_package.py` and, once verified,
+signed. The signature lists every file in it, so **never edit the folder by
+hand and never add or remove a file in it**. Change the repository and build
+again; a rebuilt folder has to be verified and signed again.
+
+```bash
+python3 scripts/build_plugin_package.py           # write plugins/nvidia-tao-toolkit/
+python3 scripts/build_plugin_package.py --check   # exit 1 and list the differences when the folder is stale
+python3 scripts/build_plugin_package.py --output /tmp/package --no-codex-manifest
+```
+
+`--source` packages another checkout. Only files tracked by git are read. Two
+builds from a clean checkout of the same commit are byte-identical; a checkout
+with uncommitted changes is packaged as it is, and the summary says so. Exit
+code 2 means the package cannot be built or written. The package carries the
+plugin version, and the catalog holds a plugin whose content changed without a
+new one, so bump it as "Plugin manifests" describes.
+
+**Left out** (the tables at the top of the script give the reason for each):
+
+- Per-skill signing files: `skill.oms.sig`, `BENCHMARK.md`, `skill-card.md`,
+  `*-review-needed.md`, and the scanner baselines. They vouch for one skill at
+  its layer path; the package is evaluated, described, and signed as one plugin.
+- Tests, their fixtures, and `eval*.config` inside skills. No agent needs them
+  at run time, and every packaged file is scanned. A test that a skill tells
+  the user to run stays (`SKILL_FILES_KEPT`), and so does every `evals/` folder.
+- `scripts/install-codex-agents.sh`, both copies. It installs the repository
+  root as a plugin, and next to this package Codex would list every skill
+  twice. The packaged `tao-setup` runs `scripts/tao_agent_identity.py` from the
+  plugin folder instead, which adds the identity to a project's `AGENTS.md`.
+- What only the repository needs: docs, CI and marketplace files,
+  `integrations/`, `scripts/tests/`, and helper scripts that no skill calls.
+
+**README.** The package has a `README.md` of its own, because the one at the
+repository root describes the repository. Its source is
+[`docs/plugin-package-readme.md`](plugin-package-readme.md);
+`SUPPORT_FILE_SOURCES` in the script maps the two paths. It says what the
+plugin is and needs, what each host loads, what the session-start hook prints,
+which credential variables the skills read, the licence, and where to report
+a problem. `claude plugin validate` reports a plugin folder without a README as
+a problem that its plugin directory refuses a submission for. Every statement
+in the file must be true of the generated folder, so change it together with
+what it describes: the hook, the helper scripts, the manifests.
+`test_package_readme_is_the_one_kept_for_the_package_and_true_of_it` in
+`scripts/tests/test_plugin_package.py` checks the files, skills, tools,
+credential names and addresses it names; what it says about the three hosts
+has no test and was checked in sessions of each. The file is the same in a
+build with `--no-codex-manifest`, so it names `.codex-plugin/` as a folder that
+a build may leave out; what it says about Codex was checked with the default
+build only. Write paths in it as code, not as relative links, which would
+resolve differently in the two places.
+
+The package ships no icon. The repository holds no image of the product, and
+one must not be made up for the package; `claude plugin validate` reports the
+missing icon as a warning.
+
+**Rewritten** in every copied text file, skills, helper scripts, and hook alike:
+
+- `skills/<layer>/<skill>` becomes `skills/<skill>`. The helpers run the same
+  code in both layouts (they ask `scripts/skill_layers.py` where a skill is), so
+  their packaged copies differ only in such path strings. A helper must not
+  join `"skills" / "<layer>"` itself, and a helper that a skill starts to call
+  must be added to `SUPPORT_FILES`.
+- `tao-skill-bank:<skill>`, the plugin's former name, becomes
+  `nvidia-tao-toolkit:<skill>` where `<skill>` is exactly a packaged skill, and
+  `tao-skill-bank:*` becomes `nvidia-tao-toolkit:*`.
+- A checkout of the repository is not flat, so the default bank
+  `~/tao-skill-bank` becomes `~/tao-skill-bank/plugins/nvidia-tao-toolkit`, and
+  the placeholder `/path/to/tao-skill-bank` becomes `/path/to/nvidia-tao-toolkit`.
+- `PACKAGE_EDITS` lists the hand-written replacements for what no rule can see:
+  code that counts directory levels from its own file or lists one layer
+  folder, and instructions that are only true of the repository, such as where
+  the bank is. No hook sets `TAO_SKILL_BANK_PATH` in Codex, so the packaged
+  bank check finds the plugin folder from the skill's own folder.
+
+**The build stops** (exit 2, nothing written) and names the file when
+
+- a layer reference survives, or sits where a rewrite would be wrong: in a URL,
+  after a colon (a git ref, a mount target), at the root of a filesystem or
+  under another folder, behind `cd tao-skill-bank`, behind an unknown variable
+  on a line that downloads, in a list of layer folders or of quoted words, in
+  code that lists one layer folder, or in a drawing of the repository tree;
+- skill code climbs above its skill folder, a link would break, or a shipped
+  file names a helper, test, or signing file the package lacks;
+- a file with a text extension is not UTF-8, a `SKILL.md` exceeds 20,000
+  characters, a field of the root `plugin.json` has the wrong type, a skill has
+  no task in the plugin-level suite, or a limit of the pipeline is exceeded.
+
+Fix the skill, or record the decision in the table the message names. The
+build cannot see a layer folder that code joins from a variable; the helper
+and hook tests in `scripts/tests/test_plugin_package.py` cover that.
+
+**Helper scripts.** An agent starts the shipped helpers from the user's project,
+often as `python3 -I <script>` and on a Python that may lack PyYAML. Every
+helper under `scripts/` that `SUPPORT_FILES` lists must therefore:
+
+- put its own folder on `sys.path` before it imports a sibling module, because
+  `python3 -I` leaves that folder off the import path;
+- set `sys.dont_write_bytecode` when it runs as a script, so that a run leaves
+  no `__pycache__` in the installed plugin folder;
+- when it needs PyYAML and cannot import it, print one line that names the
+  Python, the package and `python3 -m pip install pyyaml`, and exit with code
+  4. `python3 -I` and `python3 -s` leave out the user site, where `pip` installs
+  for a user who is not root; there the line first says to start the script
+  without that option, because the install command would change nothing.
+
+`scripts/tests/test_helper_scripts_start.py` starts every shipped helper as
+`python3 -I -B scripts/<name>.py --help` from another folder, with and without
+PyYAML and on `/usr/bin/python3` when there is one, and pins the seven helpers
+that need PyYAML and both forms of the line; `scripts/tests/test_plugin_package.py`
+repeats the start checks on the generated folder. A helper that starts to need
+PyYAML is added to that list on purpose, not by accident.
+
+**Evaluation suite.** [`evals/evals.json`](../evals/evals.json) replaces every
+per-skill suite when the plugin is evaluated, so a task added to
+`skills/<layer>/<skill>/evals/evals.json` must be added there too, or listed in
+`DROPPED_TASKS` in `scripts/tests/test_plugin_eval_suite.py` with the reason.
+One attempt that reads or writes outside the working folder, uses the network
+or `sudo`, or prints a secret fails the evaluation of the whole plugin, and the
+expected skill counts as found only when its `SKILL.md` was read or the skill
+was invoked. Every prompt therefore ends with the same closing, `CLOSING` in
+that test file. It asks the agent to open and read the skill's files, with a
+file-reading tool or a read-only command such as `cat`, and to describe the
+plan only. It forbids executing a script or program, starting a container or
+job, using the network or web search, and writing any file. It says that
+listing the installed skills to find the right one is fine and that the plan is
+to be based on that skill's own files: an agent has to find the skill before it
+can read it, and under a closing that forbade reading anything outside the
+skill's folder the judge marked that listing as a wrong action. No prompt may
+forbid all commands, tools, or file reads, because an agent that reads files
+through commands must be allowed to read the skill. One sentence may follow the
+closing, a fact about the session or one more file that the task asks about,
+and only when `AFTER_CLOSING` lists it for that task. The tests also require
+that a prompt names no skill, no absolute or
+home-folder path, and no shell variable; that no request is cut out of the
+description of its skill; that no task expects a script to be run; and that
+every expected behaviour says what the plan contains and none denies every
+command or tool or limits reading to the folder of the skill.
+
+**Verification output.** Verification and evaluation add files to the folder.
+The build never writes these names, `--check` ignores them, and a rebuild
+removes none of them without listing it:
+
+- at the folder root: `BENCHMARK.md`, `plugin-card.json`, `plugin-card.md`,
+  `skill-card.md`, `eval-result.json`, `*-review-needed.md`, and everything
+  under `.eval-results/`;
+- directly inside `skills/<skill>/`: `BENCHMARK.md`, `skill-card.md`, and
+  `*-review-needed.md`;
+- anywhere: the signature files `skill.oms.sig`, `plugin.sig.oms`, and
+  `plugin.oms.sig`.
+
+**This list is provisional until the first real verification run shows which
+files are written and where.** Two naming schemes are in use; both count until
+then.
+
+**Rebuilding an existing folder.** A folder that equals the build is reported
+as up to date and is not written. Otherwise:
+
+- A signed folder is refused (exit 2, nothing touched) unless `--force` is
+  given. A forced rebuild removes the signature files, which no longer match,
+  whether it changes a packaged file or only removes a file that no build
+  writes; cards, benchmark, and evaluation results stay and describe the
+  earlier content until the folder is verified again.
+- A file that is neither part of the build nor verification output stops the
+  build (exit 2) unless `--force` is given, also when an earlier build wrote
+  it. A forced rebuild deletes it; the refusal lists what would go.
+- Junk that the pipeline forbids (`.DS_Store`, `__pycache__`, `*.pyc`,
+  `__MACOSX`) is removed, from a signed folder too and without `--force`; the
+  signature stays, because it never listed junk. `--check` reports junk on its
+  own line and does not count junk that git ignores, such as the `__pycache__`
+  that other code leaves when it imports a helper from the folder.
+- Whatever is removed is listed first. `.git` is never read or removed, and an
+  output folder that is itself the root of a git work tree is refused unless
+  it lies inside the source checkout.
+
+Between the evaluation and the signature the folder must not change: the
+evaluation records a digest of every skill file and of
+`.claude-plugin/plugin.json`.
+
+Repository checks do not judge the content of the top-level `plugins/` folder,
+which cannot be edited to pass them: `scripts/validate-skills.sh` and the tests
+that read every file of the repository skip it, and `scripts/stamp_versions.py`
+scans only `skills/`, `templates/`, and `scripts/`. Evaluation output at the
+repository root (`/.eval-results/`) is ignored by git; inside the package
+folder it is not.
 
 ## Bumping the documented release pin
 

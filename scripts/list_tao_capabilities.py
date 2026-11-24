@@ -9,12 +9,34 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
+# "python3 -I <script>" leaves the folder of the script off the import path, so
+# add it for the sibling modules. A run as a script writes no __pycache__ here.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+if __name__ == "__main__":
+    sys.dont_write_bytecode = True
 
-from list_tao_models import build_all_models, build_automl_support
+try:
+    import yaml
+except ModuleNotFoundError:
+    # One line and an exit code of its own instead of a traceback. "python3 -I" and
+    # "python3 -s" leave out the user site, where pip installs for a user who is not
+    # root, so the line names that case before it names the install command.
+    _no_user_site = (
+        " It runs without the user site (python3 -I or -s, or PYTHONNOUSERSITE), which hides "
+        "a PyYAML that pip installed for the user: start the script without that option "
+        "first. If PyYAML is still missing, install it with:"
+    )
+    print(f"error: this Python ({sys.executable}) cannot import PyYAML, which this helper "
+          "script needs." + (_no_user_site if sys.flags.no_user_site else " Install it with:")
+          + " python3 -m pip install pyyaml", file=sys.stderr)
+    raise SystemExit(4)
+
+from list_tao_models import build_all_models, build_automl_support  # noqa: E402
+from skill_layers import layer_skill_dirs  # noqa: E402
 
 
 # The bank this script ships in, so it works from a clone or any plugin install
@@ -39,13 +61,21 @@ def _read_frontmatter(skill_md: Path) -> dict[str, Any]:
     return yaml.safe_load(parts[1]) or {}
 
 
+def _layer_skill_files(skill_bank: Path, layer: str, prefix: str = "") -> list[Path]:
+    """SKILL.md of every skill in ``layer`` whose directory name starts with ``prefix``."""
+    return [
+        path / "SKILL.md"
+        for path in layer_skill_dirs(skill_bank, layer)
+        if path.name.startswith(prefix) and (path / "SKILL.md").is_file()
+    ]
+
+
 def scan_platforms(skill_bank: Path) -> list[dict[str, Any]]:
     """Discover execution platforms by scanning installed platform skills
     (skills/platform/tao-run-on-*/SKILL.md) instead of a central manifest. Any
     platform skill present in the tree self-registers — no registration step."""
-    root = skill_bank.expanduser() / "skills" / "platform"
     platforms = []
-    for skill_md in sorted(root.glob("tao-run-on-*/SKILL.md")):
+    for skill_md in _layer_skill_files(skill_bank, "platform", prefix="tao-run-on-"):
         short = skill_md.parent.name[len("tao-run-on-"):]
         desc = str(_read_frontmatter(skill_md).get("description", "")).strip()
         desc = desc.split(". ")[0].rstrip(".") if desc else ""
@@ -191,10 +221,9 @@ def skill_capability_record(skill_bank: Path, skill_md: Path) -> dict[str, Any]:
 
 def application_capabilities(skill_bank: Path) -> list[dict[str, Any]]:
     """Read top-level application skills and turn them into capability records."""
-    application_root = skill_bank.expanduser() / "skills" / "applications"
     records: list[dict[str, Any]] = []
 
-    for skill_md in sorted(application_root.glob("*/SKILL.md")):
+    for skill_md in _layer_skill_files(skill_bank, "applications"):
         record = skill_capability_record(skill_bank, skill_md)
         record["files"] = sorted(
             item.name for item in skill_md.parent.iterdir() if item.is_file()
@@ -205,10 +234,9 @@ def application_capabilities(skill_bank: Path) -> list[dict[str, Any]]:
 
 def data_capabilities(skill_bank: Path) -> list[dict[str, Any]]:
     """Read data skills and turn them into capability records."""
-    data_root = skill_bank.expanduser() / "skills" / "data"
     records: list[dict[str, Any]] = []
 
-    for skill_md in sorted(data_root.glob("*/SKILL.md")):
+    for skill_md in _layer_skill_files(skill_bank, "data"):
         records.append(skill_capability_record(skill_bank, skill_md))
     return records
 
@@ -275,7 +303,7 @@ def format_capabilities_text(data: dict[str, Any]) -> str:
     automl_models = [item["model"] for item in automl["supported"]]
 
     lines = [
-        "Hi, I'm the TAO Skill Bank.",
+        "Hi, I'm the NVIDIA TAO Toolkit plugin.",
         "",
         "I turn a TAO model goal, dataset, KPI, and compute target into runnable "
         "NVIDIA TAO workflows for training, AutoML/HPO, evaluation, inference, "

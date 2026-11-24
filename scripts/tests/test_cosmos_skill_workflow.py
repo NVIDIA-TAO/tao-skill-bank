@@ -478,16 +478,16 @@ def test_node_auto_exclusions_ignore_non_target_and_non_gpu_inventory(
     args = args_for(tmp_path)
     inventory = tmp_path / "partitioned-nodes.txt"
     inventory.write_text(
-        "NodeName=polar-node State=IDLE Gres=gpu:8 Partitions=polar3 Comment=Run network diagnostics\n"
-        "NodeName=other-gpu State=DOWN Gres=gpu:8 Partitions=grizzly\n"
-        "NodeName=cpu-node State=DOWN Gres=(null) Partitions=cpu_long\n",
+        "NodeName=target-node State=IDLE Gres=gpu:8 Partitions=gpu-a Comment=Run network diagnostics\n"
+        "NodeName=other-gpu State=DOWN Gres=gpu:8 Partitions=gpu-c\n"
+        "NodeName=cpu-node State=DOWN Gres=(null) Partitions=cpu-a\n",
         encoding="utf-8",
     )
-    args.partition = "polar3,polar4"
+    args.partition = "gpu-a,gpu-b"
     args.exclude_unhealthy_inventory_nodes = True
     args.slurm_node_inventory_file = str(inventory)
     plan = workflow.build_plan(args)
-    assert plan["slurm_node_exclusions"]["auto_excluded"] == ["polar-node"]
+    assert plan["slurm_node_exclusions"]["auto_excluded"] == ["target-node"]
 
 
 def test_retry_helper_reuses_sealed_inspection_and_refreshes_job_identity(

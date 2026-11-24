@@ -165,17 +165,24 @@ def test_slurm_enroot_conversion_uses_job_unique_node_local_temp():
     assert "--chdir=/tmp" in text
 
 
-def test_slurm_sqsh_conversion_uses_validated_cpu_long_resource_profile():
+def test_slurm_sqsh_conversion_uses_validated_cpu_resource_profile():
     """Keep image conversion under the cluster's QOS memory ceiling.
 
     A validated conversion run established this profile. Inheriting an eight-GPU
     training job's CPU request multiplies the site's implicit per-CPU memory
     and leaves conversion pending under ``QOSGrpMemLimit``.
+
+    The profile is numbers only. The CPU partition it runs on belongs to the
+    user's cluster, so the skill names the input and no partition.
     """
     text = _skill_text("tao-run-on-slurm")
     info = (PLATFORM_DIR / "tao-run-on-slurm" / "references" /
             "skill_info.yaml").read_text()
-    assert "sqsh_conversion_partition: cpu_long" in info
+    assert "sqsh_conversion_partition" not in info
+    assert "- name: SLURM_CONVERSION_PARTITION" in info
+    # Long options and a stop when the variable is unset: the per-skill scanner cannot
+    # bound the short form with a variable, and an empty value must not reach srun.
+    assert "--partition=${SLURM_CONVERSION_PARTITION:?} --time=120" in text
     assert "sqsh_conversion_timeout_minutes: 120" in info
     assert "sqsh_conversion_cpus_per_task: 4" in info
     assert "sqsh_conversion_memory_mb: 7200" in info
