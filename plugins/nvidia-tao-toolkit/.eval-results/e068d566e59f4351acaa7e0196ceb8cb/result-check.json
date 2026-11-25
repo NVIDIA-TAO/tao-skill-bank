@@ -1,0 +1,14 @@
+{
+  "eval_result": {
+    "path": "eval-result.json",
+    "sha256": "04ee285e7025dbfdec33499941c39c47ca3589490d8f27bda2eec1affa08802f",
+    "size": 8709714
+  },
+  "issues": [],
+  "submission_id": "e068d566e59f4351acaa7e0196ceb8cb/2fdb47982e43e013e2f2259159737dbca3ab10bd52a21e76350adb79e08c091b",
+  "valid": true,
+  "warnings": [
+    "Scorer 'native.reward' has no aggregation rule; none was assumed.",
+    "Scorer 'native.reward' has no improvement direction; none was assumed."
+  ]
+}

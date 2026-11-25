@@ -1,0 +1,7 @@
+# Evaluation evidence of the verified nvidia-tao-toolkit plugin package: the files above 5 MB are stored with Git LFS.
+plugins/nvidia-tao-toolkit/.eval-results/e068d566e59f4351acaa7e0196ceb8cb/combined-provenance.json filter=lfs diff=lfs merge=lfs -text
+plugins/nvidia-tao-toolkit/.eval-results/e068d566e59f4351acaa7e0196ceb8cb/eval-result.json filter=lfs diff=lfs merge=lfs -text
+plugins/nvidia-tao-toolkit/.eval-results/e068d566e59f4351acaa7e0196ceb8cb/evaluation-report.html filter=lfs diff=lfs merge=lfs -text
+plugins/nvidia-tao-toolkit/.eval-results/e068d566e59f4351acaa7e0196ceb8cb/handoff-manifest.json filter=lfs diff=lfs merge=lfs -text
+plugins/nvidia-tao-toolkit/.eval-results/e068d566e59f4351acaa7e0196ceb8cb/security-observations.json filter=lfs diff=lfs merge=lfs -text
+plugins/nvidia-tao-toolkit/.eval-results/e068d566e59f4351acaa7e0196ceb8cb/security-report.md filter=lfs diff=lfs merge=lfs -text
